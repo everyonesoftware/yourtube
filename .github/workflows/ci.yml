@@ -1,0 +1,96 @@
+name: Build and release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: yourtube-main
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      windows: ${{ steps.select.outputs.windows }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --test tests/*.test.mjs
+      - id: select
+        run: node scripts/select-windows.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+  windows:
+    needs: validate
+    if: needs.validate.outputs.windows == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Test HTTP protocol, app state, and updater
+        shell: pwsh
+        run: |
+          ./scripts/test-packaging.ps1
+          dotnet test apps/windows/YourTube.Core.Tests/YourTube.Core.Tests.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet test apps/windows/YourTube.Update.Tests/YourTube.Update.Tests.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet run --project apps/windows/validation/YourTube.App.Validation.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test apps/windows/YourTube.Update.Tests/panel-contracts.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Native self-contained publish and Velopack package
+        shell: pwsh
+        run: ./scripts/build-windows.ps1 -Version "0.1.${{ github.run_number }}" -SourceSha '${{ github.sha }}'
+      - name: Installed app native smoke and uninstall
+        shell: pwsh
+        timeout-minutes: 6
+        run: ./scripts/test-windows-native.ps1 -InstallerPath artifacts/windows/releases/YourTubeWindows-win-x64-Setup.exe -EvidenceDirectory artifacts/native-smoke
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-native-evidence
+          path: artifacts/native-smoke
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: artifacts/windows/releases
+          if-no-files-found: error
+  release:
+    needs: [validate, windows]
+    if: always() && github.ref == 'refs/heads/main' && needs.validate.result == 'success' && (needs.windows.result == 'success' || needs.windows.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v4
+        if: needs.windows.result == 'success'
+        with:
+          name: windows-release
+          path: artifacts/release
+      - name: Publish verified Windows assets
+        if: needs.windows.result == 'success'
+        run: node scripts/publish-release.mjs artifacts/release
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Refresh verified current downloads (also repairs docs-only runs)
+        run: node scripts/current-downloads.mjs --write
+        env:
+          GH_TOKEN: ${{ github.token }}

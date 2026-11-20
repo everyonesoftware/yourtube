@@ -1,0 +1,12 @@
+{
+  "name": "yourtube-mockups",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:mockups": "node mockups/build.mjs",
+    "serve:mockups": "node mockups/serve.mjs",
+    "test:mockups": "node mockups/tv.test.mjs"
+  },
+  "devDependencies": { "playwright": "1.58.2" }
+}

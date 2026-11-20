@@ -1,0 +1,45 @@
+# Windows proof-of-concept build and acceptance
+
+## Build on Windows
+
+Requires Windows 10 version 2004 or later (x64), .NET SDK pinned in `global.json`, and the Windows SDK/native build prerequisites provided on `windows-2022` GitHub runners.
+
+```powershell
+dotnet test apps/windows/YourTube.Core.Tests/YourTube.Core.Tests.csproj -c Release
+dotnet test apps/windows/YourTube.Update.Tests/YourTube.Update.Tests.csproj -c Release
+node --test tests/*.test.mjs
+dotnet run --project apps/windows/validation/YourTube.App.Validation.csproj -c Release
+node --test apps/windows/YourTube.Update.Tests/panel-contracts.test.mjs
+./scripts/build-windows.ps1 -Version 0.1.1 -SourceSha (git rev-parse HEAD)
+./scripts/test-windows-native.ps1 -InstallerPath artifacts/windows/releases/YourTubeWindows-win-x64-Setup.exe -EvidenceDirectory artifacts/native-smoke
+```
+
+The packaging script requires clean committed inputs and an empty output directory. It restores pinned Velopack 1.2.161, builds a native self-contained WinUI application, checks native/.NET/PRI payloads, then generates the Setup installer, full nupkg, feed, checksums and exact-source manifest. It refuses Linux packaging. The copied/adapted Music installer smoke requires a disposable interactive account, verifies a responsive visible installed window, retains a screenshot, closes, uninstalls and independently checks cleanup. It never signs in to Google.
+
+## Compile-only on Linux
+
+```sh
+export PATH=/opt/data/tools/dotnet:$PATH
+export LD_LIBRARY_PATH=/opt/data/tools/icu/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+dotnet build apps/windows/YourTube.App/YourTube.App.csproj -c Release -p:OutputType=Library -p:WindowsAppSDKSelfContained=false -p:PrepareForRunDependsOn=CopyFilesToOutputDirectory
+```
+
+This checks real C#/WinUI references only. **Do not distribute this output:** it does not establish native launch, runtime XAML, Credential Locker, install/update or Google consent.
+
+## Account-owner acceptance (not automated)
+
+1. Open installed YourTube. Confirm native sign-in UI, titlebar dragging/caption controls, keyboard and DPI behavior.
+2. Choose Sign in. The app shows a device code. Explicitly open the activation page in your own browser; never paste the code/password/token into chat. Review the Google device identity and permissions; cancel if unacceptable.
+3. Complete authorization. Confirm your account/channel appears and select the intended YouTube identity, including a brand account if applicable.
+4. Confirm actual recent watched titles against YouTube itself. Exercise Refresh and Load more. Treat empty or unavailable data as a diagnostic result, not successful history retrieval. The feed consists of video cards/resume state, not timestamped watch events.
+5. Close/reopen: Credential Locker session restoration should refresh authorization without exposing tokens. Exercise cancellation, declined/expired codes and offline recovery.
+6. Switch identity and sign out during a delayed request: old results must not reappear. Sign out and reopen: displayed history and saved credentials must be gone. Google device access can also be revoked in your Google account.
+7. In Settings, Check for updates. The initial release should report current once installed. A later release must separately prove explicit Check → Download/progress → Restart/install with credential survival. No automatic download/apply or downgrade. Full upgrade acceptance cannot be established from the first release alone.
+
+## Publication and verification
+
+One `ci.yml` workflow: validation/selection, one Windows test/build/package/native-smoke job, and serialized publication/table refresh. Only native/transitive-input changes since the most recent verified Windows publication rebuild Windows. Native code is not rebuilt for mockup/docs/control-plane-only changes. Unknown inputs fail closed and select Windows.
+
+Draft release assets are downloaded and byte-checked before publication. Source/version/package/channel identities are enforced. Setup, full nupkg, feed and checksums remain at their original version-specific URLs. README and release Current downloads tables are generated from one independently verified Windows inventory. The README writer uses the Contents blob-SHA precondition; release body updates are GET/PATCH and cannot be atomic with simultaneous human edits.
+
+Outstanding acceptance must be reported honestly: fixture-backed protocol tests are not completed Google authorization or authenticated history; source/XML checks and Linux compilation are not native runtime tests; native unauthenticated smoke is not Credential Locker or history acceptance; a published first installer is not a tested in-app upgrade.
