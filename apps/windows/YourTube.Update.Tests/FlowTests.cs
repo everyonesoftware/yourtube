@@ -28,6 +28,31 @@ public sealed class FlowTests
         Assert.Equal(100, flow.State.Progress);
     }
     [Fact]
+    public async Task Checked_notes_survive_download_but_not_a_replacement_offer()
+    {
+        var notes = new WindowsChangelog(new string('a', 40), new string('b', 40), ["Improve"], [], []);
+        var b = new Backend { Changelog = notes };
+        using var flow = new WindowsUpdateFlow(b);
+        await flow.CheckAsync();
+        Assert.Same(notes, flow.State.Changelog);
+        b.Offer = new(0, 1, 4);
+        b.Changelog = null;
+        await flow.CheckAsync();
+        Assert.Null(flow.State.Changelog);
+        Assert.Equal(new Version(0, 1, 4), flow.State.Version);
+
+        b.Changelog = notes;
+        await flow.CheckAsync();
+        b.Hold = new();
+        var download = flow.DownloadAsync();
+        Assert.Same(notes, flow.State.Changelog);
+        b.Hold.SetResult();
+        await download;
+        Assert.Equal(UpdatePhase.Ready, flow.State.Phase);
+        Assert.Same(notes, flow.State.Changelog);
+        Assert.Equal(3, b.Checks);
+    }
+    [Fact]
     public async Task Busy_and_disposal_fence_late_checks_and_cancel_download()
     {
         var b = new Backend { Hold = new() }; var flow = new WindowsUpdateFlow(b);
@@ -59,6 +84,8 @@ public sealed class FlowTests
         public bool IsInstalled { get; set; } = true;
         public Version CurrentVersion => new(0, 1, 1);
         public Version? Offer = new(0, 1, 2);
+        public WindowsChangelog? Changelog { get; set; }
+        public Task<WindowsChangelog?> LoadChangelogAsync(CancellationToken token) => Task.FromResult(Changelog);
         public int Checks, Downloads, Applied;
         public TaskCompletionSource? Hold { get; set; }
         public Action<int>? Progress;

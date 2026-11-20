@@ -19,7 +19,11 @@ public sealed class PanelLayoutTests
         Assert.Equal(named["CurrentVersion"].Parent, named["Check"].Parent);
         Assert.Equal("Collapsed", named["Notes"].Attribute("Visibility")?.Value);
         Assert.Equal("What’s new", named["Notes"].Attribute("Header")?.Value);
-        Assert.Contains("Changelog unavailable", named["Notes"].Descendants().Single().Attribute("Text")?.Value);
+        Assert.Equal("False", named["Notes"].Attribute("IsExpanded")?.Value);
+        Assert.Contains(named["NotesStatus"], named["Notes"].Descendants());
+        Assert.Contains(named["NotesContent"], named["Notes"].Descendants());
+        Assert.Contains(named["RetryNotes"], named["Notes"].Descendants());
+        Assert.Equal("Collapsed", named["RetryNotes"].Attribute("Visibility")?.Value);
         Assert.DoesNotContain(root.DescendantsAndSelf().Attributes(), a => a.Name == x + "Class" || a.Name.LocalName == "Click");
     }
 }

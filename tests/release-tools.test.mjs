@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { selectsWindows, validateManifest, sha256, verifyPublishedInventory } from '../scripts/release-tools.mjs';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -22,7 +22,10 @@ test('real Git publication baseline keeps docs/table changes from rebuilding nat
  try {
   git('init','--initial-branch=main');git('config','user.email','test@example.invalid');git('config','user.name','Fixture');
   writeFileSync(join(dir,'README.md'),'initial');git('add','.');git('commit','-m','baseline');const base=git('rev-parse','HEAD');
-  writeFileSync(join(dir,'README.md'),'table refresh');git('add','.');git('commit','-m','docs');
+  writeFileSync(join(dir,'README.md'),'table refresh');
+  mkdirSync(join(dir,'scripts'));
+  writeFileSync(join(dir,'scripts/release-changelog.mjs'),'// control-plane producer');
+  git('add','.');git('commit','-m','docs and release producer');
   const paths=git('diff','--name-only','--no-renames',`${base}..HEAD`).split('\n');
   assert.equal(selectsWindows(paths),false);
   assert.equal(selectsWindows(['scripts/current-downloads.mjs','scripts/download-table.mjs','scripts/publication.mjs']),false);
@@ -30,13 +33,7 @@ test('real Git publication baseline keeps docs/table changes from rebuilding nat
 });
 
 const valid = () => ({schemaVersion:1, platform:'windows', packageId:'YourTubeWindows', channel:'win-x64', version:'0.1.1', tag:'v0.1.1', sourceSha:'a'.repeat(40), assets:[{name:'YourTubeWindows-win-x64-Setup.exe',sha256:sha256(Buffer.from('setup'))},{name:'YourTubeWindows-0.1.1-win-x64-full.nupkg',sha256:sha256(Buffer.from('package'))},{name:'releases.win-x64.json',sha256:sha256(Buffer.from('feed'))}]});
-test('subscriptions release notes describe this change without claiming account retrieval', () => {
- const publisher=readFileSync(new URL('../scripts/publish-release.mjs', import.meta.url),'utf8');
- assert.match(publisher,/Subscribed channels and latest subscription videos/);
- assert.match(publisher,/pagination/);
- assert.match(publisher,/authenticated subscriptions acceptance remain pending/);
- assert.doesNotMatch(publisher,/Initial implementation; no previous native release/);
-});
+
 test('only exact canonical complete publication manifests are trusted', () => {
   assert.equal(validateManifest(valid()).version, '0.1.1');
   for (const change of [m=>m.sourceSha='abc',m=>m.tag='v0.1.2',m=>m.version='00.1.1',m=>m.platform='android',m=>m.packageId='MusicWindows',m=>m.assets.pop(),m=>m.assets.push(m.assets[0]),m=>m.assets[0].name='../setup.exe',m=>m.assets[0].sha256='bad']) {

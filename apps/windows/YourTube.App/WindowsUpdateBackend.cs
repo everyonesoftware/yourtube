@@ -2,7 +2,7 @@ using YourTube.Update;
 namespace YourTube.App;
 
 internal enum UpdatePhase { Idle, Checking, Current, Available, Downloading, Ready, Restarting, Error, NotInstalled }
-internal sealed record UpdateState(UpdatePhase Phase, string Message, Version? Version = null, int Progress = 0);
+internal sealed record UpdateState(UpdatePhase Phase, string Message, Version? Version = null, int Progress = 0, WindowsChangelog? Changelog = null, bool NotesLoading = false);
 
 /// <summary>Panel-owned serialized state; independent of Core and Google credentials.</summary>
 internal sealed class WindowsUpdateFlow : IDisposable
@@ -12,6 +12,7 @@ internal sealed class WindowsUpdateFlow : IDisposable
     private readonly CancellationTokenSource lifetime = new();
     private int busy;
     private object? activeDownload;
+    private object? activeOffer;
     private bool disposed;
     private readonly object sync = new();
     private UpdateState state = new(UpdatePhase.Idle, "Not checked yet");
@@ -27,31 +28,67 @@ internal sealed class WindowsUpdateFlow : IDisposable
         {
             if (State.Phase is UpdatePhase.Ready or UpdatePhase.Restarting) return;
             if (!backend.IsInstalled) { Set(new(UpdatePhase.NotInstalled, "Install YourTube using its Windows installer to enable in-app updates.")); return; }
-            Set(new(UpdatePhase.Checking, "Checking for updates…"));
+            lock (sync)
+            {
+                activeOffer = null;
+                Set(new(UpdatePhase.Checking, "Checking for updates…"));
+            }
             var version = await backend.CheckAsync();
-            Set(version is not null && version > backend.CurrentVersion ? new(UpdatePhase.Available, "", version) : new(UpdatePhase.Current, "No newer Windows version is available."));
+            if (version is not null && version > backend.CurrentVersion)
+            {
+                lock (sync)
+                {
+                    if (disposed) return;
+                    activeOffer = new object();
+                    Set(new(UpdatePhase.Available, "", version, NotesLoading: true));
+                    _ = LoadNotesAsync(activeOffer);
+                }
+            }
+            else Set(new(UpdatePhase.Current, "No newer Windows version is available."));
         }
         catch { Set(new(UpdatePhase.Error, "Could not check for updates. Try again later; GitHub may be unavailable or rate-limiting requests.")); }
         finally { Interlocked.Exchange(ref busy, 0); }
+    }
+    public Task RetryNotesAsync()
+    {
+        lock (sync)
+        {
+            if (disposed || state.Phase != UpdatePhase.Available || state.NotesLoading || state.Changelog is not null || activeOffer is not { } offer)
+                return Task.CompletedTask;
+            Set(state with { NotesLoading = true });
+            return LoadNotesAsync(offer);
+        }
+    }
+    private async Task LoadNotesAsync(object offer)
+    {
+        WindowsChangelog? notes;
+        try { notes = await backend.LoadChangelogAsync(lifetime.Token); }
+        catch { notes = null; }
+        lock (sync)
+        {
+            if (ReferenceEquals(activeOffer, offer) && state.Version is not null)
+                Set(state with { Changelog = notes, NotesLoading = false });
+        }
     }
     public async Task DownloadAsync()
     {
         if (!Enter()) return;
         try
         {
-            if (State.Phase != UpdatePhase.Available || State.Version is not { } version) return;
+            var offer = State;
+            if (offer.Phase != UpdatePhase.Available || offer.Version is not { } version) return;
             var downloadIdentity = new object();
             activeDownload = downloadIdentity;
-            Set(new(UpdatePhase.Downloading, "Downloading update…", version));
+            lock (sync) Set(state with { Phase = UpdatePhase.Downloading, Message = "Downloading update…" });
             await backend.DownloadAsync(version, value =>
             {
                 lock (sync)
                 {
                     if (ReferenceEquals(activeDownload, downloadIdentity) && state.Phase == UpdatePhase.Downloading)
-                        Set(new(UpdatePhase.Downloading, value >= 100 ? "Verifying update…" : "Downloading update…", version, Math.Clamp(value, 0, 100)));
+                        Set(state with { Message = value >= 100 ? "Verifying update…" : "Downloading update…", Progress = Math.Clamp(value, 0, 100) });
                 }
             }, lifetime.Token);
-            Set(new(UpdatePhase.Ready, "Ready to install", version, 100));
+            lock (sync) Set(state with { Phase = UpdatePhase.Ready, Message = "Ready to install", Progress = 100 });
         }
         catch { Set(new(UpdatePhase.Error, "Download failed or was cancelled. Nothing was installed. Check for updates to retry.")); }
         finally { Interlocked.Exchange(ref busy, 0); }
@@ -59,15 +96,15 @@ internal sealed class WindowsUpdateFlow : IDisposable
     public Task RestartAsync()
     {
         if (!Enter()) return Task.CompletedTask;
-        var version = State.Version;
+        var ready = State;
         try
         {
-            if (State.Phase != UpdatePhase.Ready || version is null) return Task.CompletedTask;
-            Set(new(UpdatePhase.Restarting, "Restarting…", version, 100));
+            if (ready.Phase != UpdatePhase.Ready || ready.Version is not { } version) return Task.CompletedTask;
+            lock (sync) Set(state with { Phase = UpdatePhase.Restarting, Message = "Restarting…" });
             beforeRestart?.Invoke();
             if (!disposed) backend.ApplyAndRestart(version);
         }
-        catch { Set(new(UpdatePhase.Ready, "Could not prepare or start the installer. Try Restart and install again.", version, 100)); }
+        catch { lock (sync) Set(state with { Phase = UpdatePhase.Ready, Message = "Could not prepare or start the installer. Try Restart and install again." }); }
         finally { Interlocked.Exchange(ref busy, 0); }
         return Task.CompletedTask;
     }

@@ -1,9 +1,12 @@
 import { createHash } from 'node:crypto';
 
+export const manifestName = 'yourtube-windows.json';
+export const maxManifestBytes = 1024 * 1024;
+
 export function selectsWindows(paths) {
   return paths.some(path => {
     if (path.startsWith('apps/windows/') || ['global.json', '.github/workflows/ci.yml', 'scripts/build-windows.ps1', 'scripts/test-windows-native.ps1'].includes(path)) return true;
-    if (/^(docs\/|mockups\/|tests\/)/.test(path) || ['README.md', 'AGENTS.md', 'THIRD-PARTY-NOTICES.md', '.gitignore', 'package.json', 'package-lock.json', 'scripts/release-tools.mjs', 'scripts/select-windows.mjs', 'scripts/current-downloads.mjs', 'scripts/publish-release.mjs', 'scripts/publication.mjs', 'scripts/download-table.mjs'].includes(path)) return false;
+    if (/^(docs\/|mockups\/|tests\/)/.test(path) || ['README.md', 'AGENTS.md', 'THIRD-PARTY-NOTICES.md', '.gitignore', 'package.json', 'package-lock.json', 'scripts/release-tools.mjs', 'scripts/release-changelog.mjs', 'scripts/select-windows.mjs', 'scripts/current-downloads.mjs', 'scripts/publish-release.mjs', 'scripts/publication.mjs', 'scripts/download-table.mjs'].includes(path)) return false;
     return true;
   });
 }
