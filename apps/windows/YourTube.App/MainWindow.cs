@@ -31,6 +31,7 @@ internal sealed class MainWindow : Window
         using var reader = new StreamReader(stream);
         root = (Grid)XamlReader.Load(reader.ReadToEnd());
         Title = "YourTube";
+        AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "YourTube.ico"));
         Content = root;
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(C<Border>("TitleBar"));

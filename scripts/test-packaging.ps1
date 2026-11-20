@@ -11,7 +11,16 @@ $null=New-Item -ItemType Directory $root
 try {
  $names=@('YourTube.exe','YourTube.dll','YourTube.Core.dll','YourTube.Update.dll','Microsoft.UI.Xaml.dll','Microsoft.WindowsAppRuntime.dll','coreclr.dll','resources.pri')
  foreach($name in $names){[IO.File]::WriteAllText((Join-Path $root $name),'fixture-not-binary')}
+ $rejected=$false; try {Assert-NativePayload $root}catch{$rejected=$true}
+ if(-not $rejected){throw 'Missing runtime icon accepted'}
+ $assets=Join-Path $root 'Assets'
+ $null=New-Item -ItemType Directory $assets
+ [IO.File]::WriteAllText((Join-Path $assets 'YourTube.ico'),'fixture-not-binary')
  Assert-NativePayload $root
+ [IO.File]::WriteAllText((Join-Path $assets 'YourTube.ico'),'')
+ $rejected=$false; try {Assert-NativePayload $root}catch{$rejected=$true}
+ if(-not $rejected){throw 'Empty runtime icon accepted'}
+ [IO.File]::WriteAllText((Join-Path $assets 'YourTube.ico'),'fixture-not-binary')
  Remove-Item (Join-Path $root 'Microsoft.UI.Xaml.dll')
  $rejected=$false; try {Assert-NativePayload $root}catch{$rejected=$true}
  if(-not $rejected){throw 'Incomplete native payload accepted'}

@@ -7,7 +7,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 function Assert-NativePayload([string]$Directory) {
-    foreach ($name in @('YourTube.exe','YourTube.dll','YourTube.Core.dll','YourTube.Update.dll','Microsoft.UI.Xaml.dll','Microsoft.WindowsAppRuntime.dll','coreclr.dll','resources.pri')) {
+    foreach ($name in @('YourTube.exe','YourTube.dll','YourTube.Core.dll','YourTube.Update.dll','Microsoft.UI.Xaml.dll','Microsoft.WindowsAppRuntime.dll','coreclr.dll','resources.pri','Assets/YourTube.ico')) {
         $path = Join-Path $Directory $name
         if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-Item -LiteralPath $path).Length -eq 0) { throw "Missing native publish payload: $name" }
     }

@@ -39,6 +39,7 @@ $summary = [ordered]@{
     installer = $InstallerPath; installerSha256 = $null; installRoot = $null
     evidenceDirectory = $evidence; installVerified = $false; windowVerified = $false
     screenshotSha256 = $null; uninstallVerified = $false; cleanupRemovedInstallRoot = $false
+    iconVerified = $false; taskbarCaptured = $false; taskbarSha256 = $null
     cleanupErrors = @(); failure = $null
 }
 $installRoot = $null
@@ -129,6 +130,67 @@ function Get-RemainingInstallation {
     [pscustomobject]@{ files = $files; registryPresent = (Test-Path -LiteralPath $registryPath)
         shortcuts = @(Get-StartMenuLinks); processes = @(Get-OwnedProcesses | Select-Object ProcessId, ExecutablePath) }
 }
+function Assert-InstalledIcon([string]$InstalledPath, [string[]]$ExpectedPaths) {
+    $diagnostic = [ordered]@{ installedPath = $InstalledPath; installedSha256 = $null
+        comparison = 'unavailable'; references = @(); failure = $null }
+    try {
+        if (-not (Test-Path -LiteralPath $InstalledPath -PathType Leaf) -or (Get-Item -LiteralPath $InstalledPath).Length -le 0) {
+            throw 'Missing or empty installed YourTube ICO'
+        }
+        $diagnostic.installedSha256 = (Get-FileHash -LiteralPath $InstalledPath -Algorithm SHA256).Hash
+        foreach ($expected in $ExpectedPaths | Select-Object -Unique) {
+            if (-not (Test-Path -LiteralPath $expected -PathType Leaf)) { continue }
+            $hash = (Get-FileHash -LiteralPath $expected -Algorithm SHA256).Hash
+            $diagnostic.references += @{ path = $expected; sha256 = $hash }
+            if ($hash -cne $diagnostic.installedSha256) {
+                $diagnostic.comparison = 'mismatch'
+                throw 'Installed YourTube ICO differs from available publish/source bytes'
+            }
+            $diagnostic.comparison = 'matched'
+        }
+    } catch { $diagnostic.failure = $_.ToString(); throw }
+    finally { Write-Json $diagnostic 'installed-icon.json' }
+}
+function Save-WindowIcons($Candidate) {
+    $diagnostic = [ordered]@{ windowHandle = $Candidate.Handle.ToInt64(); icons = @()
+        pixelComparison = 'not-performed'; explorerGroupIconVerified = $false; failure = $null }
+    try {
+        foreach ($spec in @(@{ name = 'small'; kind = 0; classIndex = -34 }, @{ name = 'large'; kind = 1; classIndex = -14 })) {
+            $result = [UIntPtr]::Zero
+            $sent = [YourTubeSmoke.Native]::SendMessageTimeout($Candidate.Handle, 0x007F <# WM_GETICON #>,
+                [UIntPtr]::new([uint32]$spec.kind), [IntPtr]::Zero, [YourTubeSmoke.Native]::SMTO_ABORTIFHUNG, 1000, [ref]$result)
+            if ($sent -eq [IntPtr]::Zero) { throw "WM_GETICON timed out/failed for $($spec.name)" }
+            $handle = [IntPtr]::new([long]$result.ToUInt64())
+            $source = 'WM_GETICON'
+            if ($handle -eq [IntPtr]::Zero) {
+                # Documented fallback: GCLP_HICONSM (-34), GCLP_HICON (-14), not a fabricated system icon.
+                $handle = [YourTubeSmoke.Native]::ClassIcon($Candidate.Handle, $spec.classIndex)
+                $source = 'class-fallback'
+            }
+            $entry = [ordered]@{ size = $spec.name; source = $source; handle = $handle.ToInt64()
+                classIndex = $spec.classIndex; png = "window-icon-$($spec.name).png"; sha256 = $null; width = 0; height = 0 }
+            $diagnostic.icons += $entry
+            if ($handle -eq [IntPtr]::Zero) { throw "No $($spec.name) HWND or class HICON" }
+            # WM_GETICON/class handles are borrowed: destroy only our CopyIcon, never the app's icon.
+            $copy = [YourTubeSmoke.Native]::CopyIcon($handle)
+            if ($copy -eq [IntPtr]::Zero) { throw 'Cannot copy window HICON' }
+            $icon = $null; $bitmap = $null
+            try {
+                $icon = [Drawing.Icon]::FromHandle($copy)
+                $bitmap = $icon.ToBitmap()
+                $png = Join-Path $evidence $entry.png
+                $bitmap.Save($png, [Drawing.Imaging.ImageFormat]::Png)
+                $entry.width = $bitmap.Width; $entry.height = $bitmap.Height
+                $entry.sha256 = (Get-FileHash -LiteralPath $png -Algorithm SHA256).Hash
+            } finally {
+                if ($bitmap) { $bitmap.Dispose() }
+                if ($icon) { $icon.Dispose() }
+                $null = [YourTubeSmoke.Native]::DestroyIcon($copy)
+            }
+        }
+    } catch { $diagnostic.failure = $_.ToString(); throw }
+    finally { Write-Json $diagnostic 'window-icons.json' }
+}
 function Save-WindowScreenshot($Candidate) {
     # Refuse a background/occluded window: capture pixels from a foreground visible window.
     $null = [YourTubeSmoke.Native]::ShowWindow($Candidate.Handle, 3) # maximize to fit the runner display
@@ -157,6 +219,57 @@ function Save-WindowScreenshot($Candidate) {
         if ($colors.Count -lt 8) { throw 'Screenshot is blank or has insufficient pixel variation; desktop capture not proven' }
         Write-Json @{ width = $width; height = $height; sampledColors = $colors.Count; foregroundHandle = $Candidate.Handle.ToInt64() } 'screenshot.json'
     } finally { $graphics.Dispose(); $bitmap.Dispose() }
+}
+function Save-TaskbarScreenshot {
+    $diagnostic = [ordered]@{ status = 'failed'; handle = 0; left = 0; top = 0; width = 0; height = 0
+        sampledColors = 0; capture = 'visible-desktop-pixels'; visualInspection = 'required'; failure = $null }
+    $bitmap = $null; $graphics = $null
+    try {
+        $taskbar = [YourTubeSmoke.Native]::FindWindow('Shell_TrayWnd', $null)
+        $diagnostic.handle = $taskbar.ToInt64()
+        if ($taskbar -eq [IntPtr]::Zero -or -not [YourTubeSmoke.Native]::IsWindowVisible($taskbar)) {
+            throw 'Taskbar Shell_TrayWnd is not visible; no headless/synthetic fallback'
+        }
+        $rect = [YourTubeSmoke.Native+RECT]::new()
+        if (-not [YourTubeSmoke.Native]::GetWindowRect($taskbar, [ref]$rect)) { throw 'Taskbar bounds unavailable' }
+        $bounds = [Windows.Forms.SystemInformation]::VirtualScreen
+        $width = $rect.Right - $rect.Left; $height = $rect.Bottom - $rect.Top
+        $diagnostic.left = $rect.Left; $diagnostic.top = $rect.Top
+        $diagnostic.width = $width; $diagnostic.height = $height
+        if ($width -lt 16 -or $height -lt 16 -or $rect.Left -lt $bounds.Left -or $rect.Top -lt $bounds.Top -or
+            $rect.Right -gt $bounds.Right -or $rect.Bottom -gt $bounds.Bottom) {
+            throw 'Taskbar hidden/auto-hidden or offscreen; visible taskbar capture required'
+        }
+        # Maximization normally respects the taskbar work area. Verify rather than change taskbar
+        # settings, raise Explorer, move the pointer, clear caches, or manipulate user pins.
+        foreach ($fx in @(0.1, 0.5, 0.9)) {
+            foreach ($fy in @(0.25, 0.5, 0.75)) {
+                $point = [YourTubeSmoke.Native+POINT]::new()
+                $point.X = $rect.Left + [int](($width - 1) * $fx)
+                $point.Y = $rect.Top + [int](($height - 1) * $fy)
+                $hit = [YourTubeSmoke.Native]::WindowFromPoint($point)
+                if ($hit -ne $taskbar -and -not [YourTubeSmoke.Native]::IsChild($taskbar, $hit)) {
+                    throw 'Taskbar is occluded/auto-hidden at sampled desktop points; cannot prove visible capture'
+                }
+            }
+        }
+        $bitmap = [Drawing.Bitmap]::new($width, $height)
+        $graphics = [Drawing.Graphics]::FromImage($bitmap)
+        $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, $bitmap.Size)
+        $colors = [Collections.Generic.HashSet[int]]::new()
+        for ($x = 0; $x -lt $width; $x += 7) {
+            for ($y = 0; $y -lt $height; $y += 3) { $null = $colors.Add($bitmap.GetPixel($x, $y).ToArgb()) }
+        }
+        $diagnostic.sampledColors = $colors.Count
+        $bitmap.Save((Join-Path $evidence 'taskbar.png'), [Drawing.Imaging.ImageFormat]::Png)
+        if ($colors.Count -lt 8) { throw 'Taskbar capture is blank or insufficiently varied' }
+        $diagnostic.status = 'captured'
+    } catch { $diagnostic.failure = $_.ToString(); throw }
+    finally {
+        if ($graphics) { $graphics.Dispose() }
+        if ($bitmap) { $bitmap.Dispose() }
+        Write-Json $diagnostic 'taskbar.json'
+    }
 }
 
 try {
@@ -194,6 +307,17 @@ namespace YourTubeSmoke {
         public const uint SMTO_ABORTIFHUNG = 0x0002;
         public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
         [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+        [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
+        [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string className, string title);
+        [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT point);
+        [DllImport("user32.dll")] public static extern bool IsChild(IntPtr parent, IntPtr child);
+        [DllImport("user32.dll")] public static extern IntPtr CopyIcon(IntPtr icon);
+        [DllImport("user32.dll")] public static extern bool DestroyIcon(IntPtr icon);
+        [DllImport("user32.dll", EntryPoint="GetClassLongPtrW")] public static extern IntPtr GetClassLongPtr(IntPtr hWnd, int index);
+        [DllImport("user32.dll", EntryPoint="GetClassLongW")] public static extern uint GetClassLong32(IntPtr hWnd, int index);
+        public static IntPtr ClassIcon(IntPtr hWnd, int index) {
+            return IntPtr.Size == 8 ? GetClassLongPtr(hWnd, index) : new IntPtr(unchecked((int)GetClassLong32(hWnd, index)));
+        }
         [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr extra);
         [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
         [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
@@ -246,6 +370,11 @@ namespace YourTubeSmoke {
         if ($file.Length -le 0) { throw "Empty installed file: $relative" }
     }
     Write-Json @(Get-ChildItem -LiteralPath $installRoot -Recurse -File | Select-Object FullName, Length) 'installed-files.json'
+    # CI retains the sibling publish tree; source is an independent reference when a checkout exists.
+    # A standalone downloaded installer may have neither: record unavailable, never claim a byte match.
+    $expectedIcons = @((Join-Path (Split-Path (Split-Path $installer)) 'publish/Assets/YourTube.ico'),
+        (Join-Path (Split-Path $PSScriptRoot) 'apps/windows/YourTube.App/Assets/YourTube.ico'))
+    Assert-InstalledIcon (Join-Path $installRoot 'current\Assets\YourTube.ico') $expectedIcons
     if (-not (Test-Path -LiteralPath $registryPath)) { throw 'Installer did not register YourTubeWindows' }
     $registration = Get-ItemProperty -LiteralPath $registryPath
     if ($registration.InstallLocation.TrimEnd('\') -ine $installRoot.TrimEnd('\')) { throw 'Installer registered a different install location' }
@@ -298,6 +427,11 @@ namespace YourTubeSmoke {
         responsiveSamples = $stableSamples; width = $window.Width; height = $window.Height } 'window.json'
     Save-WindowScreenshot $window
     $summary.screenshotSha256 = (Get-FileHash -LiteralPath (Join-Path $evidence 'window.png') -Algorithm SHA256).Hash
+    Save-WindowIcons $window
+    $summary.iconVerified = $true # installed nonempty ICO and real HICONs, NOT a pixel/artwork match
+    Save-TaskbarScreenshot
+    $summary.taskbarSha256 = (Get-FileHash -LiteralPath (Join-Path $evidence 'taskbar.png') -Algorithm SHA256).Hash
+    $summary.taskbarCaptured = $true # visual inspection of Explorer's grouped icon remains separate
     # Re-probe after capture, not just a window that once existed.
     if (-not @([YourTubeSmoke.Native]::Find($appPid) | Where-Object { $_.Handle -eq $window.Handle -and $_.Responsive }).Count) {
         throw 'YourTube window stopped responding during screenshot capture'
