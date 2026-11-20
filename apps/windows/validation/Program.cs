@@ -16,6 +16,7 @@ Check(BrowserPolicy.VideoUri("aB_cD-eF012")?.AbsoluteUri == "https://www.youtube
 Check(BrowserPolicy.VideoUri("../bad") is null, "invalid video ID rejected");
 Console.WriteLine("PASS: browser allowlists and canonical video IDs.");
 
+await PlaybackStateTests.Run();
 await StateTests.Run();
 await FailureTests.Run();
 await SubscriptionStateTests.Run();

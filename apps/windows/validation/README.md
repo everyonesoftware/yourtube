@@ -32,7 +32,27 @@ The optional second runner argument checks the emitted Windows x64 PE, version `
 dotnet publish apps/windows/YourTube.App/YourTube.App.csproj -c Release -r win-x64
 ```
 
+## Theater playback state and native adapter
+
+The production `PlaybackController<T>` is source-linked into this runner. Behavioral RED→GREEN checks cover real-feed selection, exclusion of the current video from Up next, Back disposal, eight invalidation paths (account, Settings, view, feed, sign-out, Back, close and reselection), ignored cancellation, late native-resource disposal, hidden Next/Retry, current reference membership, single-item recovery, stale native errors, sanitized failures, and no automatic retry loop. A minimal test-only `IPlaybackResolver` implements the exact real project contract; cancellation after resolution is checked before native source creation, and expired results never attach. No fixture data enters the app.
+
+`NativePlaybackSource.cs` is self-contained and source-linkable in the parent's Windows proof harness:
+
+```csharp
+using var source = await NativePlaybackSource.CreateAsync(resolver, media, cancellationToken);
+source.Failed += OnSafeNativeFailure;
+mediaPlayer.Source = source.Source;
+```
+
+It exposes `Source` (`Windows.Media.Core.MediaSource`), `Media`, `HasFailed` and a parameterless `Failed` event. The adapter does **not** own the resolver. The caller detaches/disposes its `MediaPlayer` and disposes the adapter on replacement/close. It builds AMS from the in-memory DASH manifest, handles byte-range requests with a WinRT deferral and `IPlaybackResolver.ReadResourceAsync`, and supplies failure results instead of silently delegating failures to Windows networking. A deny-all `IHttpFilter` blocks native fallback requests as defense in depth. Callback errors carry no provider text. Expiration stops playback and offers explicit Retry; each Retry resolves once and never automatically loops.
+
+Activation inventory: history and subscription cards share `HistoryList` → `OpenVideoAsync`; horizontal Up next verifies the visible queue and then uses the same current-account/feed boundary; Next uses the first remaining current-feed item only; Retry retains a single selected card; Open YouTube is explicit and reuses unchanged `BrowserPolicy`. Back restores the existing browse snapshot and attempts native focus restoration. Account selection, refresh/loading, navigation, Settings, cancellation, sign-out and close invalidate playback. Native system play/pause/volume/scrub/fullscreen/playback-rate controls operate the actual `MediaPlayer`; no quality picker, captions, 4K, views, dates, subscribed-state claims, recommendations or autoplay queue are fabricated.
+
+The Theater stage and metadata/shelf are production `Shell.xaml` + `MainWindow.cs`; they are not recreated in the standalone adapter harness. The shell retains its extended titlebar, account/vault flow and Settings updater.
+
 ## Windows acceptance still required
+
+The parent's Windows CI/native proof is mandatory **before publication**. Linux checks below do not establish any native playback acceptance. Public-video backend proof must include actual AMS creation, media opened, both audio/video tracks, nonzero decoded video dimensions, advancing position, seek, source switch and teardown through this same adapter. Also inspect the installed production Theater view (not just the harness) for full-width sage composition, live native controls/playback rate, pointer/Enter/Space queue/card activation, single-item Back/Retry, focus return, resizing/DPI, error recovery and source-expiry recovery. Verify no fallback native HTTP fetch occurs on denied/failed resource requests. Public-video proof does not establish private/paid/restricted playback or authenticated owner history/subscriptions acceptance.
 
 - Launch the native published/installed build; confirm runtime XAML, theme resources, merged PRI, taskbar identity and caption buttons resolve.
 - Verify titlebar dragging, active/inactive colors, maximize/restore, keyboard operation, DPI scaling, focus and screen-reader announcements.

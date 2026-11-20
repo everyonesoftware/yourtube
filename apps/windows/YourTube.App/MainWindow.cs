@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
 using Windows.System;
 using YourTube.Core;
+using YourTube.Playback;
 
 namespace YourTube.App;
 
@@ -15,6 +16,9 @@ internal sealed class MainWindow : Window
     private readonly Grid root;
     private readonly HttpClient http = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(45) };
     private readonly WindowsUpdatesPanel updatesPanel;
+    private readonly PlaybackResolver playbackResolver = new();
+    private readonly PlaybackController<NativePlaybackSession> playback;
+    private NativePlaybackSession? boundSession;
     private SessionController? controller;
     private IReadOnlyList<HistoryVideo>? displayedVideos;
     private IReadOnlyList<YouTubeAccount>? displayedAccounts;
@@ -44,34 +48,65 @@ internal sealed class MainWindow : Window
         // Integration point: updater owns its native view and transport, never auth.
         updatesPanel = new WindowsUpdatesPanel();
         C<ContentControl>("SettingsHost").Content = updatesPanel.View;
+        var theater = C<MediaPlayerElement>("TheaterPlayer");
+        playback = new PlaybackController<NativePlaybackSession>(playbackResolver,
+            async (media, ct) => new NativePlaybackSession(await NativePlaybackSource.CreateAsync(playbackResolver, media, ct), theater));
+        playback.Changed += RenderPlayback;
+        C<Button>("PlayerBackButton").Click += (_, _) =>
+        {
+            var selected = playback.Selected;
+            playback.Back();
+            if (selected is not null && C<ListView>("HistoryList").ContainerFromItem(selected) is Control item) item.Focus(FocusState.Programmatic);
+            else C<ListView>("HistoryList").Focus(FocusState.Programmatic);
+        };
+        C<Button>("PlayerRetryButton").Click += async (_, _) => { SyncPlaybackContext(); await playback.RetryAsync(); };
+        C<Button>("PlayerNextButton").Click += async (_, _) => { SyncPlaybackContext(); await playback.NextAsync(); };
+        C<Button>("PlayerOpenYouTubeButton").Click += async (_, _) =>
+        {
+            SyncPlaybackContext();
+            if (playback.Selected is { } video && BrowserPolicy.VideoUri(video.VideoId) is { } uri) await LaunchExplicitAsync(uri);
+        };
+        C<ListView>("PlayerQueue").ContainerContentChanging += (_, args) => RenderHistoryRow(args);
+        C<ListView>("PlayerQueue").ItemClick += async (_, args) =>
+        {
+            SyncPlaybackContext();
+            if (args.ClickedItem is HistoryVideo video && playback.Selected is not null && playback.Queue.Any(v => ReferenceEquals(v, video))) await OpenVideoAsync(video);
+        };
+        C<MediaPlayerElement>("TheaterPlayer").SizeChanged += (_, args) =>
+            C<MediaPlayerElement>("TheaterPlayer").Height = Math.Clamp(args.NewSize.Width * 9 / 16, 240, 650);
         C<Button>("SettingsButton").Click += async (_, _) => await NavigateAsync(settingsVisible ? lastBrowseView : BrowseView.Settings);
         C<Button>("HistoryButton").Click += async (_, _) => await NavigateAsync(BrowseView.History);
         C<Button>("SubscriptionsButton").Click += async (_, _) => await NavigateAsync(BrowseView.Subscriptions);
         C<Button>("SignInButton").Click += async (_, _) => { if (controller is { Busy: false }) await controller.SignInAsync(); };
         C<Button>("RestoreButton").Click += async (_, _) => { if (controller is { Busy: false }) await controller.InitializeAsync(); else if (controller is null) await InitializeServicesAsync(); };
         C<Button>("OpenActivationButton").Click += async (_, _) => await OpenActivationAsync();
-        C<Button>("CancelButton").Click += (_, _) => controller?.Cancel();
-        C<Button>("SignOutButton").Click += (_, _) => controller?.SignOut();
+        C<Button>("CancelButton").Click += (_, _) => { playback.Back(); controller?.Cancel(); };
+        C<Button>("SignOutButton").Click += (_, _) => { playback.Back(); controller?.SignOut(); };
         C<Button>("RefreshButton").Click += async (_, _) => { if (controller is not null) await controller.LoadHistoryAsync(); };
         C<Button>("LoadMoreButton").Click += async (_, _) => { if (controller is not null) await controller.LoadHistoryAsync(append: true); };
         C<ComboBox>("AccountChooser").SelectionChanged += async (_, _) =>
         {
             if (!rendering && !closed && controller is not null && C<ComboBox>("AccountChooser").SelectedItem is ComboBoxItem { Tag: YouTubeAccount account })
+            {
+                playback.Back();
                 await controller.SelectAccountAsync(account);
+            }
         };
         C<ListView>("ChannelsList").ContainerContentChanging += (_, args) => RenderChannelRow(args);
         C<ListView>("HistoryList").ContainerContentChanging += (_, args) => RenderHistoryRow(args);
         C<ListView>("HistoryList").ItemClick += async (_, args) =>
         {
-            if (closed || settingsVisible || controller is not { Busy: false, Phase: SessionPhase.SignedIn } || controller.View == BrowseView.Settings || args.ClickedItem is not HistoryVideo video ||
+            if (closed || settingsVisible || playback.Selected is not null || controller is not { Busy: false, Phase: SessionPhase.SignedIn } || controller.View == BrowseView.Settings || args.ClickedItem is not HistoryVideo video ||
                 !controller.Videos.Any(v => ReferenceEquals(v, video))) return;
-            var uri = BrowserPolicy.VideoUri(video.VideoId);
-            if (uri is not null) await LaunchExplicitAsync(uri);
+            await OpenVideoAsync(video);
         };
         root.Loaded += async (_, _) => { if (!initialized) { initialized = true; await InitializeServicesAsync(); } };
         Closed += (_, _) =>
         {
             closed = true;
+            playback.Dispose();
+            boundSession = null;
+            playbackResolver.Dispose();
             controller?.Close();
             updatesPanel.Dispose();
             http.Dispose();
@@ -111,6 +146,7 @@ internal sealed class MainWindow : Window
     {
         if (closed) return;
         if (view != BrowseView.Settings && !settingsVisible && controller?.Phase != SessionPhase.SignedIn) return;
+        playback.Back();
         settingsVisible = view == BrowseView.Settings;
         if (!settingsVisible) lastBrowseView = view;
         if (controller is not null) await controller.NavigateAsync(view);
@@ -120,6 +156,7 @@ internal sealed class MainWindow : Window
     private void Render()
     {
         if (closed) return;
+        SyncPlaybackContext();
         C<ScrollViewer>("SettingsPanel").Visibility = ToVisibility(settingsVisible);
         C<Button>("SettingsButton").Content = settingsVisible ? "Back" : "Settings";
         if (controller is null)
@@ -144,7 +181,7 @@ internal sealed class MainWindow : Window
             C<TextBlock>("ChannelsStatusText").Text = controller.Channels.Count > 0 ? $"Subscribed channels ({controller.Channels.Count})" : controller.Busy ? "Loading subscribed channels…" : "No subscribed channels loaded.";
             C<TextBlock>("VideosStatusText").Text = controller.Videos.Count > 0 ? $"{(subscriptions ? "Latest subscription videos" : "History videos")} ({controller.Videos.Count})" : controller.Busy ? "Loading videos…" : "No videos loaded.";
             AutomationProperties.SetName(C<ListView>("HistoryList"), subscriptions ? "Latest subscription videos" : "Watch history");
-            C<Grid>("HistoryPanel").Visibility = ToVisibility(!settingsVisible && signedIn);
+            C<Grid>("HistoryPanel").Visibility = ToVisibility(!settingsVisible && signedIn && playback.Selected is null);
             C<ScrollViewer>("SignInPanel").Visibility = ToVisibility(!settingsVisible && controller.Phase == SessionPhase.SignedOut);
             C<StackPanel>("DevicePanel").Visibility = ToVisibility(!settingsVisible && controller.Phase == SessionPhase.Authorizing);
             C<ProgressRing>("BusyRing").IsActive = controller.Busy;
@@ -184,6 +221,7 @@ internal sealed class MainWindow : Window
             }
         }
         finally { rendering = false; }
+        RenderPlayback();
     }
 
     private static Visibility ToVisibility(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
@@ -214,8 +252,59 @@ internal sealed class MainWindow : Window
         if (video.PercentWatched is int percent)
             row.Children.Add(new TextBlock { Text = $"{Math.Clamp(percent, 0, 100)}% watched", FontSize = 12 });
         host.Children.Add(row);
-        AutomationProperties.SetName(args.ItemContainer, $"{video.Title}, {video.Channel}, {video.Duration}. Open in browser.");
+        AutomationProperties.SetName(args.ItemContainer, $"{video.Title}, {video.Channel}, {video.Duration}. Play natively.");
         args.Handled = true;
+    }
+
+    private void SyncPlaybackContext() => playback.SetContext(!closed && !settingsVisible && controller is { Busy: false, Phase: SessionPhase.SignedIn }, controller?.SelectedAccount, controller?.View ?? BrowseView.History, controller?.Videos ?? []);
+
+    private async Task OpenVideoAsync(HistoryVideo video)
+    {
+        SyncPlaybackContext();
+        if (closed || settingsVisible || controller is not { Busy: false, Phase: SessionPhase.SignedIn } || controller.View == BrowseView.Settings ||
+            !controller.Videos.Any(v => ReferenceEquals(v, video))) return;
+        await playback.SelectAsync(video);
+    }
+
+    private void RenderPlayback()
+    {
+        if (closed) return;
+        var selected = playback.Selected;
+        C<ScrollViewer>("TheaterPanel").Visibility = ToVisibility(selected is not null && !settingsVisible);
+        C<Grid>("HistoryPanel").Visibility = ToVisibility(selected is null && !settingsVisible && controller?.Phase == SessionPhase.SignedIn);
+        var source = playback.Active;
+        if (!ReferenceEquals(source, boundSession))
+        {
+            boundSession = source;
+            if (source is not null)
+            {
+                try
+                {
+                    var active = source;
+                    active.Failed += () => playback.Fail(active);
+                    var player = active.Prepare();
+                    active.Open();
+                    if (!active.HasFailed) player.Play();
+                }
+                catch { playback.Fail(source); source = playback.Active; }
+            }
+        }
+        C<TextBlock>("PlayerTitle").Text = source?.Media.Title ?? selected?.Title ?? "";
+        C<TextBlock>("PlayerAuthor").Text = source is null ? selected?.Channel ?? "" : $"{source.Media.Author} · {source.Media.Duration:g}";
+        C<TextBlock>("PlayerDescription").Text = source?.Media.Description ?? "";
+        C<TextBlock>("PlayerError").Text = playback.Error ?? "";
+        C<TextBlock>("PlayerError").Visibility = ToVisibility(playback.Error is not null);
+        C<Button>("PlayerRetryButton").Visibility = ToVisibility(playback.Error is not null);
+        C<Button>("PlayerRetryButton").IsEnabled = selected is not null && !playback.Busy;
+        C<Button>("PlayerOpenYouTubeButton").IsEnabled = selected is not null;
+        C<ProgressRing>("PlayerBusyRing").IsActive = playback.Busy;
+        C<ProgressRing>("PlayerBusyRing").Visibility = ToVisibility(playback.Busy);
+        var label = controller?.View == BrowseView.Subscriptions ? "subscriptions" : "history";
+        C<TextBlock>("PlayerFeedLabel").Text = $"{label} / Now playing";
+        C<TextBlock>("PlayerQueueLabel").Text = playback.Queue.Count == 0 ? $"No other videos loaded in {label}" : $"Up next · from your loaded {label}";
+        C<ListView>("PlayerQueue").ItemsSource = playback.Queue;
+        C<Button>("PlayerNextButton").IsEnabled = selected is not null && playback.Queue.Count > 0 && !playback.Busy;
+        C<Button>("PlayerNextButton").Visibility = ToVisibility(playback.Queue.Count > 0);
     }
 
     private async Task OpenActivationAsync()

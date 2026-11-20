@@ -19,8 +19,6 @@ internal interface IYouTubeApi
     Task<SubscriptionsPage> GetSubscriptionsAsync(YouTubeSession session, YouTubeAccount account, string? continuation, CancellationToken cancellationToken);
 }
 
-internal enum BrowseView { History, Subscriptions, Settings }
-
 internal enum SessionPhase { Restoring, SignedOut, Authorizing, SignedIn }
 
 internal sealed class SessionController(IYouTubeApi api, ITokenStore store, string deviceId)
@@ -170,7 +168,7 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
             {
                 Videos = (append ? Videos.Concat(page.Videos) : page.Videos).DistinctBy(v => v.VideoId).ToArray();
                 Continuation = page.Continuation;
-                Status = page.Message ?? (Videos.Count == 0 ? "No history cards were returned for this account." : $"{Videos.Count} history cards loaded. Select a video to open it in your browser.");
+                Status = page.Message ?? (Videos.Count == 0 ? "No history cards were returned for this account." : $"{Videos.Count} history cards loaded. Select a video to play natively.");
             });
         }
         catch (Exception error) { Fail(op.Id, error); }

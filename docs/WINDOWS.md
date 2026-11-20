@@ -7,9 +7,11 @@ Requires Windows 10 version 2004 or later (x64), .NET SDK pinned in `global.json
 ```powershell
 dotnet test apps/windows/YourTube.Core.Tests/YourTube.Core.Tests.csproj -c Release
 dotnet test apps/windows/YourTube.Update.Tests/YourTube.Update.Tests.csproj -c Release
+dotnet test apps/windows/YourTube.Playback.Tests/YourTube.Playback.Tests.csproj -c Release
 node --test tests/*.test.mjs
 dotnet run --project apps/windows/validation/YourTube.App.Validation.csproj -c Release
 node --test apps/windows/YourTube.Update.Tests/panel-contracts.test.mjs
+./scripts/test-windows-playback.ps1 -SourceSha (git rev-parse HEAD)
 ./scripts/build-windows.ps1 -Version 0.1.1 -SourceSha (git rev-parse HEAD)
 ./scripts/test-windows-native.ps1 -InstallerPath artifacts/windows/releases/YourTubeWindows-win-x64-Setup.exe -EvidenceDirectory artifacts/native-smoke
 ```
@@ -49,3 +51,13 @@ The publisher embeds cumulative Windows changelog data in the existing `yourtube
 The client loads notes for the selected offer during the update check and uses the installed executable’s embedded source SHA and Velopack version to select the exact range. It does not use GitHub release descriptions or reconstruct commit history. Historical manifests are unchanged; loading, retrying or failing to load notes does not block downloading an otherwise valid update. Installations running the older panel do not gain the display until they upgrade to a changelog-capable build. Like Music, the release producer rejects incomplete history rather than publishing a partial range as complete.
 
 Outstanding acceptance must be reported honestly: fixture-backed protocol tests are not completed Google authorization or authenticated history; source/XML checks and Linux compilation are not native runtime tests; native unauthenticated smoke is not Credential Locker or history acceptance; a published first installer is not a tested in-app upgrade.
+
+## Theater / Native sage playback gate
+
+The native player uses a credential-isolated YoutubeExplode resolver and the production `NativePlaybackSource` DASH adapter. Its scope is public non-DRM VOD with usable native H.264/AAC streams; quality availability comes from the source. Account authorization is used for browsing, not passed to the stream resolver or CDN. Unavailable/private/paid/live videos must fail honestly instead of showing sample content or silently opening a browser.
+
+`scripts/test-windows-playback.ps1` publishes a separate native validation executable (not an installer asset), using the same adapter source as the app. It plays three real public videos, checks actual audio/video tracks, natural video dimensions, advancing position, pause, seek and disposal, and retains foreground desktop screenshots in `artifacts/native-playback/evidence`. The independent `verify-playback-proof.mjs` rejects missing videos, false native/source identity, absent tracks, non-advancing/failed seek, failed pause and incomplete teardown. These network/native tests run before packaging in the one Windows CI job; a failed or unavailable proof blocks the release. They never authorize a Google account or obtain browser cookies.
+
+For a new playback implementation, first run the existing workflow with `workflow_dispatch` on a verification branch, where the main-only release job is skipped. Inspect its native proof and installer-smoke evidence before pushing the same accepted source to main. Main runs the gates again before normal immutable publication. Do not bypass the playback gate to publish a shell-only or browser-fallback build.
+
+Owner acceptance remains distinct: after signing in and loading a real feed, open a video, compare the Theater/sage layout, exercise native pointer/keyboard controls and quality changes, choose another actual feed item, and navigate Back/Settings/account/sign-out while resolving and playing. Check high-DPI/narrow-window layout and audio routing on the owner's machine. The public test corpus does not establish every YouTube video, authenticated private playback, live playback, 4K, or universal codec/network compatibility.

@@ -1,4 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
-  <ItemGroup><ProjectReference Include="../YourTube.Core/YourTube.Core.csproj" /><Compile Include="../YourTube.App/SessionController.cs" Link="SessionController.cs" /><Compile Include="../YourTube.App/RequestEpoch.cs" Link="RequestEpoch.cs" /><Compile Include="../YourTube.App/BrowserPolicy.cs" Link="BrowserPolicy.cs" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="../YourTube.Playback/YourTube.Playback.csproj" /><ProjectReference Include="../YourTube.Core/YourTube.Core.csproj" /><Compile Include="../YourTube.App/PlaybackController.cs" Link="PlaybackController.cs" /><Compile Include="../YourTube.App/SessionController.cs" Link="SessionController.cs" /><Compile Include="../YourTube.App/RequestEpoch.cs" Link="RequestEpoch.cs" /><Compile Include="../YourTube.App/BrowserPolicy.cs" Link="BrowserPolicy.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../YourTube.App/BrowseView.cs" Link="BrowseView.cs" /></ItemGroup>
 </Project>

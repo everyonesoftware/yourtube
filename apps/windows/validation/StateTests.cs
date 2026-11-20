@@ -37,6 +37,7 @@ internal static class StateTests
         oldHistory.SetResult(new HistoryPage([new("aaaaaaaaaaa", "A result", "Channel", "2:00", null)], null, null));
         await oldLoad;
         Verify(controller.SelectedAccount == TestApi.B && controller.Videos.Single().VideoId == "bbbbbbbbbbb", "old account completion cannot replace current native feed");
+        Verify(controller.Status.Contains("play natively"), "history activation describes native playback rather than browser fallback");
         Verify(!controller.Busy && controller.Continuation == "page2", "old completion cannot reset current pagination/busy state");
         api.History = (account, continuation) => { Verify(continuation == "page2", "load-more forwards exact continuation"); return Task.FromResult(new HistoryPage([new("bbbbbbbbbbb", "duplicate", "Channel", "3:00", null), new("ccccccccccc", "Next", "Channel", "4:00", null)], null, null)); };
         await controller.LoadHistoryAsync(true);

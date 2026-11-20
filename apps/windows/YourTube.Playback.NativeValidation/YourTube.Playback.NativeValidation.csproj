@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier><PlatformTarget>x64</PlatformTarget>
+    <UseWinUI>true</UseWinUI><EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained><SelfContained>true</SelfContained>
+    <EnableDefaultPageItems>false</EnableDefaultPageItems><EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+    <AppxGeneratePriEnabled Condition="'$(OS)' == 'Windows_NT'">true</AppxGeneratePriEnabled>
+    <AppxGeneratePriEnabled Condition="'$(OS)' != 'Windows_NT'">false</AppxGeneratePriEnabled>
+    <AppxGeneratePrisForPortableLibrariesEnabled>false</AppxGeneratePrisForPortableLibrariesEnabled>
+    <ApplicationManifest>../YourTube.App/app.manifest</ApplicationManifest>
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <AssemblyName>YourTube.Playback.NativeValidation</AssemblyName><PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="1.8.260803003" />
+    <ProjectReference Include="../YourTube.Playback/YourTube.Playback.csproj" />
+    <ProjectReference Include="../YourTube.Core/YourTube.Core.csproj" />
+    <Compile Include="../YourTube.App/NativePlaybackSource.cs" Link="NativePlaybackSource.cs" />
+    <Compile Include="../YourTube.App/NativePlaybackSession.cs" Link="NativePlaybackSession.cs" />
+    <Compile Include="../YourTube.App/PlaybackController.cs" Link="PlaybackController.cs" />
+    <Compile Include="../YourTube.App/BrowseView.cs" Link="BrowseView.cs" />
+    <Compile Include="../YourTube.App/BrowserPolicy.cs" Link="BrowserPolicy.cs" />
+  </ItemGroup>
+  <Target Name="PublishMergedWinUIResources" AfterTargets="Publish" Condition="'$(OS)' == 'Windows_NT'">
+    <Error Condition="!Exists('$(ProjectPriFullPath)')" Text="Native playback proof requires the real WinUI resource index." />
+    <Copy SourceFiles="$(ProjectPriFullPath)" DestinationFiles="$(PublishDir)resources.pri" />
+  </Target>
+</Project>
