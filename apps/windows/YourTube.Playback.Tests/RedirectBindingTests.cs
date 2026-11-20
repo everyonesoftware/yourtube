@@ -12,6 +12,30 @@ public sealed class RedirectBindingTests
     private const string Range = "&range=10-19";
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AllowsObservedEdgeRoutingChangesOnlyWhenUnsigned(bool signed)
+    {
+        string signature = signed ? "&sparams=id%2Cmet%2Cclen&sig=fixture" : "&sparams=id%2Cclen&sig=fixture";
+        var handler = new Handler(r => r.RequestUri!.Host == "a.googlevideo.com"
+            ? Redirect(Edge + "/videoplayback?" + Media + Range + signature + "&met=new&fexp=new&cm2rm=1&rrc=1&cmsv=2")
+            : Slice());
+        using var http = new HttpClient(new PublicTransport(handler));
+        string original = Origin + Media + Range + signature + "&met=old&fexp=old&fvip=3";
+        if (signed)
+        {
+            var error = await Assert.ThrowsAsync<PlaybackException>(() => http.GetAsync(original));
+            Assert.Equal("unsafe_resource", error.Code);
+            Assert.Equal(1, handler.Calls);
+        }
+        else
+        {
+            Assert.Equal(10, (await http.GetByteArrayAsync(original)).Length);
+            Assert.Equal(2, handler.Calls);
+        }
+    }
+
+    [Theory]
     [InlineData("/other?" + Media + Range)]
     [InlineData("/videoplayback?id=other&itag=134&clen=100&lmt=123" + Range)]
     [InlineData("/videoplayback?id=fixture&itag=140&clen=100&lmt=123" + Range)]

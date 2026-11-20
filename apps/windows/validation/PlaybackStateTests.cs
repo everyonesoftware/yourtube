@@ -103,7 +103,13 @@ internal static class PlaybackStateTests
     {
         var resolver = new Resolver();
         var attachments = 0;
-        using var player = new PlaybackController<Handle>(resolver, (media, ct) => { attachments++; return Task.FromResult(new Handle()); });
+        bool failAttachment = false;
+        using var player = new PlaybackController<Handle>(resolver, (media, ct) =>
+        {
+            attachments++;
+            if (failAttachment) throw new PlaybackException("unsafe_resource", "secret URL");
+            return Task.FromResult(new Handle());
+        });
         var account = new object();
         IReadOnlyList<HistoryVideo> feed = [A];
         player.SetContext(true, account, BrowseView.History, feed);
@@ -122,6 +128,22 @@ internal static class PlaybackStateTests
         resolver.Completion.SetResult(new PlaybackMedia(A.VideoId, "Expired", "Author", "", TimeSpan.FromMinutes(1), DateTimeOffset.MinValue, [], new Uri("https://www.youtube.com/yourtube-playback.mpd"), []));
         await expired;
         StateTests.Verify(attachments == 1 && player.Active is null && player.Error is not null, "expired resolver result offers retry without creating native source or looping");
+        resolver.Completion = new();
+        var unavailable = player.SelectAsync(A);
+        resolver.Completion.SetException(new PlaybackException("unsafe_resource", "secret URL"));
+        await unavailable;
+        StateTests.Verify(attachments == 1 && player.Active is null && player.Error == "Couldn’t load the video stream. Retry, or open it on YouTube.", "stream failure does not imply a visibility restriction or expose details");
+        resolver.Completion = new();
+        var unsupported = player.SelectAsync(A);
+        resolver.Completion.SetException(new PlaybackException("unsupported_media", "secret URL"));
+        await unsupported;
+        StateTests.Verify(attachments == 1 && player.Error == "No compatible stream was found for native playback. Retry, or open it on YouTube.", "unsupported stream is reported before native attachment");
+        failAttachment = true;
+        resolver.Completion = new();
+        var attachFailed = player.SelectAsync(A);
+        resolver.Completion.SetResult(Media());
+        await attachFailed;
+        StateTests.Verify(attachments == 2 && player.Error == "Couldn’t start native playback. Retry, or open it on YouTube.", "attachment failure is not mistaken for resolver failure with the same error code");
         Console.WriteLine("PASS: frozen IPlaybackResolver contract and canceled-resolution native-creation guard.");
     }
     private static PlaybackMedia Media() => new(A.VideoId, "Resolved title", "Resolved author", "Resolved description", TimeSpan.FromMinutes(1), DateTimeOffset.UtcNow.AddHours(1), [], new Uri("https://www.youtube.com/yourtube-playback.mpd"), []);

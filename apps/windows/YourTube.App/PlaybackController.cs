@@ -9,11 +9,25 @@ internal sealed class PlaybackController<T>(Func<string, CancellationToken, Task
     public PlaybackController(IPlaybackResolver resolver, Func<PlaybackMedia, CancellationToken, Task<T>> attach)
         : this(async (id, ct) =>
         {
-            var media = await resolver.ResolveAsync(id, ct);
-            ct.ThrowIfCancellationRequested();
-            if (media.ExpiresAt <= DateTimeOffset.UtcNow) throw new PlaybackException("expired", "The source expired. Retry playback.");
+            PlaybackMedia media;
+            try
+            {
+                media = await resolver.ResolveAsync(id, ct);
+                ct.ThrowIfCancellationRequested();
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception error)
+            {
+                throw new StreamLoadFailure(error is PlaybackException { Code: "unsupported_media" }
+                    ? "No compatible stream was found for native playback. Retry, or open it on YouTube."
+                    : "Couldn’t load the video stream. Retry, or open it on YouTube.");
+            }
+            if (media.ExpiresAt <= DateTimeOffset.UtcNow)
+                throw new StreamLoadFailure("The video stream expired. Retry, or open it on YouTube.");
             return await attach(media, ct);
         }) { }
+
+    private sealed class StreamLoadFailure(string message) : Exception(message);
 
     public HistoryVideo? Selected { get; private set; }
     public T? Active { get; private set; }
@@ -52,9 +66,11 @@ internal sealed class PlaybackController<T>(Func<string, CancellationToken, Task
             if (id != generation || !CanSelect(video)) { resource.Dispose(); return; }
             Active = resource;
         }
-        catch (Exception)
+        catch (Exception error)
         {
-            if (id == generation) Error = "Native playback is unavailable for this video. Retry, or open it on YouTube. Only public, non-DRM videos are supported.";
+            if (id == generation) Error = error is StreamLoadFailure streamError
+                ? streamError.Message
+                : "Couldn’t start native playback. Retry, or open it on YouTube.";
         }
         finally
         {

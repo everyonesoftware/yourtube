@@ -79,16 +79,22 @@ internal sealed class PublicTransport(HttpMessageHandler handler) : HttpMessageH
             if (separator <= 0 || field.Contains(';')) throw Unsafe();
             string name = Uri.UnescapeDataString(field[..separator]);
             if (name.Length == 0 || name.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not ('_' or '-')) || !names.Add(name)) throw Unsafe();
-            // Only named routing fields may vary; unknown selectors and signed resource
-            // fields stay bound. Compare escaped values without transforming the signed URL.
-            if (!IsRoutingField(name)) bound.Add(name, field[(separator + 1)..]);
+            bound.Add(name, field[(separator + 1)..]);
         }
+        // Allow observed edge-routing changes, but not fields covered by the media
+        // signature. The sparams list itself stays bound, as do unknown fields and the range.
+        var signedNames = bound.TryGetValue("sparams", out var signed)
+            ? Uri.UnescapeDataString(signed).Split(',').ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in bound.Keys.Where(name => IsRoutingField(name) && !signedNames.Contains(name)).ToArray())
+            bound.Remove(name);
         return bound;
     }
 
     private static bool IsRoutingField(string name) => name is
         "mh" or "mm" or "mn" or "ms" or "mt" or "mv" or "mvi" or "pl" or "initcwndbps" or
-        "lsig" or "lsparams" or "redirect_counter" or "cms_redirect" or "req_id" or "rm" or "rms" or "rr";
+        "lsig" or "lsparams" or "redirect_counter" or "cms_redirect" or "req_id" or "rm" or "rms" or "rr" or
+        "cm2rm" or "rrc" or "cmsv" or "fvip" or "met" or "fexp";
 
     protected override void Dispose(bool disposing) { if (disposing) inner.Dispose(); base.Dispose(disposing); }
 }
