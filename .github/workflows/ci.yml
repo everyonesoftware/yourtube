@@ -52,16 +52,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --test apps/windows/YourTube.Update.Tests/panel-contracts.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Prove native audio/video playback before packaging
-        shell: pwsh
-        timeout-minutes: 12
-        run: ./scripts/test-windows-playback.ps1 -SourceSha '${{ github.sha }}'
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: windows-playback-evidence
-          path: artifacts/native-playback/evidence
-          if-no-files-found: warn
       - name: Native self-contained publish and Velopack package
         shell: pwsh
         run: ./scripts/build-windows.ps1 -Version "0.1.${{ github.run_number }}" -SourceSha '${{ github.sha }}'
@@ -74,6 +64,16 @@ jobs:
         with:
           name: windows-native-evidence
           path: artifacts/native-smoke
+          if-no-files-found: warn
+      - name: Prove native audio/video playback before release upload
+        shell: pwsh
+        timeout-minutes: 12
+        run: ./scripts/test-windows-playback.ps1 -SourceSha '${{ github.sha }}' -OutputDirectory (Join-Path $env:GITHUB_WORKSPACE 'artifacts/native-playback')
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-playback-evidence
+          path: artifacts/native-playback/evidence
           if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:
