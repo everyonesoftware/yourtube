@@ -28,7 +28,14 @@ test('installer smoke can finish before live playback, but both must pass before
  const upload=windows.indexOf('name: windows-release');
  assert.ok(packaging>=0&&packaging<smoke&&smoke<proof&&proof<upload);
  const proofStep=windows.slice(windows.lastIndexOf('      - name:',proof),proof);
- assert.doesNotMatch(proofStep,/continue-on-error|\bif:/);
+ assert.match(proofStep,/id: hosted_playback\s+continue-on-error: true/);
+ assert.doesNotMatch(proofStep,/\bif:/);
+ const decision=windows.indexOf('node scripts/verify-owner-playback.mjs');
+ assert.ok(proof<decision&&decision<upload);
+ const decisionStep=windows.slice(windows.lastIndexOf('      - name:',decision),decision);
+ assert.doesNotMatch(decisionStep,/continue-on-error|\bif:/);
+ assert.match(decisionStep,/HOSTED_PLAYBACK_OUTCOME: \$\{\{ steps\.hosted_playback\.outcome \}\}/);
+ assert.match(windows,/uses: actions\/checkout@v4\s+with:\s+fetch-depth: 0/);
  const uploadStep=windows.slice(windows.lastIndexOf('      - uses:',upload),upload);
  assert.doesNotMatch(uploadStep,/continue-on-error|\bif:/);
  assert.match(windows,/name: windows-playback-evidence[\s\S]*path: artifacts\/native-playback\/evidence/);
