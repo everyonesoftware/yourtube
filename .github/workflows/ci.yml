@@ -67,23 +67,7 @@ jobs:
           name: windows-native-evidence
           path: artifacts/native-smoke
           if-no-files-found: warn
-      - name: Prove native audio/video playback before release upload
-        id: hosted_playback
-        continue-on-error: true
-        shell: pwsh
-        timeout-minutes: 12
-        run: ./scripts/test-windows-playback.ps1 -SourceSha '${{ github.sha }}' -OutputDirectory (Join-Path $env:GITHUB_WORKSPACE 'artifacts/native-playback')
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: windows-playback-evidence
-          path: artifacts/native-playback/evidence
-          if-no-files-found: warn
-      - name: Require native playback evidence for release
-        shell: pwsh
-        env:
-          HOSTED_PLAYBACK_OUTCOME: ${{ steps.hosted_playback.outcome }}
-        run: node scripts/verify-owner-playback.mjs artifacts/native-playback/evidence/proof.json '${{ github.sha }}' $env:HOSTED_PLAYBACK_OUTCOME
+
       - uses: actions/upload-artifact@v4
         with:
           name: windows-release

@@ -19,24 +19,27 @@ test('one Windows job, main-only publication, docs-only refresh, and executable 
  assert.match(yaml,/node --test apps\/windows\/YourTube.Update.Tests\/panel-contracts.test.mjs/);
 });
 
-test('installer smoke can finish before live playback, but both must pass before release assets upload',()=>{
+test('installer smoke gates release upload independently of live YouTube',()=>{
  const windows=yaml.slice(yaml.indexOf('\n  windows:\n'),yaml.indexOf('\n  release:\n'));
  assert.match(windows,/dotnet test apps\/windows\/YourTube.Playback.Tests\/YourTube.Playback.Tests.csproj/);
- const proof=windows.indexOf('scripts/test-windows-playback.ps1');
+
  const packaging=windows.indexOf('scripts/build-windows.ps1');
  const smoke=windows.indexOf('scripts/test-windows-native.ps1');
  const upload=windows.indexOf('name: windows-release');
- assert.ok(packaging>=0&&packaging<smoke&&smoke<proof&&proof<upload);
- const proofStep=windows.slice(windows.lastIndexOf('      - name:',proof),proof);
- assert.match(proofStep,/id: hosted_playback\s+continue-on-error: true/);
- assert.doesNotMatch(proofStep,/\bif:/);
- const decision=windows.indexOf('node scripts/verify-owner-playback.mjs');
- assert.ok(proof<decision&&decision<upload);
- const decisionStep=windows.slice(windows.lastIndexOf('      - name:',decision),decision);
- assert.doesNotMatch(decisionStep,/continue-on-error|\bif:/);
- assert.match(decisionStep,/HOSTED_PLAYBACK_OUTCOME: \$\{\{ steps\.hosted_playback\.outcome \}\}/);
+ assert.ok(packaging>=0&&packaging<smoke&&smoke<upload);
+ assert.doesNotMatch(windows.slice(windows.lastIndexOf('      - name:',smoke),smoke),/continue-on-error|\bif:/);
+ assert.doesNotMatch(yaml,/test-windows-playback\.ps1|verify-owner-playback\.mjs|HOSTED_PLAYBACK_OUTCOME/);
  assert.match(windows,/uses: actions\/checkout@v4\s+with:\s+fetch-depth: 0/);
  const uploadStep=windows.slice(windows.lastIndexOf('      - uses:',upload),upload);
  assert.doesNotMatch(uploadStep,/continue-on-error|\bif:/);
- assert.match(windows,/name: windows-playback-evidence[\s\S]*path: artifacts\/native-playback\/evidence/);
+});
+
+test('live playback probe is manual, retains failure evidence, and has no release authority',()=>{
+ const probe=readFileSync(new URL('../.github/workflows/live-playback.yml',import.meta.url),'utf8');
+ assert.match(probe,/^on:\r?\n  workflow_dispatch:\r?\npermissions:/m);
+ assert.match(probe,/permissions:\s+contents: read/);
+ assert.match(probe,/runs-on: windows-2022/);
+ assert.match(probe,/run: .*scripts\/test-windows-playback\.ps1 .*github\.sha/);
+ assert.match(probe,/if: always\(\)[\s\S]*name: windows-live-playback-evidence/);
+ assert.doesNotMatch(probe,/continue-on-error|publish-release|windows-release|contents: write/);
 });

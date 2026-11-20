@@ -1,0 +1,24 @@
+name: Live YouTube playback (advisory)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  live-playback:
+    runs-on: windows-2022
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Play public videos through the native adapter
+        shell: pwsh
+        timeout-minutes: 12
+        run: ./scripts/test-windows-playback.ps1 -SourceSha '${{ github.sha }}' -OutputDirectory (Join-Path $env:GITHUB_WORKSPACE 'artifacts/native-playback')
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-live-playback-evidence
+          path: artifacts/native-playback/evidence
+          if-no-files-found: warn

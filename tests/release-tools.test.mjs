@@ -11,6 +11,7 @@ test('native sources and packaging select Windows; docs/mockups/control-plane do
   assert.equal(selectsWindows(['scripts/build-windows.ps1']), true);
   assert.equal(selectsWindows(['scripts/test-windows-native.ps1']), true);
   assert.equal(selectsWindows(['.github/workflows/ci.yml']), true);
+  assert.equal(selectsWindows(['.github/workflows/live-playback.yml']), false);
   assert.equal(selectsWindows(['global.json']), true);
   assert.equal(selectsWindows(['README.md', 'docs/GOOGLE-AUTH.md', 'mockups/foo.html', 'scripts/current-downloads.mjs', 'tests/release-tools.test.mjs']), false);
   assert.equal(selectsWindows(['unknown-build-input']), true);
