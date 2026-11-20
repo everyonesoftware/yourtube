@@ -1,0 +1,48 @@
+name: Windows fixture smoke
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  playback:
+    runs-on: windows-2022
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Test fixture ranges and evidence validation
+        shell: pwsh
+        run: |
+          dotnet test apps/windows/YourTube.Playback.NativeValidation/Tests/FixtureTests.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./apps/windows/YourTube.Playback.NativeValidation/Tests/Test-FixtureRunner.ps1
+      - name: Play controlled audio and video through the native adapter
+        shell: pwsh
+        timeout-minutes: 12
+        run: ./scripts/test-windows-playback.ps1 -Fixture -SourceSha '${{ github.sha }}' -OutputDirectory artifacts/native-playback-fixture
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-playback-fixture
+          path: artifacts/native-playback-fixture/evidence
+          if-no-files-found: warn
+  settings:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Exercise the native Settings panel with a fixture offer
+        shell: pwsh
+        timeout-minutes: 6
+        run: ./scripts/test-windows-settings.ps1 -SourceSha '${{ github.sha }}' -OutputDirectory artifacts/native-settings
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-settings
+          path: artifacts/native-settings/evidence
+          if-no-files-found: warn

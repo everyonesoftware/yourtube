@@ -5,8 +5,10 @@ export const maxManifestBytes = 1024 * 1024;
 
 export function selectsWindows(paths) {
   return paths.some(path => {
+    if (/^apps\/windows\/YourTube\.(Playback|Settings)\.NativeValidation\//.test(path) ||
+        ['scripts/test-windows-playback.ps1', 'scripts/test-windows-settings.ps1'].includes(path)) return false;
     if (path.startsWith('apps/windows/') || ['global.json', '.github/workflows/ci.yml', 'scripts/build-windows.ps1', 'scripts/test-windows-native.ps1'].includes(path)) return true;
-    if (path === '.github/workflows/live-playback.yml') return false;
+    if (['.github/workflows/live-playback.yml', '.github/workflows/windows-fixtures.yml'].includes(path)) return false;
     if (/^(docs\/|mockups\/|tests\/)/.test(path) || ['README.md', 'AGENTS.md', 'THIRD-PARTY-NOTICES.md', '.gitignore', 'package.json', 'package-lock.json', 'scripts/release-tools.mjs', 'scripts/release-changelog.mjs', 'scripts/select-windows.mjs', 'scripts/current-downloads.mjs', 'scripts/publish-release.mjs', 'scripts/publication.mjs', 'scripts/download-table.mjs'].includes(path)) return false;
     return true;
   });

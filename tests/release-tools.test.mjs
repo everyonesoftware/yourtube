@@ -12,9 +12,28 @@ test('native sources and packaging select Windows; docs/mockups/control-plane do
   assert.equal(selectsWindows(['scripts/test-windows-native.ps1']), true);
   assert.equal(selectsWindows(['.github/workflows/ci.yml']), true);
   assert.equal(selectsWindows(['.github/workflows/live-playback.yml']), false);
+  assert.equal(selectsWindows(['.github/workflows/windows-fixtures.yml']), false);
   assert.equal(selectsWindows(['global.json']), true);
   assert.equal(selectsWindows(['README.md', 'docs/GOOGLE-AUTH.md', 'mockups/foo.html', 'scripts/current-downloads.mjs', 'tests/release-tools.test.mjs']), false);
   assert.equal(selectsWindows(['unknown-build-input']), true);
+});
+
+test('Git diff selects Windows only when fixture changes include a shipping input', () => {
+ const dir=mkdtempSync(join(tmpdir(),'yourtube-fixture-selection-'));
+ const git=(...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8'}).trim();
+ try {
+  git('init','--initial-branch=main'); git('config','user.email','test@example.invalid'); git('config','user.name','Fixture');
+  git('commit','--allow-empty','-m','published baseline'); const base=git('rev-parse','HEAD');
+  for (const path of ['apps/windows/YourTube.Playback.NativeValidation/Fixtures/video.mp4', 'apps/windows/YourTube.Settings.NativeValidation/Program.cs', 'scripts/test-windows-playback.ps1', 'scripts/test-windows-settings.ps1']) {
+   mkdirSync(join(dir,path,'..'),{recursive:true}); writeFileSync(join(dir,path),'fixture');
+  }
+  git('add','.'); git('commit','-m','fixtures only');
+  const paths=()=>git('diff','--name-only','--no-renames',`${base}..HEAD`).split(/\r?\n/);
+  assert.equal(selectsWindows(paths()),false);
+  mkdirSync(join(dir,'apps/windows/YourTube.App')); writeFileSync(join(dir,'apps/windows/YourTube.App/WindowsUpdatesPanel.cs'),'shipping');
+  git('add','.'); git('commit','-m','shipping panel');
+  assert.equal(selectsWindows(paths()),true);
+ } finally { rmSync(dir,{recursive:true,force:true}); }
 });
 
 test('real Git publication baseline keeps docs/table changes from rebuilding native binaries',()=>{

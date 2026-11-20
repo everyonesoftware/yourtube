@@ -79,7 +79,7 @@ internal static class NativeLifecycleProof
         }
     }
 
-    // Gates one genuine AMS download after validated CDN bytes arrive. The exact task returned to
+    // Gates one genuine AMS download after validated track bytes arrive. The exact task returned to
     // the adapter ignores cancellation, so it can complete successfully after replacement.
     private sealed class HeldReadResolver(IPlaybackResolver inner) : IPlaybackResolver
     {

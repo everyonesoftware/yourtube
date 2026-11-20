@@ -60,4 +60,13 @@ The native player uses a credential-isolated YoutubeExplode resolver and the pro
 
 Run **Live YouTube playback (advisory)** manually in Actions to check current public playback. Failures remain visible in that workflow, with available stage evidence retained, but it has no release dependency or publishing permissions. The release workflow still requires the deterministic suites, Windows installer smoke and package verification. Historical owner proof is not needed for publication and does not attest to later builds.
 
+Run **Windows fixture smoke** manually in Actions, or run the following from a clean checkout in interactive Windows PowerShell 7. These checks are separate from releases while runner reliability is evaluated. Use new/empty output directories.
+
+```powershell
+./scripts/test-windows-playback.ps1 -Fixture -SourceSha (git rev-parse HEAD)
+./scripts/test-windows-settings.ps1 -SourceSha (git rev-parse HEAD)
+```
+
+Playback uses embedded synthetic H.264/AAC media and runs the production native adapter without YouTube or credentials. Settings drives the real panel with a fixture offer, checks disclosure and keyboard focus, verifies exact commit/comparison URLs without opening a browser, and checks that reopening reuses loaded notes. These checks do not prove live resolution, audible output, actual browser launch, or an in-app upgrade.
+
 Owner acceptance remains distinct: after signing in and loading a real feed, open a video, compare the Theater/sage layout, exercise native pointer/keyboard controls and quality changes, choose another actual feed item, and navigate Back/Settings/account/sign-out while resolving and playing. Check high-DPI/narrow-window layout and audio routing on the owner's machine. The public test corpus does not establish every YouTube video, authenticated private playback, live playback, 4K, or universal codec/network compatibility.

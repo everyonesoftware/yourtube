@@ -124,6 +124,9 @@ public sealed class WindowsUpdatesPanel : IDisposable
     // Optional hook must throw to block installation if app-specific persistence cannot complete.
     // No Google sign-out is needed: updater transport never receives account credentials.
     public WindowsUpdatesPanel(Action? beforeRestart = null)
+        : this(beforeRestart, null) { }
+
+    internal WindowsUpdatesPanel(Action? beforeRestart, IWindowsUpdateBackend? backend)
     {
         View = (FrameworkElement)XamlReader.Load(Markup);
         dispatcher = View.DispatcherQueue;
@@ -141,7 +144,7 @@ public sealed class WindowsUpdatesPanel : IDisposable
         string? info = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
         string? installedSourceSha = version is not null && info?.StartsWith(version + "+", StringComparison.Ordinal) == true
             ? info[(version.Length + 1)..] : null;
-        flow = new WindowsUpdateFlow(new WindowsUpdateBackend(installedSourceSha: installedSourceSha), beforeRestart);
+        flow = new WindowsUpdateFlow(backend ?? new WindowsUpdateBackend(installedSourceSha: installedSourceSha), beforeRestart);
         flow.Changed += Changed;
         check.Click += CheckClicked; download.Click += DownloadClicked; restart.Click += RestartClicked;
         retryNotes.Click += RetryNotesClicked;

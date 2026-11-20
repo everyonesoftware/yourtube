@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Original synthetic media: FFmpeg testsrc2 (320x180/24fps, H.264 Main, 2s GOP, no B-frames)
+     and 440 Hz sine (48 kHz AAC-LC); each track is fragmented MP4 with a global sidx. -->
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" profiles="urn:mpeg:dash:profile:isoff-on-demand:2011" mediaPresentationDuration="PT18S" minBufferTime="PT1.5S">
+  <Period start="PT0S" duration="PT18S">
+    <AdaptationSet mimeType="video/mp4" contentType="video" segmentAlignment="true" startWithSAP="1">
+      <Representation id="1" bandwidth="210000" codecs="avc1.4d400c" width="320" height="180">
+        <BaseURL>https://fixture.invalid/video.mp4</BaseURL>
+        <SegmentBase indexRange="774-921" indexRangeExact="true" timescale="12288" presentationTimeOffset="0">
+          <Initialization range="0-773" />
+        </SegmentBase>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet mimeType="audio/mp4" contentType="audio" segmentAlignment="true" startWithSAP="1">
+      <Representation id="2" bandwidth="50000" codecs="mp4a.40.2" audioSamplingRate="48000">
+        <AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="1" />
+        <BaseURL>https://fixture.invalid/audio.mp4</BaseURL>
+        <SegmentBase indexRange="732-879" indexRangeExact="true" timescale="48000" presentationTimeOffset="0">
+          <Initialization range="0-731" />
+        </SegmentBase>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>

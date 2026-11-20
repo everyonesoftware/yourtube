@@ -43,3 +43,15 @@ test('live playback probe is manual, retains failure evidence, and has no releas
  assert.match(probe,/if: always\(\)[\s\S]*name: windows-live-playback-evidence/);
  assert.doesNotMatch(probe,/continue-on-error|publish-release|windows-release|contents: write/);
 });
+
+test('controlled Windows smoke runs independently of live YouTube and releases',()=>{
+ const smoke=readFileSync(new URL('../.github/workflows/windows-fixtures.yml',import.meta.url),'utf8');
+ assert.match(smoke,/^on:\r?\n  workflow_dispatch:\r?\npermissions:/m);
+ assert.match(smoke,/permissions:\s+contents: read/);
+ assert.match(smoke,/test-windows-playback\.ps1 -Fixture -SourceSha .*github\.sha/);
+ assert.match(smoke,/test-windows-settings\.ps1 -SourceSha .*github\.sha/);
+ for (const name of ['native-playback-fixture', 'native-settings'])
+   assert.match(smoke,new RegExp(`if: always\\(\\)[\\s\\S]*name: ${name}\\r?\\n\\s+path: artifacts/${name}/evidence`));
+ assert.doesNotMatch(smoke,/continue-on-error|publish-release|windows-release|contents: write/);
+ assert.doesNotMatch(yaml,/windows-fixtures|test-windows-settings\.ps1/);
+});

@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier><PlatformTarget>x64</PlatformTarget>
+    <UseWinUI>true</UseWinUI><EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained><SelfContained>true</SelfContained>
+    <EnableDefaultPageItems>false</EnableDefaultPageItems><EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+    <AppxGeneratePriEnabled Condition="'$(OS)' == 'Windows_NT'">true</AppxGeneratePriEnabled>
+    <AppxGeneratePriEnabled Condition="'$(OS)' != 'Windows_NT'">false</AppxGeneratePriEnabled>
+    <AppxGeneratePrisForPortableLibrariesEnabled>false</AppxGeneratePrisForPortableLibrariesEnabled>
+    <ApplicationManifest>../YourTube.App/app.manifest</ApplicationManifest>
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <PublishTrimmed>false</PublishTrimmed><Version>0.1.3</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="1.8.260803003" />
+    <ProjectReference Include="../YourTube.Update/YourTube.Update.csproj" />
+    <Compile Include="../YourTube.App/WindowsUpdatesPanel.cs" Link="WindowsUpdatesPanel.cs" />
+    <Compile Include="../YourTube.App/WindowsUpdateBackend.cs" Link="WindowsUpdateFlow.cs" />
+  </ItemGroup>
+  <Target Name="PublishMergedWinUIResources" AfterTargets="Publish" Condition="'$(OS)' == 'Windows_NT'">
+    <Error Condition="!Exists('$(ProjectPriFullPath)')" Text="Native Settings smoke requires the merged WinUI resource index." />
+    <Copy SourceFiles="$(ProjectPriFullPath)" DestinationFiles="$(PublishDir)resources.pri" />
+  </Target>
+</Project>

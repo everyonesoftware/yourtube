@@ -58,7 +58,8 @@ public sealed partial class ProofApplication : Application, Microsoft.UI.Xaml.Ma
     {
         var evidence = Environment.GetEnvironmentVariable("YOURTUBE_PLAYBACK_EVIDENCE");
         var sourceSha = Environment.GetEnvironmentVariable("YOURTUBE_PLAYBACK_SOURCE");
-        if (string.IsNullOrWhiteSpace(evidence) || string.IsNullOrWhiteSpace(sourceSha) || sourceSha.Length != 40)
+        var mode = Environment.GetEnvironmentVariable("YOURTUBE_PLAYBACK_MODE") ?? "live";
+        if (string.IsNullOrWhiteSpace(evidence) || string.IsNullOrWhiteSpace(sourceSha) || sourceSha.Length != 40 || mode is not ("live" or "fixture"))
         {
             Environment.ExitCode = 2;window?.Close();return;
         }
@@ -68,15 +69,18 @@ public sealed partial class ProofApplication : Application, Microsoft.UI.Xaml.Ma
         var success = false;
         string? activeVideo = null;
         var stage = "startup";
+        var fixture = mode == "fixture";
         try
         {
-            using var resolver = new PlaybackResolver();
-            foreach (var id in new[] { "jNQXAC9IVRw", "aqz-KE-bpKQ", "YE7VzlLtp-4" })
+            using var liveResolver = fixture ? null : new PlaybackResolver();
+            IPlaybackResolver resolver = fixture ? new FixtureResolver() : liveResolver!;
+            string[] targets = fixture ? [FixtureResolver.PrimaryId] : ["jNQXAC9IVRw", "aqz-KE-bpKQ", "YE7VzlLtp-4"];
+            foreach (var id in targets)
             {
                 activeVideo = id;
                 using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
                 var token = timeout.Token;
-                title.Text = "YourTube · Resolving public video " + id;
+                title.Text = fixture ? "YourTube · Opening controlled DASH fixture" : "YourTube · Resolving public video " + id;
                 stage = "resolve";
                 var media = await resolver.ResolveAsync(id, token);
                 mediaById.Add(id, media);
@@ -140,15 +144,23 @@ public sealed partial class ProofApplication : Application, Microsoft.UI.Xaml.Ma
                 // Keep this actual decoded video visible for the PowerShell desktop screenshot.
                 await Task.Delay(2500, token);
                 Require(!native.HasFailed && counted.Reads > 0 && counted.Bytes > 0);
+                if (fixture) Require(counted.ReadRangedVideo && counted.ReadRangedAudio && native.SuccessfulDownloads > 0);
                 stage = "teardown";
                 native.Dispose();
                 await Until(() => native.OutstandingDownloads == 0, native, token);
                 Require(native.TeardownCompleted);
-                results.Add(new { videoId = id, status = "passed", videoWidth = width, videoHeight = height, audioTracks, videoTracks, durationSeconds = duration, initialPosition, positionBeforeSeek = positionBefore, seekTarget = target, seekCompleted = seek.Task.IsCompletedSuccessfully, positionAtSeekLanding = landing, pausedAtSeekLanding = pausedAtLanding, positionBeforeResume = beforeResume, positionAfterSeek = positionAfter, pausedAdvance, resourceReads = counted.Reads, resourceBytes = counted.Bytes, disposed = native.TeardownCompleted });
+                results.Add(new { videoId = id, status = "passed", videoWidth = width, videoHeight = height, audioTracks, videoTracks, durationSeconds = duration, initialPosition, positionBeforeSeek = positionBefore, seekTarget = target, seekCompleted = seek.Task.IsCompletedSuccessfully, positionAtSeekLanding = landing, pausedAtSeekLanding = pausedAtLanding, positionBeforeResume = beforeResume, positionAfterSeek = positionAfter, pausedAdvance, resourceReads = counted.Reads, resourceBytes = counted.Bytes, readRangedAudio = counted.ReadRangedAudio, readRangedVideo = counted.ReadRangedVideo, disposed = native.TeardownCompleted });
                 Write(evidence, "current.json", new { videoId = id, stage = "disposed", sourceSha });
             }
             activeVideo = null;
             stage = "native-lifecycle";
+            if (fixture)
+            {
+                // Distinct source identities let the same native lifecycle exercise replacement with owned bytes.
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                foreach (var id in new[] { FixtureResolver.PendingId, FixtureResolver.ReplacementId })
+                    mediaById.Add(id, await resolver.ResolveAsync(id, timeout.Token));
+            }
             title.Text = "YourTube · Checking native callback failure and replacement";
             lifecycle = await NativeLifecycleProof.RunAsync(element, resolver, mediaById, nextStage => stage = nextStage);
             success = true;
@@ -172,7 +184,11 @@ public sealed partial class ProofApplication : Application, Microsoft.UI.Xaml.Ma
         }
         finally
         {
-            Write(evidence, "proof.json", new { schemaVersion = 2, sourceSha, status = success ? "passed" : "failed", native = true, adapter = "NativePlaybackSource", authenticated = false, results, lifecycle });
+            var status = success ? "passed" : "failed";
+            object proof = fixture
+                ? new { schemaVersion = 2, mode, sourceSha, status, native = true, adapter = "NativePlaybackSource", authenticated = false, results, lifecycle }
+                : new { schemaVersion = 2, sourceSha, status, native = true, adapter = "NativePlaybackSource", authenticated = false, results, lifecycle };
+            Write(evidence, "proof.json", proof);
             Environment.ExitCode = success ? 0 : 1;
             window?.Close();
         }
@@ -203,12 +219,21 @@ internal sealed class CountingResolver(IPlaybackResolver inner) : IPlaybackResol
 {
     private long bytes;
     private int reads;
+    private int rangedVideo;
+    private int rangedAudio;
     public long Bytes => Interlocked.Read(ref bytes);
     public int Reads => Volatile.Read(ref reads);
+    public bool ReadRangedVideo => Volatile.Read(ref rangedVideo) != 0;
+    public bool ReadRangedAudio => Volatile.Read(ref rangedAudio) != 0;
     public Task<PlaybackMedia> ResolveAsync(string videoId, CancellationToken cancellationToken = default) => inner.ResolveAsync(videoId, cancellationToken);
     public async Task<PlaybackResource> ReadResourceAsync(PlaybackMedia media, Uri uri, ulong? offset, ulong? length, CancellationToken cancellationToken = default)
     {
         var resource = await inner.ReadResourceAsync(media, uri, offset, length, cancellationToken);
+        if (offset > 0 && length > 0)
+        {
+            if (resource.ContentType == "video/mp4") Volatile.Write(ref rangedVideo, 1);
+            if (resource.ContentType == "audio/mp4") Volatile.Write(ref rangedAudio, 1);
+        }
         Interlocked.Add(ref bytes, resource.Bytes.LongLength);Interlocked.Increment(ref reads);
         return resource;
     }

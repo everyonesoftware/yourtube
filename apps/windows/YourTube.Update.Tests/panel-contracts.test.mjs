@@ -2,6 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 const source = readFileSync(new URL('../YourTube.App/WindowsUpdatesPanel.cs', import.meta.url), 'utf8');
+test('native Settings smoke can inject its backend without changing the production default', () => {
+  assert.match(source, /public WindowsUpdatesPanel\(Action\? beforeRestart = null\)\s*:\s*this\(beforeRestart, null\)/);
+  assert.match(source, /internal WindowsUpdatesPanel\(Action\? beforeRestart, IWindowsUpdateBackend\? backend\)/);
+  assert.match(source, /new WindowsUpdateFlow\(backend \?\? new WindowsUpdateBackend\(installedSourceSha: installedSourceSha\), beforeRestart\)/);
+});
 test('compact native header and explicit update actions, honest notes', () => {
   assert.match(source, /Current Version:/);
   assert.match(source, /Check for updates/);

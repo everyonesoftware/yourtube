@@ -17,6 +17,8 @@
     <AssemblyName>YourTube.Playback.NativeValidation</AssemblyName><PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="Tests/**/*.cs" />
+    <EmbeddedResource Include="Fixtures/*" LogicalName="Fixture.%(Filename)%(Extension)" />
     <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="1.8.260803003" />
     <ProjectReference Include="../YourTube.Playback/YourTube.Playback.csproj" />
     <ProjectReference Include="../YourTube.Core/YourTube.Core.csproj" />
