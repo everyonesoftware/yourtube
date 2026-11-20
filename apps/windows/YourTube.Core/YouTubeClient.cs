@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 
 namespace YourTube.Core;
 
-public sealed class YouTubeClient
+public sealed partial class YouTubeClient
 {
     private readonly HttpClient http;
     private const string UserAgent = "Mozilla/5.0 (Linux armeabi-v7a; Android 7.1.2; Fire OS 6.0) Cobalt/22.lts.3.306369-gold (unlike Gecko) v8/8.8.278.8-jit gles Starboard/13, Amazon_ATV_mediatek8695_2019/NS6294 (Amazon, AFTMM, Wireless) com.amazon.firetv.youtube/22.3.r2.v66.0";
@@ -181,7 +181,7 @@ public sealed class YouTubeClient
         if (value.TryGetProperty("runs", out var runs)) return string.Concat(runs.EnumerateArray().Select(r => r.TryGetProperty("text", out var text) ? text.GetString() : ""));
         return "";
     }
-    private static string TextAt(JsonElement value, string key) => value.TryGetProperty(key, out var text) ? Text(text) : "";
+    private static string TextAt(JsonElement value, string key) => value.ValueKind == JsonValueKind.Object && value.TryGetProperty(key, out var text) ? Text(text) : "";
     public Task<IReadOnlyList<YouTubeAccount>> GetAccountsAsync(YouTubeSession session, CancellationToken cancellationToken = default) => SafeAsync<IReadOnlyList<YouTubeAccount>>(async () =>
     {
         ValidateSession(session);
@@ -295,7 +295,11 @@ public sealed class YouTubeClient
         var payload = new Dictionary<string, object?> { ["context"] = Context(account.PageId), ["racyCheckOk"] = true, ["contentCheckOk"] = true };
         payload[continuation is null ? "browseId" : "continuation"] = continuation ?? "FEhistory";
         var json = await PostAsync("youtubei/v1/browse", payload, cancellationToken, session: session, pageId: account.PageId);
-        var container = HistoryContainer(json);
+        return ParseVideoPage(HistoryContainer(json));
+    }, cancellationToken);
+
+    private static HistoryPage ParseVideoPage(JsonElement container)
+    {
         var items = At(container, "items");
         if (items.ValueKind == JsonValueKind.Undefined) items = At(container, "contents");
         if (items.ValueKind == JsonValueKind.Undefined) items = container; // append arrays and legacy direct-card fixtures
@@ -328,5 +332,5 @@ public sealed class YouTubeClient
         next ??= Find(items, "nextContinuationData").Select(n => Required(n, "continuation")).FirstOrDefault();
         next ??= Find(items, "continuationItemRenderer").SelectMany(n => Find(n, "continuationCommand")).Select(n => Required(n, "token")).FirstOrDefault();
         return new HistoryPage(videos, next, videos.Count == 0 ? "No history videos were returned. History may be empty or paused." : null);
-    }, cancellationToken);
+    }
 }

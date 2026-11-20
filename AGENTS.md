@@ -1,7 +1,7 @@
 # Repository instructions
 
 - Preserve existing web/Windows/Android/Android TV mockups. They contain illustrative data only; never feed it to production clients.
-- Current implementation slice is **native Windows Google device authorization + real YouTube history**. Other platforms remain planned, not silently removed.
+- Current implementation slice is **native Windows Google device authorization + real YouTube history + read-only subscriptions (channels and latest videos)**. Subscriptions are source-implemented, not yet published or account-owner accepted. Other platforms remain planned, not silently removed.
 - Project code, tests and build automation must not use Python.
 - Native Windows uses C#/.NET 10 + WinUI, runtime embedded XAML, Music-style extended titlebar, Windows Credential Locker, and user-initiated Velopack Settings updates. No web wrapper or embedded Google password form.
 - Authentication is an unsupported SmartTube-style YouTube TV interface experiment. Do not claim official history API support or completed authenticated acceptance without real account-owner evidence. Do not claim history cards are timestamped watch events.

@@ -1,0 +1,50 @@
+# Native Windows subscriptions (source implementation)
+
+Status: implemented and fixture/state/source/compile validated in WSL on November 20, 2026. Publication and installed-window smoke run through the main CI workflow; consult its exact-source release and the managed README download table for published availability. **Account-owner authenticated subscriptions remain pending.** No credentials, Google consent, account data or browser cookies were obtained for this work.
+
+## Pinned upstream trace
+
+Reference: `yuliskov/MediaServiceCore` revision `c1d202fc21bd97d800a5f92d058cd8f5fbbd65d8`, MIT (see `THIRD-PARTY-NOTICES.md`). Actual pinned source and public test-fixture structure were inspected before implementation:
+
+- `youtubeapi/src/main/java/com/liskovsoft/youtubeapi/browse/v2/BrowseService2.kt`: `getSubscriptions` → `getSubscriptionsTV`; `getSubscribedChannels` → `getSubscribedChannelsTV` → `ChannelListMediaGroup`. Both TV paths call `getBrowseResultTV(getSubscriptionsQuery(...))`.
+- `browse/v2/BrowseApiHelper.kt`: `getSubscriptionsQuery` uses `browseId=FEsubscriptions` in the TV browse template. `BrowseApi.kt` sends POST to `https://www.youtube.com/youtubei/v1/browse`, with TV User-Agent and `Referer: https://www.youtube.com/tv`.
+- `browse/v2/gen/BrowseHelper.kt`: the first `tvSecondaryNavRenderer.sections` entry supplies `tabRenderer`/`expandableTabRenderer` entries. The first tab with browse ID `FEsubscriptions` supplies the aggregate feed, falling back to the first tab. **Channel tabs can also all use `FEsubscriptions`**, distinguished by opaque params/reload data, not UC channel IDs. Do not derive subscribed channels from video bylines, require UC IDs, or deduplicate channel names.
+- `common/models/impl/mediagroup/MediaGroupImpl.kt`: `ChannelListMediaGroup` skips the first tab when it has no thumbnail; its next-page key is null. `common/models/impl/mediaitem/MediaItemImpl.kt`: `TabMediaItem` exposes title/new-content state and reload token, not a reliable channel ID.
+- `BrowseHelper.kt` `List<Shelf>.getItems`: if any three-item row exists, use those rows instead of the long Most relevant/Shorts shelf. The same rule applies to subscription section continuations via `next/v2/gen/WatchNextHelper.kt`. This is upstream's heuristic, not a guarantee of complete chronological uploads.
+
+Only behavior is adapted; no Android library or raw upstream fixture is shipped. Current scope intentionally has no web-guide fallback, channel detail loading, subscription mutation, thumbnail transport or new endpoint allowlist.
+
+## Native behavior and boundaries
+
+- **History** retains the existing history path. **Subscriptions** loads both subscribed channel names/new-content markers and latest subscription video cards from one initial request under the same selected YouTube identity.
+- Subscriptions uses the existing TV context, safety/content-check flags, bearer header, selected `X-Goog-PageId` and `context.user.onBehalfOfUser`. No second sign-in or vault identity is introduced.
+- Native virtualized ListViews show channels and videos side by side. Channels are read-only names, not fabricated UC links or channel-navigation actions. Videos open only after explicit activation, current-card membership checks and the existing canonical video URL policy.
+- **Refresh** replaces both lists and resets video pagination. **Load more** sends only the exact opaque video cursor, appends distinct video IDs and keeps the initial channel snapshot. Repeated/cyclic cursors stop with a safe diagnostic. The TV channel tabs expose no independent pagination cursor; this is not a guaranteed complete subscription export.
+- Account/view switches clear private lists/cursors and cancel/invalidate the old generation, including navigation into Settings. Hidden browse actions are rejected in Settings. Old responses cannot replace the current view, busy state, selected account or vault credential. Sign-out/cancel/authentication rejection clear private state and saved credentials; close clears memory while preserving saved login.
+- Retryable service errors retain loaded data/cursor for retry and display the safe error. Known empty responses use generic empty messages; unknown/malformed tab schemas fail safely rather than claiming successful emptiness. Provider text is not rendered as an error body. The shared card parser preserves history semantics; upload/watch timestamps are not invented.
+- The updater design/transport, auth bootstrap, endpoint policies and all four-platform mockups are unchanged.
+
+## TDD and verification evidence
+
+Baseline before writing: core/probe **83 passed**, updater **26 passed**, executable app validation passed, root Node **6 passed**, update-panel Node **1 passed**, PowerShell packaging fixtures/source parse and actionlint passed, real-reference Linux WinUI compilation passed with **0 warnings/errors**.
+
+Observed compiling RED → GREEN slices:
+
+1. Initial subscriptions API failed at runtime on a compiling `NotImplementedException` seam, then loaded both lists with the selected identity/envelope.
+2. Video continuation variants failed **3/3** as unsupported responses, then passed using the shared scoped continuation/card parser.
+3. The initial latest-feed regression returned Most relevant decoys ahead of expected chronological rows; it passed after upstream row filtering. The continuation version separately failed **1/2** (initial passed), then both passed.
+4. Missing account/blank cursor regressions failed **3/3** with `invalid_response` instead of `invalid_argument`; known empty tab list failed as unsupported. All passed after boundary validation and explicit known-empty handling.
+5. First-tab fallback and unknown-renderer regressions failed **2/5** (the inherited safe-error cases passed); both passed after fallback and schema checks.
+6. Crucial upstream parity regression: channel tabs sharing `FEsubscriptions` returned **zero channels**. It passed after using upstream tab/thumbnail membership instead of UC IDs; final synthetic fixtures preserve duplicate channel names.
+7. Executable session assertions separately failed for subscription navigation, immediate account-switch clearing, cyclic cursor termination, subscription loading status and hidden Settings browse actions. Each assertion was rerun to GREEN before continuing. Existing generation/vault guards are also exercised against delayed subscription, identity and refresh completions.
+8. Native XML/wiring contract failed because `ChannelsList` did not exist, then passed after the embedded native UI and real adapter forwarding were connected. This is a source/XML gate, not a native visual test.
+
+9. Review-confirmed parser regressions were fixed in two strict behavioral RED → GREEN cycles. Initial and section-continuation pages first failed **2/2** by losing the trailing command cursor while retaining the expected three videos; preserving sibling `continuationItemRenderer` entries fixed both. Append-action arrays in `onResponseReceivedActions` and `onResponseReceivedEndpoints` then failed **2/2** by including the four Most relevant decoys; normalizing the selected array for the same row filter fixed both. All **4** cases now preserve the trailing command cursor and reject discarded-shelf/header cursors. The complete Release core/probe suite subsequently passed **103 tests**, with **0 failed/skipped**. These are synthetic offline parser regressions, not authenticated acceptance.
+
+Offline replay against the **public pinned upstream fixtures**, outside the repository (not live account evidence): `2026.02.21_subscriptions.json` yielded **956 channel tabs and 15 videos**, with continuation; `2025.08.22_subscriptions_continuation.json` yielded **15 videos**, with continuation. No raw fixtures, names or cursor values were committed or printed.
+
+Final commands and outcomes are the same gates documented in `WINDOWS.md` and `apps/windows/validation/README.md`. Core/probe suite: **103 passed, 0 failed, 0 skipped**, including **20 subscription cases**. Updater: **26 passed**. Root Node contracts: **6 passed**; update-panel Node contract: **1 passed**. PowerShell packaging fixtures/source parsing, actionlint and `git diff --check` passed. Real-reference Linux WinUI compilation passed with **0 warnings, 0 errors**, followed by the executable PE gate confirming Windows x64 metadata/version and the embedded shell resource. The executable state/XML/wiring runner includes subscription navigation, replacement/append/cursor cycles, stale account/sign-out/Settings responses, empty/error retry and auth rejection. The existing VSTest runner diagnostic about unset `VSTEST_ARTIFACTS_DIRECTORY` remains non-failing. Linux output is compile-only and must not be distributed.
+
+## Remaining acceptance
+
+Run the installed Windows build and follow `WINDOWS.md`: native runtime XAML/theme/PRI, titlebar, list recycling, keyboard/pointer activation, focus, screen-reader behavior, narrow-window/DPI layout, vault restoration and native upgrade remain separate gates. Only the account owner may authorize Google and compare actual channel/video results for owner/brand identities, refresh and pagination. Tests and public upstream fixtures are not completed Google consent or proof of the owner's subscriptions. CI's unauthenticated installed-window smoke does not establish those authenticated gates.

@@ -116,6 +116,8 @@ internal sealed class TestApi : IYouTubeApi
     public Task<YouTubeSession> CompleteSignInAsync(DeviceAuthorization auth, CancellationToken token) => Complete();
     public Task<YouTubeSession> RefreshSessionAsync(string refresh, CancellationToken token) { RefreshCalls++; return Refresh(); }
     public Task<IReadOnlyList<YouTubeAccount>> GetAccountsAsync(YouTubeSession session, CancellationToken token) => Task.FromResult<IReadOnlyList<YouTubeAccount>>([A, B]);
+    public Func<YouTubeAccount, string?, Task<SubscriptionsPage>> Subscriptions = (_, _) => Task.FromResult(new SubscriptionsPage([], [], null, null));
+    public Task<SubscriptionsPage> GetSubscriptionsAsync(YouTubeSession session, YouTubeAccount account, string? continuation, CancellationToken token) => Subscriptions(account, continuation);
     public Func<YouTubeAccount, string?, Task<HistoryPage>> History = (_, _) => Task.FromResult(new HistoryPage([], null, null));
     public Task<HistoryPage> GetHistoryAsync(YouTubeSession session, YouTubeAccount account, string? continuation, CancellationToken token) => History(account, continuation);
 }

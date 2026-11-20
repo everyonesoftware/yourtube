@@ -16,7 +16,10 @@ internal interface IYouTubeApi
     Task<YouTubeSession> RefreshSessionAsync(string refreshToken, CancellationToken cancellationToken);
     Task<IReadOnlyList<YouTubeAccount>> GetAccountsAsync(YouTubeSession session, CancellationToken cancellationToken);
     Task<HistoryPage> GetHistoryAsync(YouTubeSession session, YouTubeAccount account, string? continuation, CancellationToken cancellationToken);
+    Task<SubscriptionsPage> GetSubscriptionsAsync(YouTubeSession session, YouTubeAccount account, string? continuation, CancellationToken cancellationToken);
 }
+
+internal enum BrowseView { History, Subscriptions, Settings }
 
 internal enum SessionPhase { Restoring, SignedOut, Authorizing, SignedIn }
 
@@ -29,11 +32,22 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
     public IReadOnlyList<YouTubeAccount> Accounts { get; private set; } = [];
     public YouTubeAccount? SelectedAccount { get; private set; }
     public IReadOnlyList<HistoryVideo> Videos { get; private set; } = [];
+    public IReadOnlyList<SubscribedChannel> Channels { get; private set; } = [];
+    public BrowseView View { get; private set; } = BrowseView.History;
+    public async Task NavigateAsync(BrowseView view)
+    {
+        if (Phase != SessionPhase.SignedIn || View == view) return;
+        var op = epoch.Begin();
+        epoch.Commit(op.Id, () => { View = view; Videos = []; Channels = []; Continuation = null; Busy = false; Status = view == BrowseView.Settings ? "Settings" : "Choose an account to load this view."; Changed?.Invoke(); });
+        if (view != BrowseView.Settings && SelectedAccount is not null)
+            await FetchHistoryAsync(SelectedAccount, append: false, switching: false);
+    }
     public string? Continuation { get; private set; }
     public event Action? Changed;
     public Func<DateTimeOffset> UtcNow { get; set; } = () => DateTimeOffset.UtcNow;
     private readonly RequestEpoch epoch = new();
     private YouTubeSession? session;
+    private readonly HashSet<string> subscriptionCursors = new(StringComparer.Ordinal);
 
     public async Task InitializeAsync()
     {
@@ -83,7 +97,8 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
     private void ClearPrivateState()
     {
         session = null; Authorization = null; Accounts = []; SelectedAccount = null;
-        Videos = []; Continuation = null; Phase = SessionPhase.SignedOut;
+        subscriptionCursors.Clear();
+        Videos = []; Channels = []; Continuation = null; View = BrowseView.History; Phase = SessionPhase.SignedOut;
     }
     public async Task SignInAsync()
     {
@@ -107,13 +122,13 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
     }
     public Task SelectAccountAsync(YouTubeAccount account)
     {
-        if (Phase != SessionPhase.SignedIn || !Accounts.Contains(account)) return Task.CompletedTask;
+        if (View == BrowseView.Settings || Phase != SessionPhase.SignedIn || !Accounts.Contains(account)) return Task.CompletedTask;
         return FetchHistoryAsync(account, append: false, switching: true);
     }
 
     public Task LoadHistoryAsync(bool append = false)
     {
-        if (Busy || Phase != SessionPhase.SignedIn || SelectedAccount is null || (append && Continuation is null)) return Task.CompletedTask;
+        if (View == BrowseView.Settings || Busy || Phase != SessionPhase.SignedIn || SelectedAccount is null || (append && Continuation is null)) return Task.CompletedTask;
         return FetchHistoryAsync(SelectedAccount, append, switching: false);
     }
 
@@ -125,15 +140,31 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
         epoch.Commit(op.Id, () =>
         {
             captured = session;
-            if (switching) { SelectedAccount = account; Videos = []; Continuation = null; }
+            if (switching) { SelectedAccount = account; Videos = []; Channels = []; Continuation = null; }
             continuation = append ? Continuation : null;
-            Busy = true; Status = append ? "Loading more history…" : "Loading history…"; Changed?.Invoke();
+            var label = View == BrowseView.Subscriptions ? "subscriptions" : "history";
+            Busy = true; Status = append ? $"Loading more {label}…" : $"Loading {label}…"; Changed?.Invoke();
         });
         try
         {
             if (captured is null) return;
             captured = await EnsureFreshAsync(captured, op);
             if (captured is null) return;
+            if (View == BrowseView.Subscriptions)
+            {
+                var subscriptions = await api.GetSubscriptionsAsync(captured, account, continuation, op.Token);
+                epoch.Commit(op.Id, () =>
+                {
+                    Channels = append ? Channels : subscriptions.Channels;
+                    Videos = (append ? Videos.Concat(subscriptions.Videos) : subscriptions.Videos).DistinctBy(v => v.VideoId).ToArray();
+                    if (!append) subscriptionCursors.Clear();
+                    if (continuation is not null) subscriptionCursors.Add(continuation);
+                    var stopped = subscriptions.Continuation is not null && subscriptionCursors.Contains(subscriptions.Continuation);
+                    Continuation = stopped || string.IsNullOrWhiteSpace(subscriptions.Continuation) ? null : subscriptions.Continuation;
+                    Status = stopped ? "YouTube repeated a subscription page. Refresh to try again." : subscriptions.Message ?? $"{Channels.Count} subscribed channels · {Videos.Count} subscription videos loaded.";
+                });
+                return;
+            }
             var page = await api.GetHistoryAsync(captured, account, continuation, op.Token);
             epoch.Commit(op.Id, () =>
             {

@@ -22,7 +22,7 @@ catch(error) {
 }
 if(tag.object.type!=='commit'||tag.object.sha!==manifest.sourceSha) throw new Error('Existing release tag source mismatch');
 const files=['yourtube-windows.json',...manifest.assets.flatMap(a=>[a.name,a.name+'.sha256'])].map(name=>join(dir,name));
-const notes='## Improvements\n- Native Windows proof of concept for Google device activation, account selection and YouTube history browsing.\n\n## Fixes\n- Initial implementation; no previous native release.\n\nAccount-owner authorization and real history acceptance remain pending.\n\n<!-- current-downloads:start -->\nPending verified publication.\n<!-- current-downloads:end -->\n\n## Commits\n- '+manifest.sourceSha.slice(0,7)+' Implement native Windows history proof of concept';
+const notes='## Improvements\n- Subscribed channels and latest subscription videos in the native Windows app, using the existing selected account.\n- Refresh and Load more for subscription videos.\n\n## Fixes\n- Preserve subscription pagination while filtering unrelated video shelves.\n- Reject stale subscription results after account changes, navigation or sign-out.\n\nAccount-owner authorization and authenticated subscriptions acceptance remain pending.\n\n<!-- current-downloads:start -->\nPending verified publication.\n<!-- current-downloads:end -->\n\n## Commits\n- '+manifest.sourceSha.slice(0,7)+' Add subscribed channels and latest subscription videos';
 gh('release','create',manifest.tag,'--repo',repository,'--target',manifest.sourceSha,'--title',`YourTube ${manifest.version}`,'--notes',notes,'--draft',...files);
 // Verify remote bytes before making the draft public.
 const verify=mkdtempSync(join(tmpdir(),'yourtube-publish-'));

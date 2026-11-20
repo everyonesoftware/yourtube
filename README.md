@@ -19,6 +19,8 @@ A personal YouTube client. The first native Windows proof of concept implements 
 
 No browser extension, embedded password form, Google Cloud client registration, or exported browser cookies. A refresh token is stored in Windows Credential Locker; the access token and fetched history stay in memory. The app retrieves video cards/resume information, **not a complete timestamped watch-event export**. Empty, paused, unavailable, and signed-out history must not be mistaken for a working feed. Google may change or reject this private TV-client flow.
 
+The native Windows **Subscriptions** view shows subscribed channel names/new-content markers and the latest TV subscription video feed, with **Refresh** and video **Load more** under the same selected account. Authenticated subscriptions acceptance remains an account-owner gate; see [subscriptions protocol and validation](docs/SUBSCRIPTIONS.md) for evidence and limitations.
+
 See [authentication details](docs/GOOGLE-AUTH.md), [build and verification](docs/WINDOWS.md), and [third-party notices](THIRD-PARTY-NOTICES.md). Other platforms remain mockups/planned and are not part of this Windows proof of concept.
 
 ## Target platforms

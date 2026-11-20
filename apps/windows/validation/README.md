@@ -12,6 +12,8 @@ dotnet run --project apps/windows/validation/YourTube.App.Validation.csproj
 
 The runner exercises session restoration, refresh-token persistence, device authorization cancellation, stale history/account/refresh completions, pagination, safe structured errors, transport-error sanitization and close-versus-sign-out behavior. It also parses the actual embedded XAML, matches typed control lookups, requires native action wiring and checks self-contained publish defaults. No credentials or network are needed.
 
+The runner also exercises subscriptions as both channel and video data: account-bound navigation, delayed old-account/sign-out/Settings results, same-session expiry refresh, cursor cycles, append-versus-refresh replacement, retryable errors and authorization revocation. Subscription channels stay in memory during video pagination; changing account/view clears them. The XML contracts require the real native channel ListView, browse actions and core adapter forwarding. These are state/source tests, not native pointer/keyboard acceptance.
+
 A Linux **compile-only** gate against the real pinned WinUI/Velopack packages:
 
 ```sh

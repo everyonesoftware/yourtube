@@ -6,7 +6,7 @@ YourTube's experimental Windows C# YouTube core adapts HTTP request behavior and
 
 Upstream repository: https://github.com/yuliskov/MediaServiceCore
 
-Relevant reference files include `youtubeapi/src/main/java/com/liskovsoft/youtubeapi/app/AppApi.java`, `app/models/AppInfo.java`, `app/models/ClientData.java`, `auth/V2/AuthApi.java`, `auth/V2/AuthApiHelper.java`, `common/helpers/AppClient.kt`, `common/models/gen/CommonHelper.kt`, `browse/v2/BrowseApiHelper.kt`, and `googlecommon/common/helpers/DefaultHeaders.kt`.
+Relevant reference files include `youtubeapi/src/main/java/com/liskovsoft/youtubeapi/app/AppApi.java`, `app/models/AppInfo.java`, `app/models/ClientData.java`, `auth/V2/AuthApi.java`, `auth/V2/AuthApiHelper.java`, `common/helpers/AppClient.kt`, `common/models/gen/CommonHelper.kt`, `browse/v2/BrowseApiHelper.kt`, `browse/v2/BrowseService2.kt`, `browse/v2/gen/BrowseHelper.kt`, `common/models/impl/mediagroup/MediaGroupImpl.kt` (ChannelListMediaGroup), `common/models/impl/mediaitem/MediaItemImpl.kt` (TabMediaItem), `next/v2/gen/WatchNextHelper.kt`, and `googlecommon/common/helpers/DefaultHeaders.kt`.
 
 No upstream Android binaries or runtime dependencies are bundled. Public TV client credentials are discovered at runtime, not distributed as source constants. Google and YouTube do not endorse this proof of concept.
 

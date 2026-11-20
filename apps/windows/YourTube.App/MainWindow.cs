@@ -18,6 +18,8 @@ internal sealed class MainWindow : Window
     private SessionController? controller;
     private IReadOnlyList<HistoryVideo>? displayedVideos;
     private IReadOnlyList<YouTubeAccount>? displayedAccounts;
+    private IReadOnlyList<SubscribedChannel>? displayedChannels;
+    private BrowseView lastBrowseView = BrowseView.History;
     private bool rendering;
     private bool settingsVisible;
     private bool initialized;
@@ -41,7 +43,9 @@ internal sealed class MainWindow : Window
         // Integration point: updater owns its native view and transport, never auth.
         updatesPanel = new WindowsUpdatesPanel();
         C<ContentControl>("SettingsHost").Content = updatesPanel.View;
-        C<Button>("SettingsButton").Click += (_, _) => { settingsVisible = !settingsVisible; Render(); };
+        C<Button>("SettingsButton").Click += async (_, _) => await NavigateAsync(settingsVisible ? lastBrowseView : BrowseView.Settings);
+        C<Button>("HistoryButton").Click += async (_, _) => await NavigateAsync(BrowseView.History);
+        C<Button>("SubscriptionsButton").Click += async (_, _) => await NavigateAsync(BrowseView.Subscriptions);
         C<Button>("SignInButton").Click += async (_, _) => { if (controller is { Busy: false }) await controller.SignInAsync(); };
         C<Button>("RestoreButton").Click += async (_, _) => { if (controller is { Busy: false }) await controller.InitializeAsync(); else if (controller is null) await InitializeServicesAsync(); };
         C<Button>("OpenActivationButton").Click += async (_, _) => await OpenActivationAsync();
@@ -54,10 +58,11 @@ internal sealed class MainWindow : Window
             if (!rendering && !closed && controller is not null && C<ComboBox>("AccountChooser").SelectedItem is ComboBoxItem { Tag: YouTubeAccount account })
                 await controller.SelectAccountAsync(account);
         };
+        C<ListView>("ChannelsList").ContainerContentChanging += (_, args) => RenderChannelRow(args);
         C<ListView>("HistoryList").ContainerContentChanging += (_, args) => RenderHistoryRow(args);
         C<ListView>("HistoryList").ItemClick += async (_, args) =>
         {
-            if (closed || controller is not { Busy: false, Phase: SessionPhase.SignedIn } || args.ClickedItem is not HistoryVideo video ||
+            if (closed || settingsVisible || controller is not { Busy: false, Phase: SessionPhase.SignedIn } || controller.View == BrowseView.Settings || args.ClickedItem is not HistoryVideo video ||
                 !controller.Videos.Any(v => ReferenceEquals(v, video))) return;
             var uri = BrowserPolicy.VideoUri(video.VideoId);
             if (uri is not null) await LaunchExplicitAsync(uri);
@@ -101,11 +106,21 @@ internal sealed class MainWindow : Window
         else DispatcherQueue.TryEnqueue(Render);
     }
 
+    private async Task NavigateAsync(BrowseView view)
+    {
+        if (closed) return;
+        if (view != BrowseView.Settings && !settingsVisible && controller?.Phase != SessionPhase.SignedIn) return;
+        settingsVisible = view == BrowseView.Settings;
+        if (!settingsVisible) lastBrowseView = view;
+        if (controller is not null) await controller.NavigateAsync(view);
+        Render();
+    }
+
     private void Render()
     {
         if (closed) return;
         C<ScrollViewer>("SettingsPanel").Visibility = ToVisibility(settingsVisible);
-        C<Button>("SettingsButton").Content = settingsVisible ? "Back to history" : "Settings";
+        C<Button>("SettingsButton").Content = settingsVisible ? "Back" : "Settings";
         if (controller is null)
         {
             C<ScrollViewer>("SignInPanel").Visibility = ToVisibility(!settingsVisible && initialized);
@@ -115,6 +130,19 @@ internal sealed class MainWindow : Window
         try
         {
             var signedIn = controller.Phase == SessionPhase.SignedIn;
+            var subscriptions = controller.View == BrowseView.Subscriptions;
+            C<Button>("HistoryButton").IsEnabled = signedIn;
+            C<Button>("SubscriptionsButton").IsEnabled = signedIn;
+            AutomationProperties.SetName(C<Button>("HistoryButton"), !settingsVisible && !subscriptions ? "History, selected" : "History");
+            AutomationProperties.SetName(C<Button>("SubscriptionsButton"), !settingsVisible && subscriptions ? "Subscriptions, selected" : "Subscriptions");
+            C<TextBlock>("ViewHeading").Text = settingsVisible ? "Settings" : subscriptions ? "Your subscriptions" : "Your history";
+            C<TextBlock>("FeedDescription").Text = subscriptions ? "Subscribed channels and latest videos from the experimental YouTube TV feed, in provider order." : "History cards from YouTube TV. These are not timestamped watch events.";
+            C<Grid>("ChannelsPanel").Visibility = ToVisibility(subscriptions);
+            Grid.SetColumn(C<Grid>("VideosPanel"), subscriptions ? 1 : 0);
+            Grid.SetColumnSpan(C<Grid>("VideosPanel"), subscriptions ? 1 : 2);
+            C<TextBlock>("ChannelsStatusText").Text = controller.Channels.Count > 0 ? $"Subscribed channels ({controller.Channels.Count})" : controller.Busy ? "Loading subscribed channels…" : "No subscribed channels loaded.";
+            C<TextBlock>("VideosStatusText").Text = controller.Videos.Count > 0 ? $"{(subscriptions ? "Latest subscription videos" : "History videos")} ({controller.Videos.Count})" : controller.Busy ? "Loading videos…" : "No videos loaded.";
+            AutomationProperties.SetName(C<ListView>("HistoryList"), subscriptions ? "Latest subscription videos" : "Watch history");
             C<Grid>("HistoryPanel").Visibility = ToVisibility(!settingsVisible && signedIn);
             C<ScrollViewer>("SignInPanel").Visibility = ToVisibility(!settingsVisible && controller.Phase == SessionPhase.SignedOut);
             C<StackPanel>("DevicePanel").Visibility = ToVisibility(!settingsVisible && controller.Phase == SessionPhase.Authorizing);
@@ -143,6 +171,11 @@ internal sealed class MainWindow : Window
                     chooser.Items.Add(new ComboBoxItem { Content = string.IsNullOrWhiteSpace(account.Handle) ? account.Name : $"{account.Name} · {account.Handle}", Tag = account });
                 chooser.SelectedItem = chooser.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, controller.SelectedAccount));
             }
+            if (!ReferenceEquals(displayedChannels, controller.Channels))
+            {
+                displayedChannels = controller.Channels;
+                C<ListView>("ChannelsList").ItemsSource = controller.Channels;
+            }
             if (!ReferenceEquals(displayedVideos, controller.Videos))
             {
                 displayedVideos = controller.Videos;
@@ -153,6 +186,20 @@ internal sealed class MainWindow : Window
     }
 
     private static Visibility ToVisibility(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
+
+    private void RenderChannelRow(ContainerContentChangingEventArgs args)
+    {
+        if (args.ItemContainer.ContentTemplateRoot is not Grid host) return;
+        host.Children.Clear();
+        AutomationProperties.SetName(args.ItemContainer, "");
+        if (closed || args.InRecycleQueue || args.Item is not SubscribedChannel channel) return;
+        var row = new StackPanel { Spacing = 5 };
+        row.Children.Add(new TextBlock { Text = channel.Name, FontSize = 16, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+        if (channel.HasNewContent) row.Children.Add(new TextBlock { Text = "New content", FontSize = 12 });
+        host.Children.Add(row);
+        AutomationProperties.SetName(args.ItemContainer, channel.HasNewContent ? $"{channel.Name}, new content" : channel.Name);
+        args.Handled = true;
+    }
 
     private void RenderHistoryRow(ContainerContentChangingEventArgs args)
     {

@@ -18,6 +18,7 @@ Console.WriteLine("PASS: browser allowlists and canonical video IDs.");
 
 await StateTests.Run();
 await FailureTests.Run();
+await SubscriptionStateTests.Run();
 WiringTests.Run(args.Length > 0 ? args[0] : Directory.GetCurrentDirectory());
 if (args.Length > 1) PeTests.Run(args[1], args.Length > 2 ? args[2] : "0.1.1");
 

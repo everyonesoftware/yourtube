@@ -1,0 +1,120 @@
+using YourTube.App;
+using YourTube.Core;
+using static StateTests;
+
+internal static class SubscriptionStateTests
+{
+    internal static readonly SubscribedChannel Channel = new("Fixture channel", true);
+    internal static HistoryVideo Video(string id) => new(id, "Fixture subscription", "Fixture channel", "1:00", null);
+
+    public static async Task Run()
+    {
+        var api = new TestApi();
+        var store = new TestStore();
+        var controller = new SessionController(api, store, "fixture-device");
+        await controller.SignInAsync();
+        await controller.SelectAccountAsync(TestApi.A);
+        api.Subscriptions = (account, cursor) => {
+            Verify(account == TestApi.A && cursor is null, "subscriptions use the same selected identity and initial request");
+            return Task.FromResult(new SubscriptionsPage([Channel], [Video("aaaaaaaaaaa")], "next-page", null));
+        };
+        await controller.NavigateAsync(BrowseView.Subscriptions);
+        Verify(controller.View == BrowseView.Subscriptions && controller.Channels.SequenceEqual([Channel]) && controller.Videos.Single().VideoId == "aaaaaaaaaaa", "subscriptions navigation loads both subscribed channels and latest videos");
+        Verify(!controller.Busy && controller.Continuation == "next-page", "subscriptions exposes provider pagination");
+        Console.WriteLine("PASS: subscription navigation loads channels and latest videos for the active account.");
+        var delayed = new TaskCompletionSource<SubscriptionsPage>();
+        api.Subscriptions = (_, _) => delayed.Task;
+        var switching = controller.SelectAccountAsync(TestApi.B);
+        Verify(controller.Channels.Count == 0 && controller.Videos.Count == 0 && controller.Continuation is null, "switching subscription identity immediately clears previous private data");
+        controller.SignOut();
+        delayed.SetResult(new([Channel], [Video("bbbbbbbbbbb")], "late-page", null));
+        await switching;
+        Verify(controller.Channels.Count == 0 && controller.Videos.Count == 0 && controller.Continuation is null && !controller.Busy && store.Value is null, "late subscription response cannot resurrect sign-out data or credentials");
+        Console.WriteLine("PASS: account switching and sign-out clear subscription data and reject late results.");
+        await Pagination();
+        await NavigationAndFailures();
+        await AccountAndRevocation();
+    }
+
+    private static async Task NavigationAndFailures()
+    {
+        var api = new TestApi();
+        var store = new TestStore();
+        var controller = new SessionController(api, store, "fixture-device");
+        await controller.SignInAsync();
+        await controller.SelectAccountAsync(TestApi.A);
+        var late = new TaskCompletionSource<SubscriptionsPage>();
+        api.Subscriptions = (_, _) => late.Task;
+        var loading = controller.NavigateAsync(BrowseView.Subscriptions);
+        Verify(controller.Busy && controller.Status.Contains("subscriptions", StringComparison.OrdinalIgnoreCase), "subscription loading status identifies the requested data");
+        await controller.NavigateAsync(BrowseView.Settings);
+        Verify(!controller.Busy && controller.Videos.Count == 0 && controller.Channels.Count == 0, "Settings navigation cancels the pending browse and clears busy state");
+        var historyCalls = 0;
+        api.History = (_, _) => { historyCalls++; return Task.FromResult(new HistoryPage([], null, null)); };
+        await controller.LoadHistoryAsync();
+        await controller.SelectAccountAsync(TestApi.B);
+        Verify(historyCalls == 0 && controller.SelectedAccount == TestApi.A, "hidden browse actions cannot issue requests in Settings");
+        late.SetResult(new([Channel], [Video("aaaaaaaaaaa")], "stale", null));
+        await loading;
+        Verify(controller.View == BrowseView.Settings && controller.Videos.Count == 0 && controller.Continuation is null && !controller.Busy, "late subscription completion cannot restore a hidden feed");
+        api.Subscriptions = (_, _) => Task.FromResult(new SubscriptionsPage([Channel], [Video("bbbbbbbbbbb")], "retry-page", null));
+        await controller.NavigateAsync(BrowseView.Subscriptions);
+        api.Subscriptions = (_, _) => throw new YouTubeException("service_unavailable", "YouTube is temporarily unavailable.");
+        await controller.LoadHistoryAsync(true);
+        Verify(controller.Phase == SessionPhase.SignedIn && controller.Channels.Count == 1 && controller.Videos.Count == 1 && controller.Continuation == "retry-page" && !controller.Busy, "retryable subscription error retains current data and cursor");
+        api.Subscriptions = (_, _) => Task.FromResult(new SubscriptionsPage([], [], null, "No more subscription videos were returned."));
+        await controller.LoadHistoryAsync(true);
+        Verify(controller.Status == "No more subscription videos were returned." && controller.Continuation is null, "retry succeeds and shows honest empty completion");
+        controller.UtcNow = () => DateTimeOffset.UtcNow.AddHours(2);
+        var refresh = new TaskCompletionSource<YouTubeSession>();
+        api.Refresh = () => refresh.Task;
+        var refreshing = controller.LoadHistoryAsync();
+        controller.SignOut();
+        var saves = store.Saves;
+        refresh.SetResult(TestApi.Fresh);
+        await refreshing;
+        Verify(store.Value is null && store.Saves == saves && controller.Channels.Count == 0 && !controller.Busy, "late subscription refresh cannot restore vault or private data after sign-out");
+        Console.WriteLine("PASS: subscriptions handle Settings navigation, stale responses, safe retry, empty pages and delayed credential refresh.");
+    }
+
+    private static async Task AccountAndRevocation()
+    {
+        var api = new TestApi();
+        var store = new TestStore();
+        var controller = new SessionController(api, store, "fixture-device");
+        await controller.SignInAsync();
+        await controller.SelectAccountAsync(TestApi.A);
+        var old = new TaskCompletionSource<SubscriptionsPage>();
+        api.Subscriptions = (account, _) => account == TestApi.A ? old.Task : Task.FromResult(new SubscriptionsPage([Channel], [Video("bbbbbbbbbbb")], "b-cursor", null));
+        var loading = controller.NavigateAsync(BrowseView.Subscriptions);
+        await controller.SelectAccountAsync(TestApi.B);
+        old.SetResult(new([new("Old channel", false)], [Video("aaaaaaaaaaa")], "a-cursor", null));
+        await loading;
+        Verify(controller.SelectedAccount == TestApi.B && controller.Videos.Single().VideoId == "bbbbbbbbbbb" && controller.Continuation == "b-cursor" && controller.Channels.Single() == Channel, "old identity subscription response cannot replace the new identity's channels, videos or cursor");
+        api.Subscriptions = (_, _) => throw new YouTubeException("auth_required", "Sign in to YouTube again.");
+        await controller.LoadHistoryAsync();
+        Verify(controller.Phase == SessionPhase.SignedOut && controller.Accounts.Count == 0 && controller.SelectedAccount is null && controller.Channels.Count == 0 && controller.Videos.Count == 0 && controller.Continuation is null && store.Value is null, "subscription authorization rejection removes all private data and saved login");
+        Console.WriteLine("PASS: stale subscription identity results are rejected and authentication revocation clears all private state.");
+    }
+
+    private static async Task Pagination()
+    {
+        var api = new TestApi();
+        var controller = new SessionController(api, new TestStore(), "fixture-device");
+        await controller.SignInAsync();
+        await controller.SelectAccountAsync(TestApi.A);
+        api.Subscriptions = (_, cursor) => Task.FromResult(cursor switch {
+            null => new SubscriptionsPage([Channel], [Video("aaaaaaaaaaa")], "page2", null),
+            "page2" => new SubscriptionsPage([], [Video("aaaaaaaaaaa"), Video("bbbbbbbbbbb")], "page3", null),
+            _ => new SubscriptionsPage([], [Video("ccccccccccc")], "page2", null)
+        });
+        await controller.NavigateAsync(BrowseView.Subscriptions);
+        await controller.LoadHistoryAsync(append: true);
+        Verify(controller.Videos.Count == 2 && controller.Channels.Count == 1 && controller.Continuation == "page3", "subscription pagination appends distinct videos while retaining subscribed channels");
+        await controller.LoadHistoryAsync(append: true);
+        Verify(controller.Videos.Count == 3 && controller.Continuation is null, "cyclic subscription cursor stops pagination rather than loading forever");
+        await controller.LoadHistoryAsync();
+        Verify(controller.Videos.Count == 1 && controller.Channels.Count == 1 && controller.Continuation == "page2", "subscription refresh replaces old pages and resets cursor protection");
+        Console.WriteLine("PASS: subscription pagination retains channels, deduplicates cards, stops cursor cycles and resets on refresh.");
+    }
+}
