@@ -29,7 +29,74 @@ public sealed class WindowsUpdatesPanel : IDisposable
             <StackPanel Spacing="8">
               <TextBlock x:Name="NotesStatus" TextWrapping="Wrap" Visibility="Collapsed"/>
               <Button x:Name="RetryNotes" Content="Retry changelog" Visibility="Collapsed"/>
-              <StackPanel x:Name="NotesContent" Spacing="8" Visibility="Collapsed"/>
+              <StackPanel x:Name="NotesContent" Spacing="8" Visibility="Collapsed">
+                <StackPanel.Resources>
+                  <ResourceDictionary>
+                    <!-- Scoped native HyperlinkButton states: do not recolor other shell links. -->
+                    <ResourceDictionary.ThemeDictionaries>
+                      <ResourceDictionary x:Key="Default">
+                        <SolidColorBrush x:Key="HyperlinkButtonBackground" Color="#2a312c"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonBorderBrush" Color="#545e56"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonForeground" Color="#bbd8c1"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonBackgroundPointerOver" Color="#34483a"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonBorderBrushPointerOver" Color="#8daf96"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonForegroundPointerOver" Color="#bbd8c1"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonBackgroundPressed" Color="#263e2f"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonBorderBrushPressed" Color="#8daf96"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonForegroundPressed" Color="#bbd8c1"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonBackgroundDisabled" Color="#2a312c"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonBorderBrushDisabled" Color="#545e56"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonForegroundDisabled" Color="#7d8b80"/>
+                      </ResourceDictionary>
+                      <ResourceDictionary x:Key="Light">
+                        <SolidColorBrush x:Key="HyperlinkButtonBackground" Color="#e5ebe4"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonBorderBrush" Color="#819184"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonForeground" Color="#315e3d"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonBackgroundPointerOver" Color="#d5e4d5"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonBorderBrushPointerOver" Color="#496e51"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonForegroundPointerOver" Color="#244f30"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonBackgroundPressed" Color="#c6d9c7"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonBorderBrushPressed" Color="#496e51"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonForegroundPressed" Color="#244f30"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonBackgroundDisabled" Color="#e5ebe4"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonBorderBrushDisabled" Color="#a0aaa0"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonForegroundDisabled" Color="#758176"/>
+                      </ResourceDictionary>
+                      <ResourceDictionary x:Key="HighContrast">
+                        <SolidColorBrush x:Key="HyperlinkButtonBackground" Color="{ThemeResource SystemColorWindowColor}"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonBorderBrush" Color="{ThemeResource SystemColorHotlightColor}"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonForeground" Color="{ThemeResource SystemColorHotlightColor}"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonBackgroundPointerOver" Color="{ThemeResource SystemColorHighlightColor}"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonBorderBrushPointerOver" Color="{ThemeResource SystemColorHighlightTextColor}"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonForegroundPointerOver" Color="{ThemeResource SystemColorHighlightTextColor}"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonBackgroundPressed" Color="{ThemeResource SystemColorHighlightColor}"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonBorderBrushPressed" Color="{ThemeResource SystemColorHighlightTextColor}"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonForegroundPressed" Color="{ThemeResource SystemColorHighlightTextColor}"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonBackgroundDisabled" Color="{ThemeResource SystemColorWindowColor}"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonBorderBrushDisabled" Color="{ThemeResource SystemColorGrayTextColor}"/>
+                        <SolidColorBrush x:Key="HyperlinkButtonForegroundDisabled" Color="{ThemeResource SystemColorGrayTextColor}"/>
+                      </ResourceDictionary>
+                    </ResourceDictionary.ThemeDictionaries>
+                    <!-- Keep the SDK template, keyboard activation, automation peer and focus visuals. -->
+                    <Style x:Key="CommitLinkStyle" TargetType="HyperlinkButton">
+                      <Setter Property="FontFamily" Value="Consolas"/>
+                      <Setter Property="FontSize" Value="14"/>
+                      <Setter Property="Background" Value="{ThemeResource HyperlinkButtonBackground}"/>
+                      <Setter Property="BorderBrush" Value="{ThemeResource HyperlinkButtonBorderBrush}"/>
+                      <Setter Property="Foreground" Value="{ThemeResource HyperlinkButtonForeground}"/>
+                      <Setter Property="BorderThickness" Value="1"/>
+                      <Setter Property="CornerRadius" Value="4"/>
+                      <Setter Property="Padding" Value="6,0"/>
+                      <Setter Property="MinWidth" Value="0"/>
+                      <Setter Property="MinHeight" Value="24"/>
+                      <Setter Property="HorizontalAlignment" Value="Left"/>
+                      <Setter Property="VerticalAlignment" Value="Top"/>
+                      <Setter Property="IsTabStop" Value="True"/>
+                      <Setter Property="UseSystemFocusVisuals" Value="True"/>
+                    </Style>
+                  </ResourceDictionary>
+                </StackPanel.Resources>
+              </StackPanel>
             </StackPanel>
           </Expander>
           <ProgressBar x:Name="Progress" Visibility="Collapsed"/>
@@ -144,9 +211,23 @@ public sealed class WindowsUpdatesPanel : IDisposable
         if (count == 0) notesContent.Children.Add(NoteText("No user-facing Windows changes in this source range."));
 
         var details = new StackPanel { Spacing = 8 };
-        details.Children.Add(NoteText($"{changes.BaseRevision[..7]}…{changes.HeadRevision[..7]}"));
+        details.Children.Add(CommitLink($"{changes.BaseRevision[..7]}…{changes.HeadRevision[..7]}",
+            $"https://github.com/everyonesoftware/yourtube/compare/{changes.BaseRevision}...{changes.HeadRevision}",
+            $"Compare source range {changes.BaseRevision[..7]} to {changes.HeadRevision[..7]} on GitHub (opens in your browser)"));
         foreach (var commit in changes.Commits)
-            details.Children.Add(NoteText($"{commit.Sha[..7]}  {commit.Subject}"));
+        {
+            var row = new Grid { ColumnSpacing = 9 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.Children.Add(CommitLink(commit.Sha[..7],
+                $"https://github.com/everyonesoftware/yourtube/commit/{commit.Sha}",
+                $"View commit {commit.Sha[..7]} on GitHub (opens in your browser)"));
+            var subject = NoteText(commit.Subject);
+            subject.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetColumn(subject, 1);
+            row.Children.Add(subject);
+            details.Children.Add(row);
+        }
         notesContent.Children.Add(new Expander { Header = "Commit details", Content = details,
             HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch });
     }
@@ -156,6 +237,20 @@ public sealed class WindowsUpdatesPanel : IDisposable
         notesContent.Children.Add(new TextBlock { Text = heading, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         foreach (string entry in entries) notesContent.Children.Add(NoteText($"• {entry}"));
     }
+    private HyperlinkButton CommitLink(string text, string uri, string accessibleName)
+    {
+        // NavigateUri is inert until native hyperlink activation; disclosures only render cached notes.
+        var link = new HyperlinkButton
+        {
+            Content = text,
+            NavigateUri = new Uri(uri),
+            Style = (Style)notesContent.Resources["CommitLinkStyle"]
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(link, accessibleName);
+        ToolTipService.SetToolTip(link, accessibleName);
+        return link;
+    }
+
     private static TextBlock NoteText(string text) => new() { Text = text, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
     public void Dispose()
     {
