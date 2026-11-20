@@ -153,11 +153,22 @@ public sealed partial class ProofApplication : Application, Microsoft.UI.Xaml.Ma
             lifecycle = await NativeLifecycleProof.RunAsync(element, resolver, mediaById, nextStage => stage = nextStage);
             success = true;
         }
-        catch
+        catch (Exception error)
         {
             // Never serialize exceptions, signed URLs, library responses or user/account data.
             title.Text = "Native playback acceptance failed.";
-            results.Add(new { videoId = activeVideo, status = "failed", stage });
+            var reason = error switch
+            {
+                PlaybackException { Code: "unsafe_resource" } => "unsafe_resource",
+                PlaybackException { Code: "network_error" } => "network_error",
+                PlaybackException { Code: "unsupported_media" } => "unsupported_media",
+                PlaybackException { Code: "unavailable" } => "unavailable",
+                PlaybackException { Code: "source_expired" } => "source_expired",
+                PlaybackException { Code: "native_source" } => "native_source",
+                OperationCanceledException => "canceled_or_timed_out",
+                _ => "unclassified"
+            };
+            results.Add(new { videoId = activeVideo, status = "failed", stage, reason });
         }
         finally
         {
