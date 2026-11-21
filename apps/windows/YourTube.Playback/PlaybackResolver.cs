@@ -18,6 +18,7 @@ internal sealed class MediaTrack(Uri uri, ulong size, string codec, uint bitrate
 public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
 {
     private const ulong MaximumRead = 16 * 1024 * 1024;
+    private const ulong InitialHeaderRead = 16 * 1024;
     private const ulong HeaderRead = 1024 * 1024;
     private static readonly XNamespace Dash = "urn:mpeg:dash:schema:mpd:2011";
     private sealed record OwnedSource(XDocument Manifest, Dictionary<string, MediaTrack> Tracks);
@@ -80,10 +81,13 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
             try
             {
                 if (firstRead) timing?.Mark(PlaybackTimingStage.FirstLeadingReadStarted);
-                var bytes = await FetchAsync(track, 0, Math.Min(HeaderRead, track.Size), token);
+                var bytes = await FetchAsync(track, 0, Math.Min(InitialHeaderRead, track.Size), token);
                 if (firstRead) timing?.Mark(PlaybackTimingStage.FirstLeadingReadCompleted);
                 firstRead = false;
-                ranges = Mp4Header.Parse(bytes, track.Size, track.Height > 0 ? "avc1" : "mp4a");
+                string sampleType = track.Height > 0 ? "avc1" : "mp4a";
+                ulong limit = Math.Min(HeaderRead, track.Size);
+                ranges = Mp4Header.ParsePrefix(bytes, track.Size, limit, sampleType)
+                    ?? Mp4Header.Parse(await FetchAsync(track, 0, limit, token), track.Size, sampleType);
             }
             catch (PlaybackException e) when (e.Code == "unsupported_media") { continue; }
             expiry = expires < expiry ? expires : expiry;

@@ -4,19 +4,39 @@ namespace YourTube.Playback;
 
 internal static class Mp4Header
 {
+    // An 8-byte box header, 24-byte version-0 payload, and one 12-byte reference.
+    private const ulong MinimumIndexSize = 44;
     private static PlaybackException Invalid() => new("unsupported_media", "The media index is unsupported or invalid.");
-    internal static Mp4Index Parse(byte[] bytes, ulong resourceSize, string? expectedSampleType = null)
+    internal static Mp4Index Parse(byte[] bytes, ulong resourceSize, string? expectedSampleType = null) =>
+        ParsePrefix(bytes, resourceSize, (ulong)bytes.Length, expectedSampleType) ?? throw Invalid();
+
+    // Null means the fetched prefix ended before a potentially valid index. A known
+    // malformed box or an index that cannot fit in the read budget is not retryable.
+    internal static Mp4Index? ParsePrefix(byte[] bytes, ulong resourceSize, ulong prefixLimit, string? expectedSampleType)
     {
+        prefixLimit = Math.Min(prefixLimit, resourceSize);
         bool ftyp = false, movie = false; ulong initEnd = 0;
-        for (int p = 0; p + 8 <= bytes.Length;)
+        for (int p = 0; ;)
         {
-            var (size, header, type) = Box(bytes, p, bytes.Length);
-            if (type is "mdat" or "pssh" or "moof" or "sinf" or "encv" or "enca" || size > bytes.Length - p) throw Invalid();
-            if (type == "ftyp") { if (ftyp || p != 0 || size < header + 8) throw Invalid(); ftyp = true; }
-            if (type == "moov") { if (!ftyp || movie || Inspect(bytes, p + header, p + size, 0, expectedSampleType) != 1) throw Invalid(); movie = true; initEnd = (ulong)(p + size - 1); }
+            int available = bytes.Length - p;
+            Mp4Index? Incomplete(ulong requiredEnd) => requiredEnd <= prefixLimit ? null : throw Invalid();
+            if (available < 8) return Incomplete((ulong)p + MinimumIndexSize + (movie ? 0u : 8u));
+            var type = Encoding.ASCII.GetString(bytes, p + 4, 4);
+            if (type is "mdat" or "pssh" or "moof" or "sinf" or "encv" or "enca" ||
+                type == "ftyp" && (ftyp || p != 0) || type == "moov" && (!ftyp || movie) ||
+                type == "sidx" && (!ftyp || !movie) || p == 0 && type != "ftyp") throw Invalid();
+            ulong requiredAfter = type == "sidx" ? 0 : MinimumIndexSize + (movie || type == "moov" ? 0u : 8u);
+            if (available < 16 && BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(p)) == 1)
+                return Incomplete((ulong)p + (type == "sidx" ? MinimumIndexSize + 8 : 16) + requiredAfter);
+            var (size, header, _) = Box(bytes, p, bytes.Length);
+            if (type == "ftyp" && size < header + 8 ||
+                type == "sidx" && (ulong)size < MinimumIndexSize + (ulong)(header - 8) ||
+                (ulong)p + (ulong)size + requiredAfter > prefixLimit) throw Invalid();
+            if (size > available) return null;
+            if (type == "ftyp") ftyp = true;
+            if (type == "moov") { if (Inspect(bytes, p + header, p + size, 0, expectedSampleType) != 1) throw Invalid(); movie = true; initEnd = (ulong)(p + size - 1); }
             if (type == "sidx")
             {
-                if (!ftyp || !movie) throw Invalid();
                 var s = bytes.AsSpan(p + header, size - header);
                 if (s.Length < 24 || s[0] > 1 || s[1] != 0 || s[2] != 0 || s[3] != 0 || BinaryPrimitives.ReadUInt32BigEndian(s[8..]) == 0) throw Invalid();
                 int prefix = s[0] == 0 ? 24 : 32;
@@ -37,7 +57,6 @@ internal static class Mp4Header
             }
             p += size;
         }
-        throw Invalid();
     }
     private static (int Size, int Header, string Type) Box(byte[] b, int p, int end)
     {
