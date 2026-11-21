@@ -33,27 +33,34 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
         http = new HttpClient(new PublicTransport(handler)) { Timeout = TimeSpan.FromSeconds(40) };
         client = new YoutubeClient(http);
     }
-    public async Task<PlaybackMedia> ResolveAsync(string videoId, CancellationToken cancellationToken = default)
+    public Task<PlaybackMedia> ResolveAsync(string videoId, CancellationToken cancellationToken = default) =>
+        ResolveAsync(videoId, cancellationToken, null);
+
+    public async Task<PlaybackMedia> ResolveAsync(string videoId, CancellationToken cancellationToken, PlaybackTiming? timing)
     {
         try
         {
             CheckDisposed();
             if (!Regex.IsMatch(videoId ?? "", "\\A[A-Za-z0-9_-]{11}\\z", RegexOptions.CultureInvariant)) throw new PlaybackException("invalid_video", "The video identity is invalid.");
+            timing?.Mark(PlaybackTimingStage.MetadataStarted);
             var metadata = await client.Videos.GetAsync(videoId!, cancellationToken);
+            timing?.Mark(PlaybackTimingStage.MetadataCompleted);
             if (metadata.Duration is not { } duration || duration <= TimeSpan.Zero) throw Unsupported();
+            timing?.Mark(PlaybackTimingStage.StreamManifestStarted);
             var manifest = await client.Videos.Streams.GetManifestAsync(videoId!, cancellationToken);
-            var videos = manifest.GetVideoOnlyStreams().Where(s => s.Container.Name == "mp4" && Regex.IsMatch(s.VideoCodec, "\\Aavc1\\.[0-9a-fA-F]{6}\\z") && s.VideoResolution.Height is > 0 and <= 1080 && s.VideoResolution.Width <= 1920).OrderBy(s => s.VideoResolution.Height).ThenBy(s => s.Bitrate.BitsPerSecond).ToArray();
-            var audio = manifest.GetAudioOnlyStreams().Where(s => s.Container.Name == "mp4" && s.AudioCodec == "mp4a.40.2" && s.IsAudioLanguageDefault != false).OrderByDescending(s => s.IsAudioLanguageDefault == true).ThenByDescending(s => s.Bitrate.BitsPerSecond).FirstOrDefault();
+            timing?.Mark(PlaybackTimingStage.StreamManifestCompleted);
+            var videos = manifest.GetVideoOnlyStreams().Where(s => s.Container.Name == "mp4" && Regex.IsMatch(s.VideoCodec, PlayerStreamFilter.AvcPattern) && s.VideoResolution.Height is > 0 and <= PlayerStreamFilter.MaxHeight && s.VideoResolution.Width <= PlayerStreamFilter.MaxWidth).OrderBy(s => s.VideoResolution.Height).ThenBy(s => s.Bitrate.BitsPerSecond).ToArray();
+            var audio = manifest.GetAudioOnlyStreams().Where(s => s.Container.Name == "mp4" && s.AudioCodec == PlayerStreamFilter.AacCodec && s.IsAudioLanguageDefault != false).OrderByDescending(s => s.IsAudioLanguageDefault == true).ThenByDescending(s => s.Bitrate.BitsPerSecond).FirstOrDefault();
             if (videos.Length == 0 || audio is null) throw Unsupported();
             var tracks = videos.Select(s => new MediaTrack(new Uri(s.Url), checked((ulong)s.Size.Bytes), s.VideoCodec, checked((uint)s.Bitrate.BitsPerSecond), s.VideoResolution.Width, s.VideoResolution.Height)).ToList();
             tracks.Add(new(new Uri(audio.Url), checked((ulong)audio.Size.Bytes), audio.AudioCodec, checked((uint)audio.Bitrate.BitsPerSecond), 0, 0));
-            return await AssembleAsync(videoId!, metadata.Title, metadata.Author.ChannelTitle, metadata.Description, duration, tracks, cancellationToken);
+            return await AssembleAsync(videoId!, metadata.Title, metadata.Author.ChannelTitle, metadata.Description, duration, tracks, cancellationToken, timing);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (PlaybackException) { throw; }
         catch { throw new PlaybackException("unavailable", "This public video could not be resolved for native playback."); }
     }
-    internal async Task<PlaybackMedia> AssembleAsync(string id, string title, string author, string description, TimeSpan duration, IReadOnlyList<MediaTrack> tracks, CancellationToken token = default)
+    internal async Task<PlaybackMedia> AssembleAsync(string id, string title, string author, string description, TimeSpan duration, IReadOnlyList<MediaTrack> tracks, CancellationToken token = default, PlaybackTiming? timing = null)
     {
         CheckDisposed();
         if (duration <= TimeSpan.Zero || tracks.Count > 33) throw Unsupported();
@@ -62,14 +69,22 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
         var audio = new XElement(ns + "AdaptationSet", new XAttribute("id", "2"), new XAttribute("contentType", "audio"), new XAttribute("mimeType", "audio/mp4"));
         var owned = new Dictionary<string, MediaTrack>(StringComparer.Ordinal); var qualities = new List<PlaybackQuality>();
         DateTimeOffset expiry = DateTimeOffset.MaxValue; int index = 0;
+        bool firstRead = true;
         foreach (var track in tracks)
         {
             token.ThrowIfCancellationRequested();
-            if (!PublicTransport.IsCdn(track.Uri) || track.Size < 8 || track.Size > long.MaxValue || track.Bitrate == 0 || track.Height < 0 || track.Height > 1080 || track.Width < 0 || track.Width > 1920 || (track.Height == 0 ? track.Codec != "mp4a.40.2" : !Regex.IsMatch(track.Codec, "\\Aavc1\\.[a-fA-F0-9]{6}\\z"))) throw Unsupported();
+            if (!PublicTransport.IsCdn(track.Uri) || track.Size < 8 || track.Size > long.MaxValue || track.Bitrate == 0 || track.Height < 0 || track.Height > PlayerStreamFilter.MaxHeight || track.Width < 0 || track.Width > PlayerStreamFilter.MaxWidth || (track.Height == 0 ? track.Codec != PlayerStreamFilter.AacCodec : !Regex.IsMatch(track.Codec, PlayerStreamFilter.AvcPattern))) throw Unsupported();
             var expires = Expiry(track.Uri);
             if (expires <= DateTimeOffset.UtcNow) throw Expired();
             Mp4Index ranges;
-            try { ranges = Mp4Header.Parse(await FetchAsync(track, 0, Math.Min(HeaderRead, track.Size), token), track.Size, track.Height > 0 ? "avc1" : "mp4a"); }
+            try
+            {
+                if (firstRead) timing?.Mark(PlaybackTimingStage.FirstLeadingReadStarted);
+                var bytes = await FetchAsync(track, 0, Math.Min(HeaderRead, track.Size), token);
+                if (firstRead) timing?.Mark(PlaybackTimingStage.FirstLeadingReadCompleted);
+                firstRead = false;
+                ranges = Mp4Header.Parse(bytes, track.Size, track.Height > 0 ? "avc1" : "mp4a");
+            }
             catch (PlaybackException e) when (e.Code == "unsupported_media") { continue; }
             expiry = expires < expiry ? expires : expiry;
             owned.Add(track.Uri.AbsoluteUri, track);
@@ -80,7 +95,9 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
         if (!video.HasElements || !audio.HasElements) throw Unsupported();
         var mpd = new XDocument(new XElement(ns + "MPD", new XAttribute("type", "static"), new XAttribute("profiles", "urn:mpeg:dash:profile:isoff-on-demand:2011"), new XAttribute("mediaPresentationDuration", XmlConvert.ToString(duration)), new XAttribute("minBufferTime", "PT1.5S"), new XElement(ns + "Period", new XAttribute("start", "PT0S"), new XAttribute("duration", XmlConvert.ToString(duration)), video, audio)));
         var media = new PlaybackMedia(id, title, author, description, duration, expiry, Serialize(mpd), new("https://www.youtube.com/yourtube-playback.mpd"), qualities.AsReadOnly());
-        ownership.Add(media, new(mpd, owned)); return media;
+        ownership.Add(media, new(mpd, owned));
+        timing?.Mark(PlaybackTimingStage.DashAssemblyCompleted);
+        return media;
     }
 
     /// <summary>Returns Auto unchanged, or a DASH source limited to one validated video rendition at the exact height.</summary>

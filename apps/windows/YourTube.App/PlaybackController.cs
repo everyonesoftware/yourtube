@@ -7,24 +7,36 @@ namespace YourTube.App;
 internal sealed class PlaybackController<T>(Func<string, CancellationToken, Task<T>> create) : IDisposable where T : class, IDisposable
 {
     public PlaybackController(IPlaybackResolver resolver, Func<PlaybackMedia, CancellationToken, Task<T>> attach)
+        : this((id, ct, _) => resolver.ResolveAsync(id, ct), (media, ct, _) => attach(media, ct), () => null) { }
+
+    public PlaybackController(Func<string, CancellationToken, PlaybackTiming?, Task<PlaybackMedia>> resolve,
+        Func<PlaybackMedia, CancellationToken, PlaybackTiming?, Task<T>> attach, Func<PlaybackTiming?> startTiming)
         : this(async (id, ct) =>
         {
+            var timing = startTiming();
+            timing?.Mark(PlaybackTimingStage.ResolveStarted);
             PlaybackMedia media;
             try
             {
-                media = await resolver.ResolveAsync(id, ct);
+                media = await resolve(id, ct, timing);
                 ct.ThrowIfCancellationRequested();
+                timing?.Mark(PlaybackTimingStage.ResolveCompleted);
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                timing?.Mark(PlaybackTimingStage.ResolveCanceled);
+                throw;
+            }
             catch (Exception error)
             {
+                timing?.Mark(PlaybackTimingStage.ResolveFailed);
                 throw new StreamLoadFailure(error is PlaybackException { Code: "unsupported_media" }
                     ? "No compatible stream was found for native playback. Retry, or open it on YouTube."
                     : "Couldn’t load the video stream. Retry, or open it on YouTube.");
             }
             if (media.ExpiresAt <= DateTimeOffset.UtcNow)
                 throw new StreamLoadFailure("The video stream expired. Retry, or open it on YouTube.");
-            return await attach(media, ct);
+            return await attach(media, ct, timing);
         }) { }
 
     private sealed class StreamLoadFailure(string message) : Exception(message);

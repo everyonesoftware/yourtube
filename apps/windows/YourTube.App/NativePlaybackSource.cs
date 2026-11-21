@@ -24,9 +24,11 @@ internal sealed class NativePlaybackSource : IDisposable
     private bool disposed;
     private int outstandingDownloads;
     private int successfulDownloads;
+    private int firstReadRequested;
     private int deferralCompletionFailures;
     private int failed;
     public PlaybackMedia Media { get; }
+    public PlaybackTiming? Timing { get; }
     public MediaSource Source { get; private set; } = null!;
     // Stable notification only: never forward WinRT errors, URLs or provider responses.
     public event Action? Failed;
@@ -37,18 +39,22 @@ internal sealed class NativePlaybackSource : IDisposable
     private bool downloadsStoppedCleanly;
     private bool closedCleanly;
 
-    private NativePlaybackSource(IPlaybackResolver resolver, PlaybackMedia media, CancellationToken ct)
+    private NativePlaybackSource(IPlaybackResolver resolver, PlaybackMedia media, CancellationToken ct, PlaybackTiming? timing)
     {
         this.resolver = resolver; Media = media;
+        Timing = timing;
         cancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
         token = cancellation.Token;
     }
-    public static Task<NativePlaybackSource> CreateAsync(IPlaybackResolver resolver, PlaybackMedia media, CancellationToken ct) =>
-        CreateAsync(resolver, media, ct, ct);
+    public static Task<NativePlaybackSource> CreateAsync(IPlaybackResolver resolver, PlaybackMedia media, CancellationToken ct,
+        PlaybackTiming? timing = null, int startupHeight = AutoStartupPreference.DefaultHeight) =>
+        CreateAsync(resolver, media, ct, ct, timing: timing, startupHeight: startupHeight);
 
-    public static async Task<NativePlaybackSource> CreateAsync(IPlaybackResolver resolver, PlaybackMedia media, CancellationToken lifetime, CancellationToken operation)
+    public static async Task<NativePlaybackSource> CreateAsync(IPlaybackResolver resolver, PlaybackMedia media, CancellationToken lifetime,
+        CancellationToken operation, bool auto = true, PlaybackTiming? timing = null, int startupHeight = AutoStartupPreference.DefaultHeight)
     {
-        var owner = new NativePlaybackSource(resolver, media, lifetime);
+        timing?.Mark(PlaybackTimingStage.NativeSourceStarted);
+        var owner = new NativePlaybackSource(resolver, media, lifetime, timing);
         try
         {
             operation.ThrowIfCancellationRequested();
@@ -71,13 +77,64 @@ internal sealed class NativePlaybackSource : IDisposable
             owner.adaptive = result.MediaSource;
             if (result.Status != AdaptiveMediaSourceCreationStatus.Success || owner.adaptive is null)
                 throw new PlaybackException("native_source", "Windows could not open this playback source.");
+            timing?.Mark(PlaybackTimingStage.NativeSourceCreated);
             owner.adaptive.DownloadRequested += owner.DownloadRequested;
+            if (timing is not null)
+            {
+                Attempt(() => owner.adaptive.DownloadBitrateChanged += owner.DownloadBitrateChanged);
+                Attempt(() => owner.adaptive.PlaybackBitrateChanged += owner.PlaybackBitrateChanged);
+            }
+            if (auto && startupHeight > 0) owner.ApplyAutoStartupPreference(owner.adaptive, startupHeight);
             owner.Source = MediaSource.CreateFromAdaptiveMediaSource(owner.adaptive);
             operation.ThrowIfCancellationRequested();
             return owner;
         }
-        catch (OperationCanceledException) { owner.Dispose(); throw; }
-        catch { owner.Dispose(); throw new PlaybackException("native_source", "Windows could not open this playback source. Retry, or open YouTube."); }
+        catch (OperationCanceledException) { timing?.Mark(PlaybackTimingStage.NativeSourceCanceled); owner.Dispose(); throw; }
+        catch { timing?.Mark(PlaybackTimingStage.NativeSourceFailed); owner.Dispose(); throw new PlaybackException("native_source", "Windows could not open this playback source. Retry, or open YouTube."); }
+    }
+
+    private void ApplyAutoStartupPreference(AdaptiveMediaSource source, int height)
+    {
+        // InitialBitrate is a hint. Never restrict the adaptive ladder or make playback depend on setting it.
+        try
+        {
+            if (AutoStartupPreference.Select(true, Media.Qualities, source.AvailableBitrates, height) is { } preferred)
+            {
+                source.InitialBitrate = preferred.Bitrate;
+                Timing?.Mark(PlaybackTimingStage.NativeStartupHintApplied, bitrateBps: preferred.Bitrate, height: preferred.Height);
+                return;
+            }
+        }
+        catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or InvalidOperationException or ArgumentException) { }
+        Timing?.Mark(PlaybackTimingStage.NativeStartupHintUnavailable);
+    }
+
+    private void DownloadBitrateChanged(AdaptiveMediaSource sender, AdaptiveMediaSourceDownloadBitrateChangedEventArgs args)
+    {
+        Attempt(() => Timing?.Mark(PlaybackTimingStage.NativeDownloadBitrateChanged, PositionMs(sender),
+            args.NewValue, args.OldValue, reasonCode: (int)args.Reason));
+    }
+
+    private void PlaybackBitrateChanged(AdaptiveMediaSource sender, AdaptiveMediaSourcePlaybackBitrateChangedEventArgs args)
+    {
+        Attempt(() =>
+        {
+            if (!args.AudioOnly)
+                Timing?.Mark(PlaybackTimingStage.NativePlaybackBitrateChanged, PositionMs(sender), args.NewValue, args.OldValue);
+        });
+    }
+
+    private static long? PositionMs(AdaptiveMediaSource sender)
+    {
+        try { return sender.GetCorrelatedTimes().Position?.Ticks / TimeSpan.TicksPerMillisecond; }
+        catch { return null; } // Correlated position may not exist before the playback clock starts.
+    }
+
+    public void MarkCurrentBitrates(long positionMs)
+    {
+        if (Timing is not { } timing || adaptive is not { } source) return;
+        Attempt(() => timing.Mark(PlaybackTimingStage.NativeDownloadBitrateAtFirstProgress, positionMs, source.CurrentDownloadBitrate));
+        Attempt(() => timing.Mark(PlaybackTimingStage.NativePlaybackBitrateAtFirstProgress, positionMs, source.CurrentPlaybackBitrate));
     }
     private static async Task DisposeLateSourceAsync(Task<AdaptiveMediaSourceCreationResult> creation)
     {
@@ -98,6 +155,8 @@ internal sealed class NativePlaybackSource : IDisposable
             args.Result.ExtendedStatus = unchecked((uint)0x80004005);
             token.ThrowIfCancellationRequested();
             if (Media.ExpiresAt <= DateTimeOffset.UtcNow) throw new OperationCanceledException();
+            if (Timing is not null && Interlocked.Exchange(ref firstReadRequested, 1) == 0)
+                Timing.Mark(PlaybackTimingStage.NativeFirstReadStarted);
             // Release the WinRT deferral on cancellation even if a read does not cooperate.
             var resource = await resolver.ReadResourceAsync(Media, args.ResourceUri, args.ResourceByteRangeOffset, args.ResourceByteRangeLength, token)
                 .WaitAsync(token).ConfigureAwait(false);
@@ -107,7 +166,7 @@ internal sealed class NativePlaybackSource : IDisposable
                 args.Result.ContentType = resource.ContentType;
                 args.Result.Buffer = resource.Bytes.AsBuffer();
                 args.Result.ExtendedStatus = 0;
-                Interlocked.Increment(ref successfulDownloads);
+                if (Interlocked.Increment(ref successfulDownloads) == 1) Timing?.Mark(PlaybackTimingStage.NativeFirstSuccessfulRead);
             }
         }
         catch
@@ -129,6 +188,7 @@ internal sealed class NativePlaybackSource : IDisposable
         }
         if (notify)
         {
+            Timing?.Mark(PlaybackTimingStage.NativeReadFailed);
             try { Failed?.Invoke(); } catch { /* An observer must not escape an async WinRT callback. */ }
         }
     }
@@ -142,6 +202,11 @@ internal sealed class NativePlaybackSource : IDisposable
         }
         downloadsStoppedCleanly = Attempt(() => cancellation.Cancel());
         if (adaptive is not null) downloadsStoppedCleanly &= Attempt(() => adaptive.DownloadRequested -= DownloadRequested);
+        if (adaptive is not null && Timing is not null)
+        {
+            Attempt(() => adaptive.DownloadBitrateChanged -= DownloadBitrateChanged);
+            Attempt(() => adaptive.PlaybackBitrateChanged -= PlaybackBitrateChanged);
+        }
     }
     public void Dispose()
     {
@@ -154,6 +219,7 @@ internal sealed class NativePlaybackSource : IDisposable
             & Attempt(nativeHttp.Dispose)
             & Attempt(cancellation.Dispose);
         Failed = null;
+        Timing?.Mark(PlaybackTimingStage.NativeDisposed);
     }
     internal static bool Attempt(Action action)
     {

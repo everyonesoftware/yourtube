@@ -63,7 +63,16 @@
       <Button x:Name="OpenActivationButton" Content="Open activation page in browser" IsEnabled="False"/>
     </StackPanel>
     <ScrollViewer x:Name="SettingsPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
-      <StackPanel Spacing="20"><TextBlock Text="Settings" FontSize="24" FontWeight="SemiBold"/><ContentControl x:Name="SettingsHost" HorizontalContentAlignment="Stretch"/></StackPanel>
+      <StackPanel Spacing="20">
+        <TextBlock Text="Settings" FontSize="24" FontWeight="SemiBold"/>
+        <StackPanel Spacing="8">
+          <TextBlock Text="Playback" FontSize="18" FontWeight="SemiBold"/>
+          <ComboBox x:Name="StartupQualityChooser" Header="Auto startup quality" MinWidth="180"/>
+          <TextBlock Text="Preferred starting quality for Auto. Playback can still adjust to your connection." Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
+          <TextBlock x:Name="StartupQualityStatus" Visibility="Collapsed" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
+        </StackPanel>
+        <ContentControl x:Name="SettingsHost" HorizontalContentAlignment="Stretch"/>
+      </StackPanel>
     </ScrollViewer>
   </Grid>
   <ScrollViewer x:Name="TheaterPanel" Grid.Row="2" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalContentAlignment="Stretch">

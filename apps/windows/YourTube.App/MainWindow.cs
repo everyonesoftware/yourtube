@@ -18,6 +18,7 @@ internal sealed class MainWindow : Window
     private readonly WindowsUpdatesPanel updatesPanel;
     private readonly PlaybackResolver playbackResolver = new();
     private readonly PlaybackController<NativePlaybackSession> playback;
+    private int startupQuality;
     private NativePlaybackSession? boundSession;
     private SessionController? controller;
     private IReadOnlyList<HistoryVideo>? displayedVideos;
@@ -48,9 +49,11 @@ internal sealed class MainWindow : Window
         // Integration point: updater owns its native view and transport, never auth.
         updatesPanel = new WindowsUpdatesPanel();
         C<ContentControl>("SettingsHost").Content = updatesPanel.View;
+        InitializeStartupQuality();
         var theater = C<MediaPlayerElement>("TheaterPlayer");
-        playback = new PlaybackController<NativePlaybackSession>(playbackResolver,
-            async (media, ct) => new NativePlaybackSession(await NativePlaybackSource.CreateAsync(playbackResolver, media, ct), theater));
+        playback = new PlaybackController<NativePlaybackSession>((id, ct, timing) => playbackResolver.ResolveAsync(id, ct, timing),
+            async (media, ct, timing) => new NativePlaybackSession(await NativePlaybackSource.CreateAsync(playbackResolver, media, ct, timing, startupQuality), theater),
+            PlaybackTiming.StartIfEnabled);
         playback.Changed += RenderPlayback;
         ((MenuFlyout)C<Button>("PlayerQualityButton").Flyout).Opening += (_, _) => PopulateQualityMenu();
         C<Button>("PlayerBackButton").Click += (_, _) =>
@@ -115,6 +118,33 @@ internal sealed class MainWindow : Window
     }
 
     private T C<T>(string name) where T : FrameworkElement => (T)root.FindName(name);
+
+    private void InitializeStartupQuality()
+    {
+        var path = AutoStartupPreference.SettingsPath;
+        startupQuality = AutoStartupPreference.Load(path);
+        var chooser = C<ComboBox>("StartupQualityChooser");
+        var status = C<TextBlock>("StartupQualityStatus");
+        foreach (int height in AutoStartupPreference.Choices)
+        {
+            var item = new ComboBoxItem { Tag = height, Content = height == 0 ? "Let Windows decide" : $"{height}p" };
+            chooser.Items.Add(item);
+            if (height == startupQuality) chooser.SelectedItem = item;
+        }
+        chooser.SelectionChanged += (_, _) =>
+        {
+            if (closed || chooser.SelectedItem is not ComboBoxItem { Tag: int height } || height == startupQuality) return;
+            if (AutoStartupPreference.TrySave(path, height))
+            {
+                startupQuality = height;
+                status.Visibility = Visibility.Collapsed;
+                return;
+            }
+            chooser.SelectedItem = chooser.Items.OfType<ComboBoxItem>().Single(item => item.Tag is int saved && saved == startupQuality);
+            status.Text = "Couldn't save the startup quality. Your previous setting is still in use.";
+            status.Visibility = Visibility.Visible;
+        };
+    }
 
     private async Task InitializeServicesAsync()
     {
@@ -285,9 +315,9 @@ internal sealed class MainWindow : Window
                     var active = source;
                     active.Failed += () => playback.Fail(active);
                     active.Ready += () => { if (ReferenceEquals(playback.Active, active)) RenderPlayback(); };
-                    var player = active.Prepare();
+                    active.Prepare();
                     active.Open();
-                    if (!active.HasFailed) player.Play();
+                    if (!active.HasFailed) active.Play();
                 }
                 catch { playback.Fail(source); source = playback.Active; }
             }
@@ -348,7 +378,9 @@ internal sealed class MainWindow : Window
         CancellationToken lifetime, CancellationToken operation)
     {
         var media = playbackResolver.ForQuality(active.Catalog, height);
-        var candidate = new NativePlaybackSession(await NativePlaybackSource.CreateAsync(playbackResolver, media, lifetime, operation),
+        var timing = PlaybackTiming.StartIfEnabled();
+        timing?.Mark(height is null ? PlaybackTimingStage.ReturnToAutoStarted : PlaybackTimingStage.ManualQualityStarted, height: height);
+        var candidate = new NativePlaybackSession(await NativePlaybackSource.CreateAsync(playbackResolver, media, lifetime, operation, auto: height is null, timing: timing, startupHeight: startupQuality),
             C<MediaPlayerElement>("TheaterPlayer"), active.Catalog);
         try
         {

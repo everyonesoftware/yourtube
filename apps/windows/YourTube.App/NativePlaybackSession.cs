@@ -15,11 +15,14 @@ internal sealed class NativePlaybackSession(NativePlaybackSource source, MediaPl
     private const int RetiredBit = 2;
     private int state;
     private bool attached;
+    private long diagnosticPlayStartTicks = -1;
+    private int diagnosticProgressRecorded;
     private Action? restoreTransport;
     private bool IsRetired => (Volatile.Read(ref state) & RetiredBit) != 0;
     private readonly TaskCompletionSource<bool> opened = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource failed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public PlaybackMedia Media => source.Media;
+    public PlaybackTiming? Timing => source.Timing;
     public PlaybackMedia Catalog { get; } = catalog ?? source.Media;
     public bool IsOpened => opened.Task.IsCompletedSuccessfully && opened.Task.Result;
     public MediaPlayer Player => player ?? throw new InvalidOperationException("No active native player.");
@@ -41,17 +44,28 @@ internal sealed class NativePlaybackSession(NativePlaybackSource source, MediaPl
     public void Open(bool attach = true)
     {
         var current = Player;
+        Timing?.Mark(PlaybackTimingStage.NativePlayerOpening);
         if (!attach) current.CommandManager.IsEnabled = false;
         source.Failed += ReportFailure;
         current.MediaFailed += MediaFailed;
         current.MediaOpened += MediaOpened;
+        if (Timing is not null)
+        {
+            NativePlaybackSource.Attempt(() => current.PlaybackSession.PositionChanged += PositionChanged);
+            NativePlaybackSource.Attempt(() => current.PlaybackSession.BufferingStarted += BufferingStarted);
+            NativePlaybackSource.Attempt(() => current.PlaybackSession.BufferingEnded += BufferingEnded);
+        }
         if (source.HasFailed) { ReportFailure(); return; }
         Item = new MediaPlaybackItem(source.Source);
         if (attach) Attach();
         current.Source = Item;
         expiryTimer = dispatcher.CreateTimer();
         expiryTimer.Interval = TimeSpan.FromSeconds(10);
-        expiryTimer.Tick += (_, _) => { if (Media.ExpiresAt <= DateTimeOffset.UtcNow) ReportFailure(); };
+        expiryTimer.Tick += (_, _) =>
+        {
+            if (Media.ExpiresAt > DateTimeOffset.UtcNow) return;
+            if (ReportFailureOnce()) Timing?.Mark(PlaybackTimingStage.NativeSourceExpired);
+        };
         expiryTimer.Start();
     }
 
@@ -59,12 +73,55 @@ internal sealed class NativePlaybackSession(NativePlaybackSource source, MediaPl
     {
         attached = true;
         element.SetMediaPlayer(Player);
+        Timing?.Mark(PlaybackTimingStage.NativePlayerAttached);
+    }
+
+    public void Play()
+    {
+        var current = Player;
+        if (Timing is not null)
+        {
+            NativePlaybackSource.Attempt(() => Volatile.Write(ref diagnosticPlayStartTicks, current.PlaybackSession.Position.Ticks));
+            Timing.Mark(PlaybackTimingStage.NativePlayRequested);
+        }
+        current.Play();
+    }
+
+    private void PositionChanged(MediaPlaybackSession sender, object args)
+    {
+        var start = Volatile.Read(ref diagnosticPlayStartTicks);
+        if (start < 0 || IsRetired || Volatile.Read(ref diagnosticProgressRecorded) != 0) return;
+        NativePlaybackSource.Attempt(() =>
+        {
+            var position = sender.Position.Ticks;
+            if (sender.PlaybackState == MediaPlaybackState.Playing && position > start &&
+                Interlocked.Exchange(ref diagnosticProgressRecorded, 1) == 0)
+            {
+                var positionMs = position / TimeSpan.TicksPerMillisecond;
+                Timing?.Mark(PlaybackTimingStage.NativeFirstPlaybackProgress, positionMs);
+                source.MarkCurrentBitrates(positionMs);
+            }
+        });
+    }
+
+    private void BufferingStarted(MediaPlaybackSession sender, object args) => MarkBuffering(PlaybackTimingStage.NativeBufferingStarted, sender);
+    private void BufferingEnded(MediaPlaybackSession sender, object args) => MarkBuffering(PlaybackTimingStage.NativeBufferingEnded, sender);
+
+    private void MarkBuffering(PlaybackTimingStage stage, MediaPlaybackSession sender)
+    {
+        if (IsRetired) return;
+        long? position = null;
+        NativePlaybackSource.Attempt(() => position = sender.Position.Ticks / TimeSpan.TicksPerMillisecond);
+        Timing?.Mark(stage, position);
     }
 
     private void MediaOpened(MediaPlayer sender, object args)
     {
         if (opened.TrySetResult(true))
+        {
+            Timing?.Mark(PlaybackTimingStage.NativePlayerOpened);
             dispatcher.TryEnqueue(() => { if ((Volatile.Read(ref state) & RetiredBit) == 0 && !HasFailed) Ready?.Invoke(); });
+        }
     }
 
     public event Action? Ready;
@@ -144,7 +201,7 @@ internal sealed class NativePlaybackSession(NativePlaybackSource source, MediaPl
                 throw new InvalidOperationException("The quality player did not attach at the playback position.");
             if (resume)
             {
-                replacement.Play();
+                Play();
                 await UntilAsync(() => session.PlaybackState == MediaPlaybackState.Playing &&
                     session.Position >= start + TimeSpan.FromMilliseconds(100));
             }
@@ -231,15 +288,19 @@ internal sealed class NativePlaybackSession(NativePlaybackSource source, MediaPl
     private void MediaFailed(MediaPlayer sender, MediaPlayerFailedEventArgs args)
     {
         // A callback failure already has its own notification, not an incidental MediaFailed.
-        if (!source.HasFailed) ReportFailure();
+        if (!source.HasFailed && ReportFailureOnce() && Timing is { } timing)
+            NativePlaybackSource.Attempt(() => timing.Mark(PlaybackTimingStage.NativePlayerFailed, reasonCode: (int)args.Error));
     }
 
-    private void ReportFailure()
+    private void ReportFailure() => ReportFailureOnce();
+
+    private bool ReportFailureOnce()
     {
-        if (Interlocked.CompareExchange(ref state, FailedBit, 0) != 0) return;
+        if (Interlocked.CompareExchange(ref state, FailedBit, 0) != 0) return false;
         opened.TrySetResult(false);
         failed.TrySetResult();
         dispatcher.TryEnqueue(() => { if ((Volatile.Read(ref state) & RetiredBit) == 0) Failed?.Invoke(); });
+        return true;
     }
 
     public void Dispose()
@@ -257,6 +318,12 @@ internal sealed class NativePlaybackSession(NativePlaybackSource source, MediaPl
         var current = player; player = null;
         if (current is not null)
         {
+            if (Timing is not null)
+            {
+                NativePlaybackSource.Attempt(() => current.PlaybackSession.PositionChanged -= PositionChanged);
+                NativePlaybackSource.Attempt(() => current.PlaybackSession.BufferingStarted -= BufferingStarted);
+                NativePlaybackSource.Attempt(() => current.PlaybackSession.BufferingEnded -= BufferingEnded);
+            }
             playerClosedCleanly &= NativePlaybackSource.Attempt(() => current.MediaFailed -= MediaFailed)
                 & NativePlaybackSource.Attempt(() => current.MediaOpened -= MediaOpened)
                 & NativePlaybackSource.Attempt(() => { if (current.PlaybackSession.CanPause) current.Pause(); })

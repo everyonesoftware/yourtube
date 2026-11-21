@@ -75,7 +75,7 @@ internal static class NativeLifecycleProof
             controller.ChangeQualityAsync(old, height, async (_, selected, lifetime, operation) =>
             {
                 var media = await resolver.ResolveQualityAsync(id, selected, operation);
-                var next = new NativePlaybackSession(await NativePlaybackSource.CreateAsync(resolver, media, lifetime, operation), element);
+                var next = new NativePlaybackSession(await NativePlaybackSource.CreateAsync(resolver, media, lifetime, operation, auto: selected is null), element);
                 try { await next.PrepareHandoffAsync(operation); return next; }
                 catch { next.Dispose(); throw; }
             }, confirm).WaitAsync(token);

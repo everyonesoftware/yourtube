@@ -56,8 +56,13 @@ internal sealed class PublicTransport(HttpMessageHandler handler) : HttpMessageH
                     using var output = new MemoryStream(); byte[] buffer = new byte[65536]; int n;
                     while ((n = await input.ReadAsync(buffer, cancellationToken)) != 0)
                     { if (output.Length + n > limit) throw Unsafe(); output.Write(buffer, 0, n); }
-                    var content = new ByteArrayContent(output.ToArray());
-                    foreach (var h in response.Content.Headers) content.Headers.TryAddWithoutValidation(h.Key, h.Value);
+                    var original = output.ToArray();
+                    var bytes = !cdn && response.IsSuccessStatusCode && request.Method == HttpMethod.Post && uri.AbsolutePath == "/youtubei/v1/player"
+                        ? PlayerStreamFilter.Filter(original) : original;
+                    var content = new ByteArrayContent(bytes);
+                    foreach (var h in response.Content.Headers)
+                        if (ReferenceEquals(bytes, original) || !h.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
+                            content.Headers.TryAddWithoutValidation(h.Key, h.Value);
                     response.Content.Dispose(); response.Content = content; return response;
                 }
                 catch { response.Dispose(); throw; }

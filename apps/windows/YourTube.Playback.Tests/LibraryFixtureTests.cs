@@ -14,11 +14,14 @@ public sealed class LibraryFixtureTests
         byte[] fullAudio = [..IndexTests.Header(true), ..new byte[100]];
         var video = ResolverTests.Url("video"); var audio = ResolverTests.Url("audio");
         var streams = new[] {
+            new { itag=248, url=ResolverTests.Url("decoy-vp9").AbsoluteUri, mimeType="video/webm; codecs=\"vp9\"", bitrate=2000000, contentLength=includeLength ? full.Length.ToString() : null, width=1920, height=1080, qualityLabel="1080p" },
+            new { itag=315, url=ResolverTests.Url("decoy-high").AbsoluteUri, mimeType="video/mp4; codecs=\"avc1.64001f\"", bitrate=5000000, contentLength=includeLength ? full.Length.ToString() : null, width=3840, height=2160, qualityLabel="2160p" },
+            new { itag=18, url=ResolverTests.Url("decoy-muxed").AbsoluteUri, mimeType="video/mp4; codecs=\"avc1.64001f, mp4a.40.2\"", bitrate=1000000, contentLength=includeLength ? full.Length.ToString() : null, width=640, height=360, qualityLabel="360p" },
             new { itag=134, url=video.AbsoluteUri, mimeType="video/mp4; codecs=\"avc1.64001f\"", bitrate=1000000, contentLength=includeLength ? full.Length.ToString() : null, width=640, height=360, qualityLabel="360p" },
             new { itag=140, url=audio.AbsoluteUri, mimeType="audio/mp4; codecs=\"mp4a.40.2\"", bitrate=128000, contentLength=includeLength ? fullAudio.Length.ToString() : null, width=0, height=0, qualityLabel="" }
         };
         var player = JsonSerializer.Serialize(new { playabilityStatus = new { status="OK" }, videoDetails = new { title="Synthetic fixture title", author="Fixture author", channelId="UCaaaaaaaaaaaaaaaaaaaaaa", lengthSeconds="1", shortDescription="Fixture description" }, microformat = new { playerMicroformatRenderer = new { uploadDate="2020-01-01" } }, streamingData = new { adaptiveFormats=streams } });
-        int heads=0, tails=0, redirects=0;
+        int heads=0, tails=0, redirects=0, decoyRequests=0;
         var handler = new Handler(r => {
             var u = r.RequestUri!;
             if (u.Host == "www.youtube.com")
@@ -30,6 +33,11 @@ public sealed class LibraryFixtureTests
                 return new(HttpStatusCode.NotFound);
             }
             Assert.True(PublicTransport.IsCdn(u)); Assert.Null(r.Headers.Authorization); Assert.False(r.Headers.Contains("Cookie"));
+            if (u.Query.Contains("id=decoy-", StringComparison.Ordinal))
+            {
+                decoyRequests++;
+                return new(HttpStatusCode.NotFound);
+            }
             var source = u.Query.Contains("id=audio", StringComparison.Ordinal) ? fullAudio : full;
             if (r.Method == HttpMethod.Head) { heads++; var h = new HttpResponseMessage(HttpStatusCode.OK); h.Content.Headers.ContentLength=source.Length; return h; }
             if (u.Host == "a.googlevideo.com") { redirects++; var redirect = new HttpResponseMessage(HttpStatusCode.Found); redirect.Headers.Location = new UriBuilder(u) { Host="b.googlevideo.com" }.Uri; return redirect; }
@@ -42,5 +50,6 @@ public sealed class LibraryFixtureTests
         Assert.True(media is not null, "Pinned library fixture resolution failed: " + (error ?? "unknown"));
         Assert.Equal("Synthetic fixture title", media!.Title); Assert.Equal("Fixture author", media.Author); Assert.Equal("Fixture description", media.Description);
         Assert.Single(media.Qualities); Assert.True(tails >= 2); Assert.True(redirects >= 4); Assert.Equal(includeLength ? 0 : 2, heads);
+        Assert.Equal(0, decoyRequests);
     }
 }

@@ -5,6 +5,7 @@ Credential-isolated public VOD resolver for the native Windows adaptive-media ad
 ## Media boundary
 
 - Genuine metadata comes from `Videos.GetAsync`; separate video/audio streams come from `Videos.Streams.GetManifestAsync`.
+- Before YoutubeExplode probes candidate sizes, the public player JSON is filtered in memory to remove known incompatible formats. Unknown metadata is left for the library to handle. The resolver still applies its complete compatibility checks and validates the retained media bytes and indexes.
 - MP4 H.264 (`avc1`) representations through 1080p / 1920 pixels wide and one default-language AAC-LC (`mp4a.40.2`) audio representation are eligible. No 4K, WebM, AV1, DRM, live playback, private/paid-video support, captions or inferred statistics are advertised.
 - Each candidate requires a complete unencrypted initialization and usable `sidx` in the first 1 MiB. The parser handles 32/64-bit box sizes and version 0/1 indexes, validates direct references against the source size, and carries index timing into DASH. Missing, malformed, encrypted, hierarchical or oversized indexes are unsupported, never guessed. At most 32 eligible video representations and one audio representation are accepted; exceeding this explicit bound fails.
 - The UTF-8 static on-demand DASH manifest has real initialization/index ranges, codec/size/bitrate attributes, and separate audio/video adaptation sets. It contains signed URLs **in memory only**. Do not persist or log `Manifest`, URLs, provider responses, or exception details from external libraries.

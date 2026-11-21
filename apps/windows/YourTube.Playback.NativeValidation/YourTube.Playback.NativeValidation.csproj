@@ -23,6 +23,7 @@
     <ProjectReference Include="../YourTube.Playback/YourTube.Playback.csproj" />
     <ProjectReference Include="../YourTube.Core/YourTube.Core.csproj" />
     <Compile Include="../YourTube.App/NativePlaybackSource.cs" Link="NativePlaybackSource.cs" />
+    <Compile Include="../YourTube.App/AutoStartupPreference.cs" Link="AutoStartupPreference.cs" />
     <Compile Include="../YourTube.App/NativePlaybackSession.cs" Link="NativePlaybackSession.cs" />
     <Compile Include="../YourTube.App/PlaybackController.cs" Link="PlaybackController.cs" />
     <Compile Include="../YourTube.App/BrowseView.cs" Link="BrowseView.cs" />
