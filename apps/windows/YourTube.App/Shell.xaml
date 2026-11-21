@@ -80,6 +80,13 @@
         </MediaPlayerElement>
         <ProgressRing x:Name="PlayerBusyRing" Width="36" Height="36" Visibility="Collapsed" IsHitTestVisible="False"/>
       </Grid>
+      <Grid Background="#242c28" Padding="12,4" ColumnSpacing="8">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <TextBlock x:Name="PlayerQualityStatus" VerticalAlignment="Center" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" Foreground="{StaticResource Muted}"/>
+        <Button x:Name="PlayerQualityButton" Grid.Column="1" Content="Auto  ▾" Foreground="#c0d7ae" IsEnabled="False" Visibility="Collapsed" AutomationProperties.Name="Video quality: Auto">
+          <Button.Flyout><MenuFlyout Placement="TopEdgeAlignedRight"/></Button.Flyout>
+        </Button>
+      </Grid>
       <StackPanel Padding="28,20,28,28" Spacing="14">
         <TextBlock x:Name="PlayerTitle" FontSize="25" FontWeight="SemiBold" TextWrapping="Wrap"/>
         <TextBlock x:Name="PlayerAuthor" Foreground="#c0d7ae" TextWrapping="Wrap"/>

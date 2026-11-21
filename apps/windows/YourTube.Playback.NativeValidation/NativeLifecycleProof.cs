@@ -9,6 +9,78 @@ namespace YourTube.Playback.NativeValidation;
 
 internal static class NativeLifecycleProof
 {
+    public static async Task<object> CheckQualityHandoffAsync(MediaPlayerElement element, FixtureResolver resolver, Action<string> stage)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        var token = deadline.Token;
+        var id = FixtureResolver.PrimaryId;
+        var card = new HistoryVideo(id, "Quality fixture", "YourTube validation", "", null);
+        using var controller = new PlaybackController<NativePlaybackSession>(async (_, lifetime) =>
+            new(await NativePlaybackSource.CreateAsync(resolver, await resolver.ResolveAsync(id, lifetime), lifetime), element));
+        controller.SetContext(true, new object(), BrowseView.History, [card]);
+        await controller.SelectAsync(card).WaitAsync(token);
+        var previous = controller.Active ?? throw new InvalidOperationException("Missing quality fixture session.");
+        var oldPlayer = previous.Prepare(muted: true);
+        previous.Open();
+        oldPlayer.Play();
+        await Until(() => oldPlayer.PlaybackSession.Position.TotalSeconds > 2 && oldPlayer.PlaybackSession.NaturalVideoHeight == 180, previous, token);
+        oldPlayer.PlaybackSession.PlaybackRate = 2;
+
+        stage("quality-rollback-after-attachment");
+        var faultInjected = false;
+        var faultPosition = TimeSpan.Zero;
+        await SwitchAsync(previous, 90, (prior, next, operation, _) => next.ConfirmHandoffAsync(prior, operation, () =>
+        {
+            faultInjected = ReferenceEquals(element.MediaPlayer, next.Player);
+            faultPosition = prior.Player.PlaybackSession.Position;
+            throw new InvalidOperationException("Controlled attach failure.");
+        }));
+        Require(faultInjected && ReferenceEquals(controller.Active, previous) && ReferenceEquals(element.MediaPlayer, oldPlayer)
+            && controller.QualityError is not null && controller.Error is null
+            && oldPlayer.PlaybackSession.PlaybackState == MediaPlaybackState.Playing
+            && oldPlayer.PlaybackSession.Position >= faultPosition + TimeSpan.FromMilliseconds(100));
+
+        stage("quality-select-90p-while-playing");
+        var manual = await ChangeAsync(previous, 90);
+        var session = manual.Player.PlaybackSession;
+        await Until(() => session.NaturalVideoHeight == 90 && session.PlaybackState == MediaPlaybackState.Playing, manual, token);
+        Require(session.PlaybackRate == 2 && manual.Item.AudioTracks.Count > 0 && previous.TeardownCompleted);
+        var manualHeight = session.NaturalVideoHeight;
+
+        stage("quality-return-to-auto-while-paused");
+        manual.Player.Pause();
+        await Until(() => session.PlaybackState == MediaPlaybackState.Paused, manual, token);
+        var pausedAt = session.Position;
+        var auto = await ChangeAsync(manual, null);
+        var adaptive = auto.Player.PlaybackSession;
+        await Until(() => adaptive.NaturalVideoHeight is 90 or 180 && adaptive.PlaybackState == MediaPlaybackState.Paused && auto.Item.AudioTracks.Count > 0, auto, token);
+        Require((adaptive.Position - pausedAt).Duration() <= TimeSpan.FromSeconds(1) && auto.Media.Qualities.Count == 2);
+        auto.Player.Play();
+        await Until(() => adaptive.PlaybackState == MediaPlaybackState.Playing && adaptive.Position > pausedAt + TimeSpan.FromSeconds(1), auto, token);
+        return new { startingHeight = 180, manualHeight, autoHeight = adaptive.NaturalVideoHeight, preservedFastRate = true, autoStayedPaused = true, autoContinued = true, rollbackResumed = true };
+
+        async Task<NativePlaybackSession> ChangeAsync(NativePlaybackSession old, int? height)
+        {
+            await SwitchAsync(old, height, (prior, next, operation, accept) => next.ConfirmHandoffAsync(prior, operation, () =>
+            {
+                Require(next.Player.PlaybackSession.Position + TimeSpan.FromSeconds(1) >= prior.Player.PlaybackSession.Position);
+                accept();
+            }));
+            var active = controller.Active;
+            Require(active is not null && !ReferenceEquals(old, active) && controller.QualityHeight == height && controller.QualityError is null && ReferenceEquals(element.MediaPlayer, active.Player));
+            return active!;
+        }
+
+        Task SwitchAsync(NativePlaybackSession old, int? height, Func<NativePlaybackSession, NativePlaybackSession, CancellationToken, Action, Task> confirm) =>
+            controller.ChangeQualityAsync(old, height, async (_, selected, lifetime, operation) =>
+            {
+                var media = await resolver.ResolveQualityAsync(id, selected, operation);
+                var next = new NativePlaybackSession(await NativePlaybackSource.CreateAsync(resolver, media, lifetime, operation), element);
+                try { await next.PrepareHandoffAsync(operation); return next; }
+                catch { next.Dispose(); throw; }
+            }, confirm).WaitAsync(token);
+    }
+
     public static async Task<object> RunAsync(MediaPlayerElement element, IPlaybackResolver resolver,
         IReadOnlyDictionary<string, PlaybackMedia> mediaById, Action<string> stage)
     {

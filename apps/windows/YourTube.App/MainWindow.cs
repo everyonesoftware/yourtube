@@ -52,6 +52,7 @@ internal sealed class MainWindow : Window
         playback = new PlaybackController<NativePlaybackSession>(playbackResolver,
             async (media, ct) => new NativePlaybackSession(await NativePlaybackSource.CreateAsync(playbackResolver, media, ct), theater));
         playback.Changed += RenderPlayback;
+        ((MenuFlyout)C<Button>("PlayerQualityButton").Flyout).Opening += (_, _) => PopulateQualityMenu();
         C<Button>("PlayerBackButton").Click += (_, _) =>
         {
             var selected = playback.Selected;
@@ -276,12 +277,14 @@ internal sealed class MainWindow : Window
         if (!ReferenceEquals(source, boundSession))
         {
             boundSession = source;
-            if (source is not null)
+            ((MenuFlyout)C<Button>("PlayerQualityButton").Flyout).Hide();
+            if (source is not null && !source.IsOpened)
             {
                 try
                 {
                     var active = source;
                     active.Failed += () => playback.Fail(active);
+                    active.Ready += () => { if (ReferenceEquals(playback.Active, active)) RenderPlayback(); };
                     var player = active.Prepare();
                     active.Open();
                     if (!active.HasFailed) player.Play();
@@ -294,6 +297,14 @@ internal sealed class MainWindow : Window
         C<TextBlock>("PlayerDescription").Text = source?.Media.Description ?? "";
         C<TextBlock>("PlayerError").Text = playback.Error ?? "";
         C<TextBlock>("PlayerError").Visibility = ToVisibility(playback.Error is not null);
+        var quality = C<Button>("PlayerQualityButton");
+        var hasQuality = source is { IsOpened: true } && source.Catalog.Qualities.Count > 0;
+        var qualityLabel = QualityLabel(playback.QualityHeight);
+        quality.Visibility = ToVisibility(hasQuality);
+        quality.IsEnabled = hasQuality && !playback.QualityBusy;
+        quality.Content = qualityLabel + "  ▾";
+        AutomationProperties.SetName(quality, "Video quality: " + qualityLabel);
+        C<TextBlock>("PlayerQualityStatus").Text = playback.QualityBusy ? "Changing video quality…" : playback.QualityError ?? "";
         C<Button>("PlayerRetryButton").Visibility = ToVisibility(playback.Error is not null);
         C<Button>("PlayerRetryButton").IsEnabled = selected is not null && !playback.Busy;
         C<Button>("PlayerOpenYouTubeButton").IsEnabled = selected is not null;
@@ -305,6 +316,47 @@ internal sealed class MainWindow : Window
         C<ListView>("PlayerQueue").ItemsSource = playback.Queue;
         C<Button>("PlayerNextButton").IsEnabled = selected is not null && playback.Queue.Count > 0 && !playback.Busy;
         C<Button>("PlayerNextButton").Visibility = ToVisibility(playback.Queue.Count > 0);
+    }
+
+    private static string QualityLabel(int? height) => height is int value ? $"{value}p" : "Auto";
+
+    private void PopulateQualityMenu()
+    {
+        var flyout = (MenuFlyout)C<Button>("PlayerQualityButton").Flyout;
+        flyout.Items.Clear();
+        if (closed || playback.QualityBusy || playback.Active is not { IsOpened: true } active) return;
+        flyout.Items.Add(new MenuFlyoutItem { Text = "Video quality", IsEnabled = false });
+        flyout.Items.Add(new MenuFlyoutSeparator());
+        AddQuality(null);
+        foreach (var height in active.Catalog.Qualities.Select(q => q.Height).Distinct().OrderDescending()) AddQuality(height);
+
+        void AddQuality(int? height)
+        {
+            var label = QualityLabel(height);
+            var item = new ToggleMenuFlyoutItem { Text = height is 720 or 1080 ? label + "  HD" : label, IsChecked = playback.QualityHeight == height };
+            item.Click += async (_, _) =>
+            {
+                SyncPlaybackContext();
+                await playback.ChangeQualityAsync(active, height, PrepareQualityAsync,
+                    (old, candidate, token, accept) => candidate.ConfirmHandoffAsync(old, token, accept));
+            };
+            flyout.Items.Add(item);
+        }
+    }
+
+    private async Task<NativePlaybackSession> PrepareQualityAsync(NativePlaybackSession active, int? height,
+        CancellationToken lifetime, CancellationToken operation)
+    {
+        var media = playbackResolver.ForQuality(active.Catalog, height);
+        var candidate = new NativePlaybackSession(await NativePlaybackSource.CreateAsync(playbackResolver, media, lifetime, operation),
+            C<MediaPlayerElement>("TheaterPlayer"), active.Catalog);
+        try
+        {
+            await candidate.PrepareHandoffAsync(operation);
+            candidate.Failed += () => playback.Fail(candidate);
+            return candidate;
+        }
+        catch { candidate.Dispose(); throw; }
     }
 
     private async Task OpenActivationAsync()

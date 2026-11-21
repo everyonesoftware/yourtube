@@ -163,6 +163,12 @@ public sealed partial class ProofApplication : Application, Microsoft.UI.Xaml.Ma
             }
             title.Text = "YourTube · Checking native callback failure and replacement";
             lifecycle = await NativeLifecycleProof.RunAsync(element, resolver, mediaById, nextStage => stage = nextStage);
+            if (fixture)
+            {
+                stage = "quality-handoff";
+                var quality = await NativeLifecycleProof.CheckQualityHandoffAsync(element, (FixtureResolver)resolver, nextStage => stage = nextStage);
+                Write(evidence, "quality.json", new { sourceSha, quality });
+            }
             success = true;
         }
         catch (Exception error)

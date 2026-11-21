@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Xml.Linq;
 using YourTube.Playback;
 
 namespace YourTube.Playback.NativeValidation;
@@ -15,16 +16,49 @@ internal sealed class FixtureResolver : IPlaybackResolver
     private readonly byte[] manifest = Load("manifest.mpd");
     private readonly byte[] video = Load("video.mp4");
     private readonly byte[] audio = Load("audio.mp4");
-    private readonly ConditionalWeakTable<PlaybackMedia, object> owned = new();
+    private readonly Lazy<byte[]> alternateVideo = new(() => Load("video-90p.mp4"));
+    private readonly ConditionalWeakTable<PlaybackMedia, OwnedVideo> owned = new();
+    private sealed record OwnedVideo(bool Original, bool Alternate);
 
     public Task<PlaybackMedia> ResolveAsync(string videoId, CancellationToken cancellationToken = default)
+        => ResolveQualityAsync(videoId, 180, cancellationToken);
+
+    internal Task<PlaybackMedia> ResolveQualityAsync(string videoId, int? height, CancellationToken token)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        token.ThrowIfCancellationRequested();
         if (videoId is not (PrimaryId or PendingId or ReplacementId))
             throw new PlaybackException("unavailable", "Unknown controlled playback fixture.");
+        if (height is not (null or 90 or 180))
+            throw new PlaybackException("unsupported_media", "Unknown controlled playback quality.");
+
+        var renditions = new OwnedVideo(Original: height != 90, Alternate: height != 180);
+        var qualities = new List<PlaybackQuality>();
+        if (renditions.Original) qualities.Add(new(180, 210_000));
+        byte[] mpd;
+        if (renditions.Alternate)
+        {
+            using var originalMpd = new MemoryStream(manifest);
+            var document = XDocument.Load(originalMpd);
+            var ns = document.Root!.Name.Namespace;
+            var videoSet = document.Descendants(ns + "AdaptationSet")
+                .Single(set => (string?)set.Attribute("contentType") == "video");
+            if (!renditions.Original) videoSet.RemoveNodes();
+            using var representationXml = new MemoryStream(Load("representation-90p.xml"));
+            var representation = XElement.Load(representationXml);
+            videoSet.Add(representation);
+            qualities.Add(new((int)representation.Attribute("height")!, (uint)representation.Attribute("bandwidth")!));
+            using var projectedMpd = new MemoryStream();
+            document.Save(projectedMpd);
+            mpd = projectedMpd.ToArray();
+        }
+        else
+        {
+            mpd = (byte[])manifest.Clone();
+        }
+
         var media = new PlaybackMedia(videoId, "Controlled DASH fixture", "YourTube validation", "",
-            TimeSpan.FromSeconds(18), DateTimeOffset.MaxValue, (byte[])manifest.Clone(), ManifestUri, [new(180, 210_000)]);
-        owned.Add(media, new object());
+            TimeSpan.FromSeconds(18), DateTimeOffset.MaxValue, mpd, ManifestUri, qualities.AsReadOnly());
+        owned.Add(media, renditions);
         return Task.FromResult(media);
     }
 
@@ -32,10 +66,11 @@ internal sealed class FixtureResolver : IPlaybackResolver
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (media is null || uri is null || !owned.TryGetValue(media, out _) || !uri.IsAbsoluteUri) throw UnsafeResource();
+        if (media is null || uri is null || !owned.TryGetValue(media, out var renditions) || !uri.IsAbsoluteUri) throw UnsafeResource();
         var (bytes, contentType) = uri.AbsoluteUri switch
         {
-            "https://fixture.invalid/video.mp4" => (video, "video/mp4"),
+            "https://fixture.invalid/video.mp4" when renditions.Original => (video, "video/mp4"),
+            "https://fixture.invalid/video-90p.mp4" when renditions.Alternate => (alternateVideo.Value, "video/mp4"),
             "https://fixture.invalid/audio.mp4" => (audio, "audio/mp4"),
             _ => throw UnsafeResource()
         };

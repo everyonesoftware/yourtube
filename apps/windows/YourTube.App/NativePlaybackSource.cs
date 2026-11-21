@@ -43,28 +43,48 @@ internal sealed class NativePlaybackSource : IDisposable
         cancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
         token = cancellation.Token;
     }
-    public static async Task<NativePlaybackSource> CreateAsync(IPlaybackResolver resolver, PlaybackMedia media, CancellationToken ct)
+    public static Task<NativePlaybackSource> CreateAsync(IPlaybackResolver resolver, PlaybackMedia media, CancellationToken ct) =>
+        CreateAsync(resolver, media, ct, ct);
+
+    public static async Task<NativePlaybackSource> CreateAsync(IPlaybackResolver resolver, PlaybackMedia media, CancellationToken lifetime, CancellationToken operation)
     {
-        var owner = new NativePlaybackSource(resolver, media, ct);
+        var owner = new NativePlaybackSource(resolver, media, lifetime);
         try
         {
-            ct.ThrowIfCancellationRequested();
+            operation.ThrowIfCancellationRequested();
             if (media.ExpiresAt <= DateTimeOffset.UtcNow) throw new PlaybackException("source_expired", "The playback source expired. Retry to request a fresh source.");
             using var stream = new InMemoryRandomAccessStream();
-            await stream.WriteAsync(media.Manifest.AsBuffer()).AsTask(ct);
+            await stream.WriteAsync(media.Manifest.AsBuffer()).AsTask(operation).WaitAsync(operation);
+            operation.ThrowIfCancellationRequested();
             stream.Seek(0);
-            var result = await AdaptiveMediaSource.CreateFromStreamAsync(stream, media.ManifestUri, "application/dash+xml", owner.nativeHttp).AsTask(ct);
-            if (result.Status != AdaptiveMediaSourceCreationStatus.Success || result.MediaSource is null)
-                throw new PlaybackException("native_source", "Windows could not open this playback source.");
+            var creationOperation = AdaptiveMediaSource.CreateFromStreamAsync(stream, media.ManifestUri, "application/dash+xml", owner.nativeHttp);
+            var creation = creationOperation.AsTask();
+            AdaptiveMediaSourceCreationResult result;
+            try { result = await creation.WaitAsync(operation); }
+            catch (OperationCanceledException) when (operation.IsCancellationRequested)
+            {
+                // Cancellation stops waiting, not necessarily native creation. Never adopt its late result.
+                _ = DisposeLateSourceAsync(creation);
+                Attempt(creationOperation.Cancel);
+                throw;
+            }
             owner.adaptive = result.MediaSource;
+            if (result.Status != AdaptiveMediaSourceCreationStatus.Success || owner.adaptive is null)
+                throw new PlaybackException("native_source", "Windows could not open this playback source.");
             owner.adaptive.DownloadRequested += owner.DownloadRequested;
             owner.Source = MediaSource.CreateFromAdaptiveMediaSource(owner.adaptive);
-            ct.ThrowIfCancellationRequested();
+            operation.ThrowIfCancellationRequested();
             return owner;
         }
         catch (OperationCanceledException) { owner.Dispose(); throw; }
         catch { owner.Dispose(); throw new PlaybackException("native_source", "Windows could not open this playback source. Retry, or open YouTube."); }
     }
+    private static async Task DisposeLateSourceAsync(Task<AdaptiveMediaSourceCreationResult> creation)
+    {
+        try { (await creation.ConfigureAwait(false)).MediaSource?.Dispose(); }
+        catch { /* A rejected creation has no source to release. */ }
+    }
+
     private async void DownloadRequested(AdaptiveMediaSource sender, AdaptiveMediaSourceDownloadRequestedEventArgs args)
     {
         AdaptiveMediaSourceDownloadRequestedDeferral? deferral = null;

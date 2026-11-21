@@ -19,9 +19,11 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
 {
     private const ulong MaximumRead = 16 * 1024 * 1024;
     private const ulong HeaderRead = 1024 * 1024;
+    private static readonly XNamespace Dash = "urn:mpeg:dash:schema:mpd:2011";
+    private sealed record OwnedSource(XDocument Manifest, Dictionary<string, MediaTrack> Tracks);
     private readonly HttpClient http;
     private readonly YoutubeClient client;
-    private readonly ConditionalWeakTable<PlaybackMedia, Dictionary<string, MediaTrack>> ownership = new();
+    private readonly ConditionalWeakTable<PlaybackMedia, OwnedSource> ownership = new();
     private bool disposed;
     public PlaybackResolver() : this(CreatePublicHandler()) { }
     internal static HttpClientHandler CreatePublicHandler() => new() { AllowAutoRedirect = false, UseCookies = false, UseDefaultCredentials = false, AutomaticDecompression = DecompressionMethods.None };
@@ -55,7 +57,7 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
     {
         CheckDisposed();
         if (duration <= TimeSpan.Zero || tracks.Count > 33) throw Unsupported();
-        XNamespace ns = "urn:mpeg:dash:schema:mpd:2011";
+        var ns = Dash;
         var video = new XElement(ns + "AdaptationSet", new XAttribute("id", "1"), new XAttribute("contentType", "video"), new XAttribute("mimeType", "video/mp4"));
         var audio = new XElement(ns + "AdaptationSet", new XAttribute("id", "2"), new XAttribute("contentType", "audio"), new XAttribute("mimeType", "audio/mp4"));
         var owned = new Dictionary<string, MediaTrack>(StringComparer.Ordinal); var qualities = new List<PlaybackQuality>();
@@ -77,15 +79,45 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
         }
         if (!video.HasElements || !audio.HasElements) throw Unsupported();
         var mpd = new XDocument(new XElement(ns + "MPD", new XAttribute("type", "static"), new XAttribute("profiles", "urn:mpeg:dash:profile:isoff-on-demand:2011"), new XAttribute("mediaPresentationDuration", XmlConvert.ToString(duration)), new XAttribute("minBufferTime", "PT1.5S"), new XElement(ns + "Period", new XAttribute("start", "PT0S"), new XAttribute("duration", XmlConvert.ToString(duration)), video, audio)));
-        var media = new PlaybackMedia(id, title, author, description, duration, expiry, Encoding.UTF8.GetBytes(mpd.ToString(SaveOptions.DisableFormatting)), new("https://www.youtube.com/yourtube-playback.mpd"), qualities.AsReadOnly());
-        ownership.Add(media, owned); return media;
+        var media = new PlaybackMedia(id, title, author, description, duration, expiry, Serialize(mpd), new("https://www.youtube.com/yourtube-playback.mpd"), qualities.AsReadOnly());
+        ownership.Add(media, new(mpd, owned)); return media;
     }
+
+    /// <summary>Returns Auto unchanged, or a DASH source limited to one validated video rendition at the exact height.</summary>
+    public PlaybackMedia ForQuality(PlaybackMedia media, int? height)
+    {
+        CheckDisposed();
+        if (media is null || !ownership.TryGetValue(media, out var source)) throw PublicTransport.Unsafe();
+        if (height is null) return media;
+
+        // Never reparse the caller-visible, mutable MPD bytes or use them to grant resource access.
+        var mpd = new XDocument(source.Manifest);
+        var videos = mpd.Descendants(Dash + "AdaptationSet")
+            .Single(set => (string?)set.Attribute("contentType") == "video")
+            .Elements(Dash + "Representation").ToArray();
+        var selected = videos.Where(r => (int?)r.Attribute("height") == height)
+            .MaxBy(r => (uint)r.Attribute("bandwidth")!);
+        if (selected is null) throw new PlaybackException("unsupported_quality", "The requested video quality is unavailable.");
+
+        foreach (var video in videos)
+            if (video != selected) video.Remove();
+
+        var tracks = mpd.Descendants(Dash + "BaseURL").ToDictionary(url => url.Value, url => source.Tracks[url.Value], StringComparer.Ordinal);
+        var qualities = Array.AsReadOnly(new[] { new PlaybackQuality(height.Value, (uint)selected.Attribute("bandwidth")!) });
+        var projected = new PlaybackMedia(media.VideoId, media.Title, media.Author, media.Description, media.Duration,
+            media.ExpiresAt, Serialize(mpd), media.ManifestUri, qualities);
+        ownership.Add(projected, new(mpd, tracks));
+        return projected;
+    }
+
+    private static byte[] Serialize(XDocument mpd) => Encoding.UTF8.GetBytes(mpd.ToString(SaveOptions.DisableFormatting));
+
     public async Task<PlaybackResource> ReadResourceAsync(PlaybackMedia media, Uri uri, ulong? offset, ulong? length, CancellationToken cancellationToken = default)
     {
         try
         {
             CheckDisposed();
-            if (media is null || uri is null || !PublicTransport.IsCdn(uri) || !ownership.TryGetValue(media, out var owned) || !owned.TryGetValue(uri.AbsoluteUri, out var track)) throw PublicTransport.Unsafe();
+            if (media is null || uri is null || !PublicTransport.IsCdn(uri) || !ownership.TryGetValue(media, out var owned) || !owned.Tracks.TryGetValue(uri.AbsoluteUri, out var track)) throw PublicTransport.Unsafe();
             if (media.ExpiresAt <= DateTimeOffset.UtcNow || Expiry(track.Uri) <= DateTimeOffset.UtcNow) throw Expired();
             ulong start = offset ?? 0;
             if (start >= track.Size) throw InvalidRange();

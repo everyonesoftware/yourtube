@@ -33,6 +33,9 @@ internal sealed class PlaybackController<T>(Func<string, CancellationToken, Task
     public T? Active { get; private set; }
     public bool Busy { get; private set; }
     public string? Error { get; private set; }
+    public bool QualityBusy => qualityCancellation is not null;
+    public int? QualityHeight { get; private set; }
+    public string? QualityError { get; private set; }
     public IReadOnlyList<HistoryVideo> Queue => Selected is null ? [] : feed.Where(v => v.VideoId != Selected.VideoId).ToArray();
     public event Action? Changed;
     private object? account;
@@ -42,6 +45,7 @@ internal sealed class PlaybackController<T>(Func<string, CancellationToken, Task
     private bool disposed;
     private long generation;
     private CancellationTokenSource? cancellation;
+    private CancellationTokenSource? qualityCancellation;
 
     public void SetContext(bool eligible, object? account, BrowseView view, IReadOnlyList<HistoryVideo> feed)
     {
@@ -79,6 +83,88 @@ internal sealed class PlaybackController<T>(Func<string, CancellationToken, Task
     }
     public Task RetryAsync() => Selected is { } video && !Busy ? SelectAsync(video) : Task.CompletedTask;
     public Task NextAsync() => Queue.FirstOrDefault() is { } video ? SelectAsync(video) : Task.CompletedTask;
+
+    internal sealed class QualityRollbackException : Exception;
+
+    // Preparation must not disturb the visible player. Confirmation owns native rollback and calls
+    // accept synchronously only after the new attachment is ready; until then the old owner stays active.
+    public async Task ChangeQualityAsync(T expected, int? height, Func<T, int?, CancellationToken, CancellationToken, Task<T>> prepare,
+        Func<T, T, CancellationToken, Action, Task> confirm, TimeSpan? timeout = null)
+    {
+        if (Busy || QualityBusy || Selected is not { } video || !CanSelect(video)
+            || !ReferenceEquals(Active, expected) || height is <= 0 || height == QualityHeight) return;
+
+        var id = generation;
+        var pending = new CancellationTokenSource();
+        var token = pending.Token;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(timeout ?? TimeSpan.FromSeconds(15));
+        qualityCancellation = pending;
+        QualityError = null;
+        var oldCancellation = cancellation;
+        T? candidate = null;
+        bool OwnsSwitch() => id == generation && ReferenceEquals(qualityCancellation, pending) && ReferenceEquals(Active, expected);
+        try
+        {
+            Changed?.Invoke();
+            if (!OwnsSwitch()) return;
+            var operation = deadline.Token;
+            candidate = await prepare(expected, height, token, operation);
+            if (ReferenceEquals(candidate, expected)) candidate = null;
+            if (!OwnsSwitch()) return;
+            operation.ThrowIfCancellationRequested();
+            if (candidate is null) throw new InvalidOperationException();
+            await confirm(expected, candidate, operation, () =>
+            {
+                if (!OwnsSwitch()) throw new OperationCanceledException();
+                operation.ThrowIfCancellationRequested();
+
+                // Transfer ownership before disposal/cancellation can report an old native failure.
+                cancellation = pending;
+                qualityCancellation = null;
+                Active = candidate;
+                QualityHeight = height;
+                candidate = null;
+            });
+            if (candidate is not null) throw new InvalidOperationException();
+        }
+        catch (QualityRollbackException)
+        {
+            try { candidate?.Dispose(); }
+            finally
+            {
+                candidate = null;
+                if (OwnsSwitch()) Fail(expected);
+            }
+            return;
+        }
+        catch (Exception)
+        {
+            if (OwnsSwitch()) QualityError = "Couldn’t change video quality. Try again.";
+            return;
+        }
+        finally
+        {
+            try { candidate?.Dispose(); }
+            finally
+            {
+                if (OwnsSwitch())
+                {
+                    qualityCancellation = null;
+                    try { Cancel(pending); }
+                    finally { if (id == generation && !QualityBusy) Changed?.Invoke(); }
+                }
+            }
+        }
+
+        try { expected.Dispose(); }
+        finally
+        {
+            try { Cancel(oldCancellation); }
+            finally { if (id == generation && ReferenceEquals(cancellation, pending)) Changed?.Invoke(); }
+        }
+    }
+
     public void Fail(T source)
     {
         if (!ReferenceEquals(source, Active)) return;
@@ -90,13 +176,20 @@ internal sealed class PlaybackController<T>(Func<string, CancellationToken, Task
     {
         generation++;
         var pending = cancellation; cancellation = null;
+        var switching = qualityCancellation; qualityCancellation = null;
         var old = Active; Active = null;
+        QualityHeight = null; QualityError = null;
         try { old?.Dispose(); }
         finally
         {
-            try { pending?.Cancel(); }
-            finally { pending?.Dispose(); }
+            try { Cancel(switching); }
+            finally { Cancel(pending); }
         }
+    }
+    private static void Cancel(CancellationTokenSource? source)
+    {
+        try { source?.Cancel(); }
+        finally { source?.Dispose(); }
     }
     public void Back()
     {

@@ -12,6 +12,8 @@ internal static class WiringTests
         var names = xml.Root!.DescendantsAndSelf().Where(e => e.Attribute(x + "Name") is not null).ToDictionary(e => e.Attribute(x + "Name")!.Value, e => e.Name.LocalName);
         var code = File.ReadAllText(Path.Combine(app, "MainWindow.cs"));
         StateTests.Verify(names.TryGetValue("TheaterPlayer", out var playerType) && playerType == "MediaPlayerElement", "Theater uses a genuine native MediaPlayerElement");
+        StateTests.Verify(names.TryGetValue("PlayerQualityButton", out var qualityType) && qualityType == "Button", "native player exposes a direct video quality button");
+        StateTests.Verify(code.Contains("ChangeQualityAsync(active, height") && code.Contains("playbackResolver.ForQuality(active.Catalog, height)"), "native quality menu drives the validated manifest switch");
         foreach (var action in new[] { "PlayerBackButton", "PlayerRetryButton", "PlayerOpenYouTubeButton", "PlayerNextButton" })
             StateTests.Verify(code.Contains($"C<Button>(\"{action}\").Click +="), "native player action wired: " + action);
         StateTests.Verify(code.Contains("playback.Selected is not null && playback.Queue.Any(v => ReferenceEquals(v, video))"), "hidden or stale Up next activation is rejected before shared membership gate");
