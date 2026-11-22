@@ -29,7 +29,8 @@ internal static class WiringTests
             code.Contains("hitArea.PointerReleased +=") && code.Contains("if (commit && active is not null"), "captured drag previews on the hit surface and commits only on release");
         foreach (var edge in new[] { "PointerCaptureLost", "PointerCanceled" })
             StateTests.Verify(code.Split('\n').Single(line => line.Contains($"hitArea.{edge} +=")).Contains("commit: false"), "interrupted scrub cancels: " + edge);
-        StateTests.Verify(code.Contains("active.Prepare();\n                    ApplyPlayerAudio(active);") && code.Contains("playerAudio.ToggleMute()"),
+        StateTests.Verify(Regex.IsMatch(code, @"active\.Prepare\(\);\s+ApplyPlayerAudio\(active\);\s+active\.Open\(\);") &&
+            code.Contains("playerAudio.ToggleMute()"),
             "new videos inherit window volume and mute before they can play");
         StateTests.Verify(code.Contains("ChangeQualityAsync(active, height") && code.Contains("playbackResolver.ForQuality(active.Catalog, height)"), "native quality menu drives the validated manifest switch");
         foreach (var action in new[] { "PlayerBackButton", "PlayerRetryButton", "PlayerOpenYouTubeButton", "PlayerNextButton" })
