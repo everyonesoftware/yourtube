@@ -21,7 +21,8 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
     private const ulong InitialHeaderRead = 16 * 1024;
     private const ulong HeaderRead = 1024 * 1024;
     private static readonly XNamespace Dash = "urn:mpeg:dash:schema:mpd:2011";
-    private sealed record OwnedSource(XDocument Manifest, Dictionary<string, MediaTrack> Tracks);
+    private sealed record OwnedSource(XDocument Manifest, Dictionary<string, MediaTrack> Tracks, bool NeedsDescription = false);
+    private readonly PublicTransport transport;
     private readonly HttpClient http;
     private readonly YoutubeClient client;
     private readonly ConditionalWeakTable<PlaybackMedia, OwnedSource> ownership = new();
@@ -31,7 +32,8 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
     // Injected handlers must not auto-redirect or attach credentials. Intended for deterministic tests.
     public PlaybackResolver(HttpMessageHandler handler)
     {
-        http = new HttpClient(new PublicTransport(handler)) { Timeout = TimeSpan.FromSeconds(40) };
+        transport = new PublicTransport(handler);
+        http = new HttpClient(transport) { Timeout = TimeSpan.FromSeconds(40) };
         client = new YoutubeClient(http);
     }
     public Task<PlaybackMedia> ResolveAsync(string videoId, CancellationToken cancellationToken = default) =>
@@ -43,25 +45,53 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
         {
             CheckDisposed();
             if (!Regex.IsMatch(videoId ?? "", "\\A[A-Za-z0-9_-]{11}\\z", RegexOptions.CultureInvariant)) throw new PlaybackException("invalid_video", "The video identity is invalid.");
-            timing?.Mark(PlaybackTimingStage.MetadataStarted);
-            var metadata = await client.Videos.GetAsync(videoId!, cancellationToken);
-            timing?.Mark(PlaybackTimingStage.MetadataCompleted);
-            if (metadata.Duration is not { } duration || duration <= TimeSpan.Zero) throw Unsupported();
             timing?.Mark(PlaybackTimingStage.StreamManifestStarted);
-            var manifest = await client.Videos.Streams.GetManifestAsync(videoId!, cancellationToken);
+            var (manifest, metadata) = await transport.DiscoverAsync(videoId!, () =>
+                client.Videos.Streams.GetManifestAsync(videoId!, cancellationToken));
             timing?.Mark(PlaybackTimingStage.StreamManifestCompleted);
             var videos = manifest.GetVideoOnlyStreams().Where(s => s.Container.Name == "mp4" && Regex.IsMatch(s.VideoCodec, PlayerStreamFilter.AvcPattern) && s.VideoResolution.Height is > 0 and <= PlayerStreamFilter.MaxHeight && s.VideoResolution.Width <= PlayerStreamFilter.MaxWidth).OrderBy(s => s.VideoResolution.Height).ThenBy(s => s.Bitrate.BitsPerSecond).ToArray();
             var audio = manifest.GetAudioOnlyStreams().Where(s => s.Container.Name == "mp4" && s.AudioCodec == PlayerStreamFilter.AacCodec && s.IsAudioLanguageDefault != false).OrderByDescending(s => s.IsAudioLanguageDefault == true).ThenByDescending(s => s.Bitrate.BitsPerSecond).FirstOrDefault();
             if (videos.Length == 0 || audio is null) throw Unsupported();
+            bool needsDescription = metadata is { Description: null };
+            if (metadata is null)
+            {
+                timing?.Mark(PlaybackTimingStage.MetadataStarted);
+                var fallback = await client.Videos.GetAsync(videoId!, cancellationToken);
+                timing?.Mark(PlaybackTimingStage.MetadataCompleted);
+                if (fallback.Duration is not { } duration || duration <= TimeSpan.Zero) throw Unsupported();
+                metadata = new(fallback.Title, fallback.Author.ChannelTitle, fallback.Description, duration);
+            }
+            else timing?.Mark(PlaybackTimingStage.MetadataFromPlayerResponse);
             var tracks = videos.Select(s => new MediaTrack(new Uri(s.Url), checked((ulong)s.Size.Bytes), s.VideoCodec, checked((uint)s.Bitrate.BitsPerSecond), s.VideoResolution.Width, s.VideoResolution.Height)).ToList();
             tracks.Add(new(new Uri(audio.Url), checked((ulong)audio.Size.Bytes), audio.AudioCodec, checked((uint)audio.Bitrate.BitsPerSecond), 0, 0));
-            return await AssembleAsync(videoId!, metadata.Title, metadata.Author.ChannelTitle, metadata.Description, duration, tracks, cancellationToken, timing);
+            return await AssembleAsync(videoId!, metadata.Title, metadata.Author, metadata.Description ?? "", metadata.Duration,
+                tracks, cancellationToken, timing, needsDescription);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (PlaybackException) { throw; }
         catch { throw new PlaybackException("unavailable", "This public video could not be resolved for native playback."); }
     }
-    internal async Task<PlaybackMedia> AssembleAsync(string id, string title, string author, string description, TimeSpan duration, IReadOnlyList<MediaTrack> tracks, CancellationToken token = default, PlaybackTiming? timing = null)
+    /// <summary>Optional display text for a resolver-owned source; never required for playback.</summary>
+    public Task<string?> GetDeferredDescriptionAsync(PlaybackMedia media, CancellationToken cancellationToken) =>
+        GetDeferredDescriptionAsync(media, cancellationToken, TimeProvider.System);
+
+    internal async Task<string?> GetDeferredDescriptionAsync(PlaybackMedia media, CancellationToken cancellationToken, TimeProvider clock)
+    {
+        if (disposed || media is null || media.ExpiresAt <= clock.GetUtcNow() ||
+            !ownership.TryGetValue(media, out var source) || !source.NeedsDescription) return null;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(5));
+        try
+        {
+            deadline.Token.ThrowIfCancellationRequested();
+            var video = await client.Videos.GetAsync(media.VideoId, deadline.Token);
+            return deadline.IsCancellationRequested || media.ExpiresAt <= clock.GetUtcNow() || string.IsNullOrEmpty(video.Description)
+                ? null : video.Description;
+        }
+        catch (Exception) { return null; } // Optional text must not fail or interrupt playback.
+    }
+
+    internal async Task<PlaybackMedia> AssembleAsync(string id, string title, string author, string description, TimeSpan duration, IReadOnlyList<MediaTrack> tracks, CancellationToken token = default, PlaybackTiming? timing = null, bool needsDescription = false)
     {
         CheckDisposed();
         if (duration <= TimeSpan.Zero || tracks.Count > 33) throw Unsupported();
@@ -99,7 +129,7 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
         if (!video.HasElements || !audio.HasElements) throw Unsupported();
         var mpd = new XDocument(new XElement(ns + "MPD", new XAttribute("type", "static"), new XAttribute("profiles", "urn:mpeg:dash:profile:isoff-on-demand:2011"), new XAttribute("mediaPresentationDuration", XmlConvert.ToString(duration)), new XAttribute("minBufferTime", "PT1.5S"), new XElement(ns + "Period", new XAttribute("start", "PT0S"), new XAttribute("duration", XmlConvert.ToString(duration)), video, audio)));
         var media = new PlaybackMedia(id, title, author, description, duration, expiry, Serialize(mpd), new("https://www.youtube.com/yourtube-playback.mpd"), qualities.AsReadOnly());
-        ownership.Add(media, new(mpd, owned));
+        ownership.Add(media, new(mpd, owned, needsDescription));
         timing?.Mark(PlaybackTimingStage.DashAssemblyCompleted);
         return media;
     }

@@ -20,6 +20,8 @@ internal sealed class MainWindow : Window
     private readonly PlaybackController<NativePlaybackSession> playback;
     private int startupQuality;
     private NativePlaybackSession? boundSession;
+    private PlaybackMedia? descriptionCatalog;
+    private CancellationTokenSource? descriptionRequest;
     private SessionController? controller;
     private IReadOnlyList<HistoryVideo>? displayedVideos;
     private IReadOnlyList<YouTubeAccount>? displayedAccounts;
@@ -108,6 +110,7 @@ internal sealed class MainWindow : Window
         Closed += (_, _) =>
         {
             closed = true;
+            ResetDescription(null);
             playback.Dispose();
             boundSession = null;
             playbackResolver.Dispose();
@@ -324,7 +327,9 @@ internal sealed class MainWindow : Window
         }
         C<TextBlock>("PlayerTitle").Text = source?.Media.Title ?? selected?.Title ?? "";
         C<TextBlock>("PlayerAuthor").Text = source is null ? selected?.Channel ?? "" : $"{source.Media.Author} · {source.Media.Duration:g}";
-        C<TextBlock>("PlayerDescription").Text = source?.Media.Description ?? "";
+        if (!ReferenceEquals(source?.Catalog, descriptionCatalog)) ResetDescription(source?.Catalog);
+        if (source is { IsOpened: true } && descriptionRequest is null)
+            _ = LoadDescriptionAsync(source.Catalog, (descriptionRequest = new()).Token);
         C<TextBlock>("PlayerError").Text = playback.Error ?? "";
         C<TextBlock>("PlayerError").Visibility = ToVisibility(playback.Error is not null);
         var quality = C<Button>("PlayerQualityButton");
@@ -346,6 +351,23 @@ internal sealed class MainWindow : Window
         C<ListView>("PlayerQueue").ItemsSource = playback.Queue;
         C<Button>("PlayerNextButton").IsEnabled = selected is not null && playback.Queue.Count > 0 && !playback.Busy;
         C<Button>("PlayerNextButton").Visibility = ToVisibility(playback.Queue.Count > 0);
+    }
+
+    private void ResetDescription(PlaybackMedia? catalog)
+    {
+        var previous = descriptionRequest;
+        descriptionCatalog = catalog;
+        descriptionRequest = null;
+        previous?.Cancel();
+        previous?.Dispose();
+        if (!closed) C<TextBlock>("PlayerDescription").Text = catalog?.Description ?? "";
+    }
+
+    private async Task LoadDescriptionAsync(PlaybackMedia catalog, CancellationToken token)
+    {
+        var description = await playbackResolver.GetDeferredDescriptionAsync(catalog, token);
+        if (!closed && !token.IsCancellationRequested && description is not null && catalog.ExpiresAt > DateTimeOffset.UtcNow &&
+            ReferenceEquals(playback.Active?.Catalog, catalog)) C<TextBlock>("PlayerDescription").Text = description;
     }
 
     private static string QualityLabel(int? height) => height is int value ? $"{value}p" : "Auto";

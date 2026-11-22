@@ -19,7 +19,7 @@ public enum PlaybackTimingStage
     NativeDownloadBitrateChanged, NativePlaybackBitrateChanged,
     NativeDownloadBitrateAtFirstProgress, NativePlaybackBitrateAtFirstProgress,
     NativePlayerFailed, NativeSourceExpired, NativeDisposed,
-    ReturnToAutoStarted, ManualQualityStarted
+    ReturnToAutoStarted, ManualQualityStarted, MetadataFromPlayerResponse
 }
 
 public sealed class PlaybackTiming

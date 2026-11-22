@@ -4,6 +4,21 @@ namespace YourTube.Playback;
 internal sealed class PublicTransport(HttpMessageHandler handler) : HttpMessageHandler
 {
     private readonly HttpMessageInvoker inner = new(handler);
+    private sealed class MetadataCapture(string id)
+    {
+        internal string Id { get; } = id;
+        internal PlayerMetadata? Latest { get; set; }
+    }
+    private readonly AsyncLocal<MetadataCapture?> metadataCapture = new();
+
+    internal async Task<(T Result, PlayerMetadata? Metadata)> DiscoverAsync<T>(string videoId, Func<ValueTask<T>> discover)
+    {
+        var previous = metadataCapture.Value;
+        var capture = new MetadataCapture(videoId);
+        metadataCapture.Value = capture;
+        try { return (await discover(), capture.Latest); }
+        finally { metadataCapture.Value = previous; }
+    }
     internal static bool IsCdn(Uri u) => u.IsAbsoluteUri && u.Scheme == "https" && u.IsDefaultPort && u.UserInfo.Length == 0 && u.Fragment.Length == 0 && u.Host.EndsWith(".googlevideo.com", StringComparison.OrdinalIgnoreCase);
     private static bool IsYouTube(Uri u) => u.IsAbsoluteUri && u.Scheme == "https" && u.IsDefaultPort && u.UserInfo.Length == 0 && u.Fragment.Length == 0 && u.Host is "www.youtube.com" or "youtube.com";
     internal static PlaybackException Unsafe() => new("unsafe_resource", "The playback resource is not permitted.");
@@ -57,8 +72,12 @@ internal sealed class PublicTransport(HttpMessageHandler handler) : HttpMessageH
                     while ((n = await input.ReadAsync(buffer, cancellationToken)) != 0)
                     { if (output.Length + n > limit) throw Unsafe(); output.Write(buffer, 0, n); }
                     var original = output.ToArray();
-                    var bytes = !cdn && response.IsSuccessStatusCode && request.Method == HttpMethod.Post && uri.AbsolutePath == "/youtubei/v1/player"
-                        ? PlayerStreamFilter.Filter(original) : original;
+                    bool publicPlayer = !cdn && response.IsSuccessStatusCode && request.Method == HttpMethod.Post && uri.AbsolutePath == "/youtubei/v1/player";
+                    // The pinned stream client uses the last successful transport response,
+                    // including on a retry. Never carry details forward from an earlier response.
+                    if (publicPlayer && metadataCapture.Value is { } capture)
+                        capture.Latest = PlayerMetadata.Read(original, capture.Id);
+                    var bytes = publicPlayer ? PlayerStreamFilter.Filter(original) : original;
                     var content = new ByteArrayContent(bytes);
                     foreach (var h in response.Content.Headers)
                         if (ReferenceEquals(bytes, original) || !h.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
