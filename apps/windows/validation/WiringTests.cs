@@ -75,6 +75,10 @@ internal static class WiringTests
         foreach (Match lookup in Regex.Matches(code + libraryCode, "C<(?<type>\\w+)>\\(\"(?<name>[^\"]+)\"\\)"))
             StateTests.Verify(names.TryGetValue(lookup.Groups["name"].Value, out var type) && type == lookup.Groups["type"].Value, "typed native control lookup matches XML: " + lookup.Groups["name"].Value);
         var library = Named("HistoryList");
+        StateTests.Verify(Named("SettingsButton").Ancestors().Contains(Named("LibraryNavigation")), "Settings belongs to the same rail as the two feeds");
+        StateTests.Verify(Named("AppBrand").Ancestors().Contains(Named("ShellHeader")) && Named("AccountButton").Ancestors().Contains(Named("ShellHeader")) && !names.ContainsKey("AccountChooser"), "a compact account menu balances the brand header rather than exposing an account picker");
+        StateTests.Verify(Named("LoadMoreButton").Ancestors().Any(e => e.Parent == library && e.Name.LocalName == "GridView.Footer"), "pagination follows the virtualized cards inside the feed scroller");
+        StateTests.Verify(Named("FeedStatus").Ancestors().Contains(Named("LibraryContent")) && (string?)Named("ShellStatus").Attribute("Visibility") == "Collapsed", "feed feedback is inline and the shell has no permanent status footer");
         StateTests.Verify(library.Name.LocalName == "GridView" && library.Descendants().Any(e =>
             e.Name.LocalName == "ItemsWrapGrid" && (string?)e.Attribute("Orientation") == "Horizontal") &&
             (string?)library.Attribute("IsItemClickEnabled") == "True" && names["SettingsHost"] == "ContentControl",
@@ -88,11 +92,12 @@ internal static class WiringTests
             "Back restores the originating Library card, only if it still belongs to the active feed");
         StateTests.Verify(xml.Descendants().All(e => e.Attribute(x + "Class") is null && !e.Attributes().Any(a => a.Value.Contains("{x:Bind"))), "runtime XAML needs no generated code");
         StateTests.Verify(!xml.ToString().Contains("WebView"), "no embedded login browser");
-        foreach (var button in new[] { "SignInButton", "OpenActivationButton", "CancelButton", "RefreshButton", "LoadMoreButton", "SignOutButton", "SettingsButton" })
+        foreach (var button in new[] { "SignInButton", "OpenActivationButton", "CancelButton", "RefreshButton", "LoadMoreButton", "SettingsButton" })
             StateTests.Verify(code.Contains($"C<Button>(\"{button}\").Click +="), "native action wired: " + button);
+        StateTests.Verify(code.Contains("await current.SelectAccountAsync(account)") && code.Contains("current.SignOut()"), "account menu uses the existing identity and sign-out boundaries");
         StateTests.Verify(code.Contains("SetTitleBar(C<Border>(\"TitleBar\"))") && code.Contains("ExtendsContentIntoTitleBar = true"), "Music native titlebar APIs wired");
         StateTests.Verify(code.Contains("SettingsHost\").Content = updatesPanel.View") && code.Contains("updatesPanel.Dispose()"), "Settings updater integration and disposal");
-        StateTests.Verify(Regex.IsMatch(code, @"root\.Loaded\s*\+=\s*async[^;]*if \(initialized \|\| closed\) return;\s*initialized\s*=\s*true;\s*_\s*=\s*updatesPanel\.CheckOnStartupAsync\(\);\s*await InitializeServicesAsync\(\);"),
+        StateTests.Verify(Regex.IsMatch(code, @"root\.Loaded\s*\+=\s*async[^;]*if \(initialized \|\| closed\) return;\s*initialized\s*=\s*true;\s*_\s*=\s*updatesPanel\.CheckOnStartupAsync\(\);[^;]*;\s*await InitializeServicesAsync\(\);"),
             "startup discovery is scheduled once without awaiting it or depending on account restoration");
         var dot = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "SettingsUpdateDot");
         StateTests.Verify(dot is not null && dot.Ancestors().Contains(Named("SettingsButton")) &&
@@ -101,6 +106,10 @@ internal static class WiringTests
         StateTests.Verify(code.Contains("updatesPanel.UpdateAvailabilityChanged += RenderSettingsButton;") &&
             code.Contains("!settingsVisible && updatesPanel.HasUpdate") && code.Contains("Settings, update available"),
             "Settings badge follows updater state and announces the update through the existing button");
+        StateTests.Verify(Named("PlayerSettingsPageButton").Descendants().Any(e => (string?)e.Attribute(x + "Name") == "PlayerSettingsUpdateDot" &&
+            (string?)e.Attribute("Visibility") == "Collapsed") && code.Contains("C<Ellipse>(\"PlayerSettingsUpdateDot\").Visibility = ToVisibility(showDot)") &&
+            code.Contains("AutomationProperties.SetName(C<Button>(\"PlayerSettingsPageButton\"), accessibleName)"),
+            "the visible Settings button in windowed Theater shows and announces the same available update");
         var program = File.ReadAllText(Path.Combine(app, "Program.cs"));
         StateTests.Verify(program.IndexOf("SetAutoApplyOnStartup(false)", StringComparison.Ordinal) < program.IndexOf("InitializeComWrappers", StringComparison.Ordinal), "explicit Velopack lifecycle runs before WinUI");
         var project = XDocument.Load(Path.Combine(app, "YourTube.App.csproj"));

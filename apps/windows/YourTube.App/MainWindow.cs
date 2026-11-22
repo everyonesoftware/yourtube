@@ -42,10 +42,9 @@ internal sealed partial class MainWindow : Window
     private CancellationTokenSource? descriptionRequest;
     private SessionController? controller;
     private IReadOnlyList<HistoryVideo>? displayedVideos;
-    private IReadOnlyList<YouTubeAccount>? displayedAccounts;
     private IReadOnlyList<SubscribedChannel>? displayedChannels;
     private BrowseView lastBrowseView = BrowseView.History;
-    private bool rendering;
+    private string? browserNotice;
     private bool settingsVisible;
     private bool initialized;
     private bool closed;
@@ -97,23 +96,19 @@ internal sealed partial class MainWindow : Window
         };
 
         C<Button>("SettingsButton").Click += async (_, _) => await NavigateAsync(settingsVisible ? lastBrowseView : BrowseView.Settings);
+        C<Button>("PlayerSettingsPageButton").Click += async (_, _) => await NavigateAsync(BrowseView.Settings);
         C<Button>("HistoryButton").Click += async (_, _) => await NavigateAsync(BrowseView.History);
         C<Button>("SubscriptionsButton").Click += async (_, _) => await NavigateAsync(BrowseView.Subscriptions);
         C<Button>("SignInButton").Click += async (_, _) => { if (controller is { Busy: false }) await controller.SignInAsync(); };
         C<Button>("RestoreButton").Click += async (_, _) => { if (controller is { Busy: false }) await controller.InitializeAsync(); else if (controller is null) await InitializeServicesAsync(); };
         C<Button>("OpenActivationButton").Click += async (_, _) => await OpenActivationAsync();
         C<Button>("CancelButton").Click += (_, _) => { playback.Back(); controller?.Cancel(); };
-        C<Button>("SignOutButton").Click += (_, _) => { playback.Back(); controller?.SignOut(); };
+        C<Button>("FeedCancelButton").Click += (_, _) => { playback.Back(); controller?.Cancel(); };
         C<Button>("RefreshButton").Click += async (_, _) => { if (controller is not null) await controller.LoadHistoryAsync(); };
         C<Button>("LoadMoreButton").Click += async (_, _) => { if (controller is not null) await controller.LoadHistoryAsync(append: true); };
-        C<ComboBox>("AccountChooser").SelectionChanged += async (_, _) =>
-        {
-            if (!rendering && !closed && controller is not null && C<ComboBox>("AccountChooser").SelectedItem is ComboBoxItem { Tag: YouTubeAccount account })
-            {
-                playback.Back();
-                await controller.SelectAccountAsync(account);
-            }
-        };
+        var accountMenu = (MenuFlyout)C<Button>("AccountButton").Flyout;
+        accountMenu.Opening += (_, _) => PopulateAccountMenu(accountMenu);
+        accountMenu.Closed += (_, _) => accountMenu.Items.Clear();
         C<ListView>("ChannelsList").ContainerContentChanging += (_, args) => RenderChannelRow(args);
         WireLibrary();
         C<GridView>("HistoryList").ItemClick += async (_, args) =>
@@ -128,6 +123,7 @@ internal sealed partial class MainWindow : Window
             if (initialized || closed) return;
             initialized = true;
             _ = updatesPanel.CheckOnStartupAsync();
+            C<Border>("ShellStatus").Visibility = Visibility.Visible;
             await InitializeServicesAsync();
         };
         Closed += (_, _) =>
@@ -192,6 +188,8 @@ internal sealed partial class MainWindow : Window
             // Credential and filesystem failures must not expose paths or exception text.
             C<TextBlock>("StatusText").Text = "Windows could not initialize secure account storage. Retry saved login to try again.";
             C<ProgressRing>("BusyRing").IsActive = false;
+            C<ProgressRing>("BusyRing").Visibility = Visibility.Collapsed;
+            C<Border>("ShellStatus").Visibility = Visibility.Visible;
             C<ScrollViewer>("SignInPanel").Visibility = Visibility.Visible;
             C<Button>("SignInButton").IsEnabled = false;
         }
@@ -200,14 +198,16 @@ internal sealed partial class MainWindow : Window
     private void OnStateChanged()
     {
         if (closed) return;
-        if (DispatcherQueue.HasThreadAccess) Render();
-        else DispatcherQueue.TryEnqueue(Render);
+        void ShowState() { browserNotice = null; Render(); }
+        if (DispatcherQueue.HasThreadAccess) ShowState();
+        else DispatcherQueue.TryEnqueue(ShowState);
     }
 
     private async Task NavigateAsync(BrowseView view)
     {
         if (closed) return;
         if (view != BrowseView.Settings && !settingsVisible && controller?.Phase != SessionPhase.SignedIn) return;
+        browserNotice = null;
         playback.Back();
         settingsVisible = view == BrowseView.Settings;
         if (!settingsVisible) lastBrowseView = view;
@@ -221,7 +221,62 @@ internal sealed partial class MainWindow : Window
         string label = settingsVisible ? "Back" : "Settings";
         C<TextBlock>("SettingsButtonLabel").Text = label;
         C<Ellipse>("SettingsUpdateDot").Visibility = ToVisibility(showDot);
-        AutomationProperties.SetName(C<Button>("SettingsButton"), showDot ? "Settings, update available" : label);
+        C<Ellipse>("PlayerSettingsUpdateDot").Visibility = ToVisibility(showDot);
+        string accessibleName = showDot ? "Settings, update available" : "Settings";
+        AutomationProperties.SetName(C<Button>("SettingsButton"), settingsVisible ? label : accessibleName);
+        AutomationProperties.SetName(C<Button>("PlayerSettingsPageButton"), accessibleName);
+    }
+
+    private void PopulateAccountMenu(MenuFlyout menu)
+    {
+        menu.Items.Clear();
+        if (closed || controller is not { } current) return;
+        if (current.Phase == SessionPhase.SignedIn)
+        {
+            foreach (var account in current.Accounts)
+            {
+                var selected = Equals(account, current.SelectedAccount);
+                var item = new MenuFlyoutItem { Text = string.IsNullOrWhiteSpace(account.Handle) ? account.Name : $"{account.Name} · {account.Handle}", IsEnabled = !settingsVisible };
+                if (selected) item.Icon = new FontIcon { Glyph = "\uE73E" };
+                AutomationProperties.SetName(item, selected ? $"{item.Text}, selected" : item.Text);
+                item.Click += async (_, _) =>
+                {
+                    if (closed || settingsVisible || !ReferenceEquals(controller, current) || current.Phase != SessionPhase.SignedIn ||
+                        !current.Accounts.Any(candidate => ReferenceEquals(candidate, account)) || Equals(current.SelectedAccount, account)) return;
+                    playback.Back();
+                    await current.SelectAccountAsync(account);
+                };
+                menu.Items.Add(item);
+            }
+            if (menu.Items.Count > 0) menu.Items.Add(new MenuFlyoutSeparator());
+        }
+        var signOut = new MenuFlyoutItem { Text = current.Phase == SessionPhase.SignedIn ? "Sign out" : "Clear saved login" };
+        signOut.Click += (_, _) =>
+        {
+            if (closed || !ReferenceEquals(controller, current) || current.Phase is not (SessionPhase.SignedIn or SessionPhase.SignedOut)) return;
+            playback.Back();
+            current.SignOut();
+        };
+        menu.Items.Add(signOut);
+    }
+
+    private void RenderStatus()
+    {
+        if (controller is not { } current) return;
+        var browsing = current.Phase == SessionPhase.SignedIn && !settingsVisible && playback.Selected is null;
+        var busy = current.Busy;
+        var show = busy || !string.IsNullOrWhiteSpace(current.Status);
+        C<Grid>("FeedStatus").Visibility = ToVisibility(browsing && show);
+        C<TextBlock>("FeedStatusText").Text = browsing ? current.Status : "";
+        C<ProgressRing>("FeedBusyRing").IsActive = browsing && busy;
+        C<ProgressRing>("FeedBusyRing").Visibility = ToVisibility(browsing && busy);
+        C<Button>("FeedCancelButton").Visibility = ToVisibility(browsing && busy);
+        var shared = !fullscreen && !browsing && (browserNotice is not null || (show && current.Phase != SessionPhase.SignedIn));
+        C<Border>("ShellStatus").Visibility = ToVisibility(shared);
+        C<TextBlock>("StatusText").Text = shared ? browserNotice ?? current.Status : "";
+        C<ProgressRing>("BusyRing").IsActive = shared && busy;
+        C<ProgressRing>("BusyRing").Visibility = ToVisibility(shared && busy);
+        C<Button>("CancelButton").Visibility = ToVisibility(shared && busy);
     }
 
     private void Render()
@@ -235,48 +290,41 @@ internal sealed partial class MainWindow : Window
             C<ScrollViewer>("SignInPanel").Visibility = ToVisibility(!settingsVisible && initialized);
             return;
         }
-        rendering = true;
-        try
         {
             var signedIn = controller.Phase == SessionPhase.SignedIn;
             var subscriptions = controller.View == BrowseView.Subscriptions;
             SetLibraryDestination(C<Button>("HistoryButton"), "History", signedIn, !settingsVisible && !subscriptions);
             SetLibraryDestination(C<Button>("SubscriptionsButton"), "Subscriptions", signedIn, !settingsVisible && subscriptions);
             C<TextBlock>("ViewHeading").Text = subscriptions ? "Subscriptions" : "History";
-            C<Expander>("ChannelsPanel").Visibility = ToVisibility(subscriptions);
+            C<Border>("ChannelsDisclosure").Visibility = ToVisibility(subscriptions);
             if (!subscriptions || controller.Channels.Count == 0) C<Expander>("ChannelsPanel").IsExpanded = false;
             C<TextBlock>("ChannelsStatusText").Text = controller.Channels.Count > 0 ? $"Subscribed channels ({controller.Channels.Count})" : controller.Busy ? "Loading subscribed channels…" : "No subscribed channels loaded.";
-            C<TextBlock>("VideosStatusText").Text = controller.Videos.Count > 0 ? $"{(subscriptions ? "Latest subscription videos" : "History videos")} ({controller.Videos.Count})" : controller.Busy ? "Loading videos…" : "No videos loaded.";
+            C<TextBlock>("VideosStatusText").Text = subscriptions ? "Latest videos from your channels" : "Videos you’ve watched";
             AutomationProperties.SetName(C<GridView>("HistoryList"), subscriptions ? "Latest subscription videos" : "Watch history");
             C<Grid>("HistoryPanel").Visibility = ToVisibility(!settingsVisible && signedIn && playback.Selected is null);
             C<ScrollViewer>("SignInPanel").Visibility = ToVisibility(!settingsVisible && controller.Phase == SessionPhase.SignedOut);
             C<StackPanel>("DevicePanel").Visibility = ToVisibility(!settingsVisible && controller.Phase == SessionPhase.Authorizing);
-            C<ProgressRing>("BusyRing").IsActive = controller.Busy;
-            C<ProgressRing>("BusyRing").Visibility = ToVisibility(controller.Busy);
-            C<TextBlock>("StatusText").Text = controller.Status;
+
             C<Button>("SignInButton").IsEnabled = !controller.Busy;
             C<Button>("RestoreButton").IsEnabled = !controller.Busy;
-            C<Button>("SignOutButton").IsEnabled = true; // Also permits retrying a failed vault removal.
-            C<Button>("CancelButton").Visibility = ToVisibility(controller.Busy);
+
             C<Button>("RefreshButton").IsEnabled = signedIn && !controller.Busy && controller.SelectedAccount is not null;
             C<Button>("LoadMoreButton").Visibility = ToVisibility(controller.Continuation is not null);
             C<Button>("LoadMoreButton").IsEnabled = signedIn && !controller.Busy;
-            C<GridView>("HistoryList").IsEnabled = signedIn && !controller.Busy;
-            C<ComboBox>("AccountChooser").Visibility = ToVisibility(signedIn);
-            C<ComboBox>("AccountChooser").IsEnabled = signedIn; // Switching invalidates a pending history call.
+            C<GridView>("HistoryList").IsItemClickEnabled = signedIn && !controller.Busy;
+            var accountButton = C<Button>("AccountButton");
+            var accountName = controller.SelectedAccount?.Name;
+            var label = string.IsNullOrWhiteSpace(accountName) ? (signedIn && controller.Accounts.Count > 0 ? "Choose account" : "Account") : accountName;
+            C<TextBlock>("AccountLabel").Text = label;
+            C<TextBlock>("AccountInitial").Text = string.IsNullOrWhiteSpace(accountName) ? "?" : System.Globalization.StringInfo.GetNextTextElement(accountName.Trim()).ToUpperInvariant();
+            AutomationProperties.SetName(accountButton, $"YouTube account: {label}");
+            accountButton.Visibility = ToVisibility(signedIn || controller.Phase == SessionPhase.SignedOut);
+            if (accountButton.Visibility == Visibility.Collapsed) accountButton.Flyout.Hide();
             var authorization = controller.Authorization;
             C<TextBlock>("DeviceCode").Text = authorization?.UserCode ?? "";
             C<TextBlock>("ExpiryText").Text = authorization is null ? "" : $"Code expires at {authorization.ExpiresAt.ToLocalTime():t}.";
             C<Button>("OpenActivationButton").IsEnabled = authorization is not null && authorization.ExpiresAt > DateTimeOffset.UtcNow && BrowserPolicy.IsActivationUri(authorization.VerificationUri);
-            if (!ReferenceEquals(displayedAccounts, controller.Accounts))
-            {
-                displayedAccounts = controller.Accounts;
-                var chooser = C<ComboBox>("AccountChooser");
-                chooser.Items.Clear();
-                foreach (var account in controller.Accounts)
-                    chooser.Items.Add(new ComboBoxItem { Content = string.IsNullOrWhiteSpace(account.Handle) ? account.Name : $"{account.Name} · {account.Handle}", Tag = account });
-                chooser.SelectedItem = chooser.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, controller.SelectedAccount));
-            }
+
             if (!ReferenceEquals(displayedChannels, controller.Channels))
             {
                 displayedChannels = controller.Channels;
@@ -290,7 +338,6 @@ internal sealed partial class MainWindow : Window
                 C<GridView>("HistoryList").ItemsSource = controller.Videos;
             }
         }
-        finally { rendering = false; }
         RenderPlayback();
     }
 
@@ -340,6 +387,7 @@ internal sealed partial class MainWindow : Window
     {
         if (closed) return;
         var selected = playback.Selected;
+        C<Grid>("BrowseAndSettings").Visibility = ToVisibility(!fullscreen && (selected is null || settingsVisible));
         C<ScrollViewer>("TheaterPanel").Visibility = ToVisibility(selected is not null && !settingsVisible);
         C<Grid>("HistoryPanel").Visibility = ToVisibility(selected is null && !settingsVisible && controller?.Phase == SessionPhase.SignedIn);
         var source = playback.Active;
@@ -372,6 +420,7 @@ internal sealed partial class MainWindow : Window
         C<TextBlock>("PlayerError").Text = playback.Error ?? "";
         C<TextBlock>("PlayerError").Visibility = ToVisibility(playback.Error is not null);
         if (fullscreen && (selected is null || playback.Error is not null || settingsVisible)) SetFullscreen(false, restoreFocus: false);
+        RenderStatus();
         if (playback.QualityBusy)
         {
             playerTapFade?.Stop();
@@ -588,8 +637,9 @@ internal sealed partial class MainWindow : Window
         var chromeVisibility = ToVisibility(!enabled);
         C<Border>("TitleBar").Visibility = chromeVisibility;
         C<Grid>("ShellHeader").Visibility = chromeVisibility;
-        C<Grid>("BrowseAndSettings").Visibility = chromeVisibility;
-        C<Border>("ShellStatus").Visibility = chromeVisibility;
+        C<Grid>("BrowseAndSettings").Visibility = ToVisibility(!enabled && (playback.Selected is null || settingsVisible));
+        if (enabled) C<Button>("AccountButton").Flyout.Hide();
+        RenderStatus();
         C<Grid>("TheaterHeader").Visibility = chromeVisibility;
         C<StackPanel>("TheaterDetails").Visibility = chromeVisibility;
         Grid.SetRow(theater, enabled ? 0 : 2);
@@ -773,10 +823,15 @@ internal sealed partial class MainWindow : Window
 
     private async Task LaunchExplicitAsync(Uri uri)
     {
+        var video = playback.Selected;
+        var authorization = controller?.Authorization;
         try
         {
-            if (!await Launcher.LaunchUriAsync(uri) && !closed) C<TextBlock>("StatusText").Text = "Windows could not open your default browser.";
+            if (await Launcher.LaunchUriAsync(uri)) return;
         }
-        catch { if (!closed) C<TextBlock>("StatusText").Text = "Windows could not open your default browser."; }
+        catch { }
+        if (closed || settingsVisible || !ReferenceEquals(video, playback.Selected) || !ReferenceEquals(authorization, controller?.Authorization)) return;
+        browserNotice = "Windows could not open your default browser.";
+        RenderStatus();
     }
 }

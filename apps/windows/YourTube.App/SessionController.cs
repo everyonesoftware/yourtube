@@ -159,7 +159,7 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
                     if (continuation is not null) subscriptionCursors.Add(continuation);
                     var stopped = subscriptions.Continuation is not null && subscriptionCursors.Contains(subscriptions.Continuation);
                     Continuation = stopped || string.IsNullOrWhiteSpace(subscriptions.Continuation) ? null : subscriptions.Continuation;
-                    Status = stopped ? "YouTube repeated a subscription page. Refresh to try again." : subscriptions.Message ?? $"{Channels.Count} subscribed channels · {Videos.Count} subscription videos loaded.";
+                    Status = stopped ? "YouTube repeated a subscription page. Refresh to try again." : subscriptions.Message ?? (Videos.Count == 0 ? "No subscription videos were returned for this account." : "");
                 });
                 return;
             }
@@ -168,7 +168,7 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
             {
                 Videos = (append ? Videos.Concat(page.Videos) : page.Videos).DistinctBy(v => v.VideoId).ToArray();
                 Continuation = page.Continuation;
-                Status = page.Message ?? (Videos.Count == 0 ? "No history cards were returned for this account." : $"{Videos.Count} history cards loaded. Select a video to play natively.");
+                Status = page.Message ?? (Videos.Count == 0 ? "No history cards were returned for this account." : "");
             });
         }
         catch (Exception error) { Fail(op.Id, error); }

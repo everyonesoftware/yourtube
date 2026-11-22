@@ -20,7 +20,7 @@ internal sealed partial class MainWindow
     private void WireLibrary()
     {
         var feed = C<GridView>("HistoryList");
-        C<Grid>("HistoryPanel").SizeChanged += (_, args) => ArrangeLibraryNavigation(args.NewSize.Width);
+        C<Grid>("BrowseAndSettings").SizeChanged += (_, args) => ArrangeLibraryNavigation(args.NewSize.Width);
         feed.SizeChanged += (_, _) => SizeLibraryCards(feed);
         feed.Loaded += (_, _) => SizeLibraryCards(feed);
         feed.ContainerContentChanging += (_, args) => RenderLibraryCard(feed, args);
@@ -32,12 +32,15 @@ internal sealed partial class MainWindow
         var compact = width < 640;
         if (compactLibrary == compact) return;
         compactLibrary = compact;
+        var rail = C<Border>("NavigationRail");
         var nav = C<StackPanel>("LibraryNavigation");
-        var content = C<Grid>("LibraryContent");
-        nav.Width = compact ? double.NaN : 148;
+        var content = C<Grid>("WorkspaceContent");
+        rail.Width = compact ? double.NaN : 166;
+        rail.Padding = compact ? new Thickness(6, 6, 6, 6) : new Thickness(11, 16, 11, 16);
+        rail.BorderThickness = compact ? new Thickness(0, 0, 0, 1) : new Thickness(0, 0, 1, 0);
         nav.Orientation = compact ? Orientation.Horizontal : Orientation.Vertical;
-        Grid.SetRow(nav, compact ? 0 : 1);
-        Grid.SetColumnSpan(nav, compact ? 2 : 1);
+        Grid.SetRow(rail, compact ? 0 : 1);
+        Grid.SetColumnSpan(rail, compact ? 2 : 1);
         Grid.SetColumn(content, compact ? 0 : 1);
         Grid.SetColumnSpan(content, compact ? 2 : 1);
     }
@@ -46,9 +49,9 @@ internal sealed partial class MainWindow
     {
         if (feed.ItemsPanelRoot is not ItemsWrapGrid panel || feed.ActualWidth <= 24) return;
         var available = feed.ActualWidth - feed.Padding.Left - feed.Padding.Right - 2;
-        var columns = Math.Clamp((int)(available / 218), 1, 4);
+        var columns = Math.Clamp((int)(available / 190), 1, 4);
         var width = Math.Max(1, Math.Min(328, Math.Floor(available / columns)));
-        var height = Math.Ceiling(Math.Max(1, width - 10) * 9 / 16) + 83;
+        var height = Math.Ceiling(Math.Max(1, width - 12) * 9 / 16) + 76;
         if (panel.ItemWidth != width) panel.ItemWidth = width;
         if (panel.ItemHeight != height) panel.ItemHeight = height;
     }
@@ -56,7 +59,8 @@ internal sealed partial class MainWindow
     private static void SetLibraryDestination(Button button, string title, bool enabled, bool active)
     {
         button.IsEnabled = enabled;
-        button.Background = active ? new SolidColorBrush(ColorHelper.FromArgb(255, 51, 66, 54)) : null;
+        button.Background = active ? new SolidColorBrush(ColorHelper.FromArgb(255, 51, 66, 54)) : new SolidColorBrush(Colors.Transparent);
+        button.Foreground = active ? new SolidColorBrush(ColorHelper.FromArgb(255, 192, 215, 174)) : null;
         AutomationProperties.SetName(button, active ? $"{title}, selected" : title);
     }
 
@@ -112,15 +116,15 @@ internal sealed partial class MainWindow
             art.Children.Add(bar);
         }
         var cover = new Border { CornerRadius = new CornerRadius(7), Child = art };
-        var labels = new StackPanel { Spacing = 3, Margin = new Thickness(3, 7, 3, 0) };
+        var labels = new StackPanel { Spacing = 2, Margin = new Thickness(3, 6, 3, 0) };
         labels.Children.Add(new TextBlock
         {
             Text = video.Title, FontSize = 15, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap,
             MaxLines = 2, TextTrimming = TextTrimming.CharacterEllipsis
         });
-        labels.Children.Add(new TextBlock { Text = video.Channel, Foreground = muted, TextTrimming = TextTrimming.CharacterEllipsis });
+        labels.Children.Add(new TextBlock { Text = video.Channel, FontSize = 12, Foreground = muted, TextTrimming = TextTrimming.CharacterEllipsis });
         host.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        host.RowDefinitions.Add(new RowDefinition { Height = new GridLength(73) });
+        host.RowDefinitions.Add(new RowDefinition { Height = new GridLength(64) });
         host.Children.Add(cover);
         Grid.SetRow(labels, 1);
         host.Children.Add(labels);

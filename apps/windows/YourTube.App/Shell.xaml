@@ -7,52 +7,86 @@
     <SolidColorBrush x:Key="AccentTextFillColorPrimaryBrush" Color="#c0d7ae"/>
     <Style TargetType="TextBlock"><Setter Property="FontFamily" Value="Segoe UI"/><Setter Property="Foreground" Value="#edf0e9"/></Style>
     <Style TargetType="Button"><Setter Property="CornerRadius" Value="5"/></Style>
+    <Style x:Key="RailLabel" TargetType="TextBlock"><Setter Property="FontFamily" Value="Segoe UI"/></Style>
+    <Style x:Key="RailButton" TargetType="Button">
+      <Setter Property="Background" Value="Transparent"/><Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Padding" Value="10,0"/><Setter Property="MinHeight" Value="38"/>
+      <Setter Property="CornerRadius" Value="6"/><Setter Property="HorizontalAlignment" Value="Stretch"/>
+      <Setter Property="HorizontalContentAlignment" Value="Left"/>
+    </Style>
     <DataTemplate x:Key="HistoryRowTemplate"><Grid Padding="14,10" MinHeight="76"/></DataTemplate>
-    <DataTemplate x:Key="LibraryCardTemplate"><Grid Padding="5"/></DataTemplate>
+    <DataTemplate x:Key="LibraryCardTemplate"><Grid Padding="6"/></DataTemplate>
   </Grid.Resources>
   <Grid.RowDefinitions><RowDefinition Height="40"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
   <Border x:Name="TitleBar" Grid.Row="0" Background="#242c28" Padding="16,0,150,0">
     <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center"><FontIcon Glyph="&#xE714;" FontSize="15" Foreground="#c0d7ae"/><TextBlock Text="YourTube" FontSize="13"/></StackPanel>
   </Border>
-  <Grid x:Name="ShellHeader" Grid.Row="1" Padding="20,10" ColumnSpacing="8">
-    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-    <ComboBox x:Name="AccountChooser" PlaceholderText="Choose an account" MaxWidth="320" HorizontalAlignment="Right" VerticalAlignment="Center" Visibility="Collapsed" AutomationProperties.Name="YouTube account"/>
-    <Button x:Name="SettingsButton" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.Name="Settings">
-      <StackPanel Orientation="Horizontal" Spacing="6">
-        <TextBlock x:Name="SettingsButtonLabel" Text="Settings"/>
-        <Ellipse x:Name="SettingsUpdateDot" Width="7" Height="7" VerticalAlignment="Center"
-                 Fill="{ThemeResource AccentTextFillColorPrimaryBrush}" Visibility="Collapsed"
-                 IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
-      </StackPanel>
+  <Grid x:Name="ShellHeader" Grid.Row="1" Padding="18,8" MinHeight="54" ColumnSpacing="8" BorderBrush="#36413a" BorderThickness="0,1,0,1">
+    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+    <StackPanel x:Name="AppBrand" Orientation="Horizontal" Spacing="9" VerticalAlignment="Center">
+      <Border Width="27" Height="26" CornerRadius="6" Background="#c0d7ae">
+        <FontIcon Glyph="&#xE768;" FontSize="12" Foreground="#172019" AutomationProperties.AccessibilityView="Raw"/>
+      </Border>
+      <TextBlock Text="YourTube" FontWeight="Bold" VerticalAlignment="Center"/>
+    </StackPanel>
+    <Button x:Name="AccountButton" Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Center" Padding="6,3" MinHeight="34" Background="Transparent" BorderThickness="0" Visibility="Collapsed" AutomationProperties.Name="YouTube account">
+      <Grid ColumnSpacing="7">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <Border Width="26" Height="26" CornerRadius="13" Background="#c0d7ae" AutomationProperties.AccessibilityView="Raw">
+          <TextBlock x:Name="AccountInitial" Text="?" Foreground="#172019" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <TextBlock x:Name="AccountLabel" Grid.Column="1" MaxWidth="170" Text="Account" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+        <FontIcon Grid.Column="2" Glyph="&#xE70D;" FontSize="10" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw"/>
+      </Grid>
+      <Button.Flyout><MenuFlyout Placement="BottomEdgeAlignedRight"/></Button.Flyout>
     </Button>
-    <Button x:Name="SignOutButton" Grid.Column="2" Content="Sign out" VerticalAlignment="Center"/>
   </Grid>
-  <Grid x:Name="BrowseAndSettings" Grid.Row="2" Margin="28,0,28,16">
-    <Grid x:Name="HistoryPanel" Visibility="Collapsed" RowSpacing="10" ColumnSpacing="16">
-      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-      <StackPanel x:Name="LibraryNavigation" Grid.Row="1" Spacing="6" Width="148">
-        <Button x:Name="SubscriptionsButton" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" IsEnabled="False"><StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE714;" FontSize="15"/><TextBlock Text="Subscriptions"/></StackPanel></Button>
-        <Button x:Name="HistoryButton" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" IsEnabled="False"><StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE81C;" FontSize="15"/><TextBlock Text="History"/></StackPanel></Button>
+  <Grid x:Name="BrowseAndSettings" Grid.Row="2">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+    <Border x:Name="NavigationRail" Grid.Row="1" Width="166" Padding="11,16" BorderBrush="#36413a" BorderThickness="0,0,1,0">
+      <StackPanel x:Name="LibraryNavigation" Spacing="4">
+        <Button x:Name="SubscriptionsButton" Style="{StaticResource RailButton}" IsEnabled="False"><StackPanel Orientation="Horizontal" Spacing="9"><FontIcon Glyph="&#xE714;" FontSize="15"/><TextBlock Text="Subscriptions" Style="{StaticResource RailLabel}"/></StackPanel></Button>
+        <Button x:Name="HistoryButton" Style="{StaticResource RailButton}" IsEnabled="False"><StackPanel Orientation="Horizontal" Spacing="9"><FontIcon Glyph="&#xE81C;" FontSize="15"/><TextBlock Text="History" Style="{StaticResource RailLabel}"/></StackPanel></Button>
+        <Button x:Name="SettingsButton" Style="{StaticResource RailButton}" AutomationProperties.Name="Settings">
+          <StackPanel Orientation="Horizontal" Spacing="9">
+            <FontIcon Glyph="&#xE713;" FontSize="15"/>
+            <TextBlock x:Name="SettingsButtonLabel" Text="Settings" Style="{StaticResource RailLabel}"/>
+            <Ellipse x:Name="SettingsUpdateDot" Width="7" Height="7" VerticalAlignment="Center"
+                     Fill="{ThemeResource AccentTextFillColorPrimaryBrush}" Visibility="Collapsed"
+                     IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
+          </StackPanel>
+        </Button>
       </StackPanel>
-      <Grid x:Name="LibraryContent" Grid.Row="1" Grid.Column="1" RowSpacing="8">
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    </Border>
+    <Grid x:Name="WorkspaceContent" Grid.Row="1" Grid.Column="1" Margin="19,21,19,0">
+    <Grid x:Name="HistoryPanel" Visibility="Collapsed">
+      <Grid x:Name="LibraryContent" RowSpacing="10">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
         <Grid ColumnSpacing="12">
           <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-          <StackPanel Spacing="4"><TextBlock x:Name="ViewHeading" Text="History" FontSize="28" FontWeight="SemiBold" TextWrapping="Wrap" AutomationProperties.HeadingLevel="Level1"/><TextBlock x:Name="VideosStatusText" Foreground="{StaticResource Muted}" TextWrapping="Wrap"/></StackPanel>
-          <Button x:Name="RefreshButton" Grid.Column="1" Content="Refresh" VerticalAlignment="Center" IsEnabled="False"/>
+          <StackPanel Spacing="2"><TextBlock x:Name="ViewHeading" Text="History" FontSize="22" FontWeight="Bold" TextWrapping="Wrap" AutomationProperties.HeadingLevel="Level1"/><TextBlock x:Name="VideosStatusText" Foreground="{StaticResource Muted}" TextWrapping="Wrap"/></StackPanel>
+          <Button x:Name="RefreshButton" Grid.Column="1" VerticalAlignment="Center" IsEnabled="False" Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Refresh" AutomationProperties.Name="Refresh feed"><FontIcon Glyph="&#xE72C;" FontSize="15"/></Button>
         </Grid>
-        <Expander x:Name="ChannelsPanel" Grid.Row="1" Visibility="Collapsed" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+        <Border x:Name="ChannelsDisclosure" Grid.Row="1" BorderBrush="#36413a" BorderThickness="0,1,0,1" Visibility="Collapsed">
+        <Expander x:Name="ChannelsPanel" Background="Transparent" BorderThickness="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
           <Expander.Header><TextBlock x:Name="ChannelsStatusText" Text="Subscribed channels" TextWrapping="Wrap"/></Expander.Header>
           <ListView x:Name="ChannelsList" MaxHeight="136" ItemTemplate="{StaticResource HistoryRowTemplate}" SelectionMode="None" HorizontalContentAlignment="Stretch" AutomationProperties.Name="Subscribed channels">
             <ListView.ItemsPanel><ItemsPanelTemplate><ItemsStackPanel Orientation="Vertical"/></ItemsPanelTemplate></ListView.ItemsPanel>
           </ListView>
         </Expander>
-        <GridView x:Name="HistoryList" Grid.Row="2" Padding="0,0,12,0" ItemTemplate="{StaticResource LibraryCardTemplate}" IsItemClickEnabled="True" SelectionMode="None" ScrollViewer.HorizontalScrollMode="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Watch history">
+        </Border>
+        <Grid x:Name="FeedStatus" Grid.Row="2" ColumnSpacing="8" Visibility="Collapsed">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <ProgressRing x:Name="FeedBusyRing" Width="16" Height="16" Visibility="Collapsed"/>
+          <TextBlock x:Name="FeedStatusText" Grid.Column="1" Foreground="{StaticResource Muted}" TextWrapping="Wrap" VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite"/>
+          <Button x:Name="FeedCancelButton" Grid.Column="2" Content="Cancel" Visibility="Collapsed" AutomationProperties.Name="Cancel and clear session"/>
+        </Grid>
+        <GridView x:Name="HistoryList" Grid.Row="3" Padding="0,0,8,0" ItemTemplate="{StaticResource LibraryCardTemplate}" IsItemClickEnabled="True" SelectionMode="None" ScrollViewer.HorizontalScrollMode="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Watch history">
           <GridView.ItemsPanel><ItemsPanelTemplate><ItemsWrapGrid Orientation="Horizontal" ItemWidth="230" ItemHeight="212"/></ItemsPanelTemplate></GridView.ItemsPanel>
           <GridView.ItemContainerStyle><Style TargetType="GridViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="VerticalContentAlignment" Value="Stretch"/><Setter Property="Margin" Value="0"/></Style></GridView.ItemContainerStyle>
+          <GridView.Footer><Button x:Name="LoadMoreButton" Content="Load more" Margin="0,0,0,16" HorizontalAlignment="Center" Visibility="Collapsed"/></GridView.Footer>
         </GridView>
-        <Button x:Name="LoadMoreButton" Grid.Row="3" Content="Load more" HorizontalAlignment="Center" Visibility="Collapsed"/>
       </Grid>
     </Grid>
     <ScrollViewer x:Name="SignInPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
@@ -83,13 +117,22 @@
       </StackPanel>
     </ScrollViewer>
   </Grid>
+  </Grid>
   <ScrollViewer x:Name="TheaterPanel" Grid.Row="2" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
     <Grid>
       <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
       <Grid x:Name="TheaterHeader" Padding="28,0,28,12" ColumnSpacing="16">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
         <Button x:Name="PlayerBackButton" Content="Back to videos" Foreground="#c0d7ae"/>
         <TextBlock x:Name="PlayerFeedLabel" Grid.Column="1" VerticalAlignment="Center" Foreground="{StaticResource Muted}"/>
+        <Button x:Name="PlayerSettingsPageButton" Grid.Column="2" Background="Transparent" BorderThickness="0" AutomationProperties.Name="Settings">
+          <StackPanel Orientation="Horizontal" Spacing="9">
+            <TextBlock Text="Settings"/>
+            <Ellipse x:Name="PlayerSettingsUpdateDot" Width="7" Height="7" VerticalAlignment="Center"
+                     Fill="{ThemeResource AccentTextFillColorPrimaryBrush}" Visibility="Collapsed"
+                     IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
+          </StackPanel>
+        </Button>
       </Grid>
       <Grid x:Name="PlayerStageSlot" Grid.Row="1">
         <Grid x:Name="PlayerStage" Height="450" Background="Black">
@@ -141,7 +184,7 @@
       </StackPanel>
     </Grid>
   </ScrollViewer>
-  <Border x:Name="ShellStatus" Grid.Row="3" Background="#242c28" Padding="28,12">
+  <Border x:Name="ShellStatus" Grid.Row="3" Visibility="Collapsed" Padding="19,8">
     <Grid ColumnSpacing="16"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
       <ProgressRing x:Name="BusyRing" Width="22" Height="22" IsActive="True"/>
       <TextBlock x:Name="StatusText" Grid.Column="1" Text="Restoring your session…" TextWrapping="Wrap" VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite"/>
