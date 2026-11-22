@@ -88,6 +88,54 @@ internal static class StateTests
         await retry;
         Verify(expiry.Phase == SessionPhase.SignedOut && !expiry.Busy, "interrupted startup is retryable, not a stranded authorization view");
         Console.WriteLine("PASS: retry restoration and interrupted startup clear private state.");
+        await WatchRecordAsync();
+    }
+
+    private static async Task WatchRecordAsync()
+    {
+        var api = new TestApi();
+        var vault = new TestStore();
+        var controller = new SessionController(api, vault, "fixture-device");
+        var length = TimeSpan.FromMinutes(2);
+        var position = TimeSpan.FromMilliseconds(250);
+        await controller.SignInAsync();
+        await controller.SelectAccountAsync(TestApi.B);
+        Verify(await controller.TryRecordWatchStartAsync(TestApi.A, "abcdefghijk", length, position) is null && api.WatchCalls == 0, "watch writes cannot choose another identity");
+        api.Watch = (account, id, duration, start, _) =>
+        {
+            Verify(ReferenceEquals(account, TestApi.B) && id == "abcdefghijk" && duration == length && start == position, "watch data belongs to selected playback and identity");
+            return Task.CompletedTask;
+        };
+        Verify(await controller.TryRecordWatchStartAsync(TestApi.B, "abcdefghijk", length, position) == true && api.WatchCalls == 1, "watch write uses selected identity");
+        api.Watch = (_, _, _, _, _) => Task.FromException(new YouTubeException("auth_required", "fixture"));
+        Verify(await controller.TryRecordWatchStartAsync(TestApi.B, "abcdefghijk", length, position) == false && controller.Phase == SessionPhase.SignedIn && vault.Value is not null,
+            "experimental watch error does not sign out or mutate the browse session");
+        var delayed = new TaskCompletionSource<YouTubeSession>();
+        controller.UtcNow = () => DateTimeOffset.UtcNow.AddHours(2);
+        api.Refresh = () => delayed.Task;
+        var pending = controller.TryRecordWatchStartAsync(TestApi.B, "abcdefghijk", length, position);
+        controller.SignOut();
+        delayed.SetResult(TestApi.Fresh);
+        Verify(await pending is null && api.WatchCalls == 2 && vault.Value is null, "sign-out during refresh prevents stale credentials and watch requests");
+        controller.UtcNow = () => DateTimeOffset.UtcNow;
+        await controller.SignInAsync();
+        await controller.SelectAccountAsync(TestApi.B);
+        using var replaced = new CancellationTokenSource();
+        var drain = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken dispatchedToken = default;
+        api.Watch = (_, id, _, _, ct) =>
+        {
+            if (id != "abcdefghijk") return Task.CompletedTask;
+            dispatchedToken = ct;
+            return drain.Task;
+        };
+        var oldStart = controller.TryRecordWatchStartAsync(TestApi.B, "abcdefghijk", length, position, replaced.Token);
+        replaced.Cancel();
+        var nextStart = controller.TryRecordWatchStartAsync(TestApi.B, "zzzzzzzzzzz", length, position);
+        Verify(dispatchedToken.IsCancellationRequested && !nextStart.IsCompleted && api.WatchCalls == 3, "replacing playback cancels its transport and the new start waits for the old call to drain");
+        drain.SetResult();
+        Verify(await oldStart is null && await nextStart == true && api.WatchCalls == 4, "replacement reports after the retired request drains");
+        Console.WriteLine("PASS: watch reporting binds the selected identity and does not disrupt browsing on failure.");
     }
 
     internal static void Verify(bool value, string message)
@@ -107,6 +155,10 @@ internal sealed class TestStore : ITokenStore
 
 internal sealed class TestApi : IYouTubeApi
 {
+    public int WatchCalls;
+    public Func<YouTubeAccount, string, TimeSpan, TimeSpan, CancellationToken, Task> Watch = (_, _, _, _, _) => Task.CompletedTask;
+    public Task RecordWatchStartAsync(YouTubeSession session, YouTubeAccount account, string videoId, TimeSpan duration, TimeSpan position, CancellationToken cancellationToken)
+    { WatchCalls++; return Watch(account, videoId, duration, position, cancellationToken); }
     internal static readonly YouTubeAccount A = new("Account A", "@a", null);
     internal static readonly YouTubeAccount B = new("Account B", "@b", "page-b");
     internal static YouTubeSession Fresh => new("fixture-access", "fixture-rotation", DateTimeOffset.UtcNow.AddHours(1));

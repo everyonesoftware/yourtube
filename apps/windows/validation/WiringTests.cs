@@ -71,7 +71,9 @@ internal static class WiringTests
         var services = File.ReadAllText(Path.Combine(app, "WindowsServices.cs"));
         StateTests.Verify(services.Contains("=> client.GetSubscriptionsAsync(session, account, continuation, cancellationToken)"), "native subscription API forwards to the real core client");
         StateTests.Verify(code.Contains("controller.View == BrowseView.Subscriptions") && code.Contains("!settingsVisible") && code.Contains("controller.Videos.Any(v => ReferenceEquals(v, video))"), "explicit video activation is bound to the visible current feed");
-        StateTests.Verify(code.Contains("new HttpClientHandler { AllowAutoRedirect = false }"), "OAuth transport refuses redirects that could forward credentials");
+        StateTests.Verify(code.Contains("new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }"), "OAuth transport refuses redirects and does not retain cookies");
+        StateTests.Verify(Named("WatchHistorySync").Ancestors().Contains(Named("SettingsPanel")) && (string?)Named("WatchHistorySync").Attribute("IsOn") is null or "False" &&
+            code.Contains("!C<ToggleSwitch>(\"WatchHistorySync\").IsOn") && services.Contains("=> client.RecordWatchStartAsync("), "watch reporting is opt-in and uses the authenticated client");
         foreach (Match lookup in Regex.Matches(code + libraryCode, "C<(?<type>\\w+)>\\(\"(?<name>[^\"]+)\"\\)"))
             StateTests.Verify(names.TryGetValue(lookup.Groups["name"].Value, out var type) && type == lookup.Groups["type"].Value, "typed native control lookup matches XML: " + lookup.Groups["name"].Value);
         var library = Named("HistoryList");

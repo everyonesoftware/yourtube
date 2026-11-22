@@ -17,6 +17,7 @@ internal interface IYouTubeApi
     Task<IReadOnlyList<YouTubeAccount>> GetAccountsAsync(YouTubeSession session, CancellationToken cancellationToken);
     Task<HistoryPage> GetHistoryAsync(YouTubeSession session, YouTubeAccount account, string? continuation, CancellationToken cancellationToken);
     Task<SubscriptionsPage> GetSubscriptionsAsync(YouTubeSession session, YouTubeAccount account, string? continuation, CancellationToken cancellationToken);
+    Task RecordWatchStartAsync(YouTubeSession session, YouTubeAccount account, string videoId, TimeSpan duration, TimeSpan position, CancellationToken cancellationToken);
 }
 
 internal enum SessionPhase { Restoring, SignedOut, Authorizing, SignedIn }
@@ -45,6 +46,7 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
     public Func<DateTimeOffset> UtcNow { get; set; } = () => DateTimeOffset.UtcNow;
     private readonly RequestEpoch epoch = new();
     private YouTubeSession? session;
+    private readonly SemaphoreSlim watchGate = new(1);
     private readonly HashSet<string> subscriptionCursors = new(StringComparer.Ordinal);
 
     public async Task InitializeAsync()
@@ -174,10 +176,36 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
         catch (Exception error) { Fail(op.Id, error); }
         finally { Finish(op.Id); }
     }
+    public async Task<bool?> TryRecordWatchStartAsync(YouTubeAccount account, string videoId, TimeSpan duration, TimeSpan position, CancellationToken playbackToken = default)
+    {
+        bool IsCurrent() => Phase == SessionPhase.SignedIn && !Busy && View != BrowseView.Settings && ReferenceEquals(account, SelectedAccount);
+        if (!IsCurrent() || playbackToken.IsCancellationRequested) return null;
+        var op = epoch.Snapshot();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(op.Token, playbackToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(15));
+        bool entered = false;
+        bool Retired() => op.Token.IsCancellationRequested || playbackToken.IsCancellationRequested;
+        try
+        {
+            await watchGate.WaitAsync(deadline.Token);
+            entered = true;
+            deadline.Token.ThrowIfCancellationRequested();
+            if (!IsCurrent() || session is not { } current) return null;
+            var fresh = await EnsureFreshAsync(current, (op.Id, deadline.Token));
+            deadline.Token.ThrowIfCancellationRequested();
+            if (fresh is null || !IsCurrent()) return null;
+            await api.RecordWatchStartAsync(fresh, account, videoId, duration, position, deadline.Token);
+            return Retired() ? null : !deadline.IsCancellationRequested;
+        }
+        catch (Exception) { return Retired() ? null : false; }
+        finally { if (entered) watchGate.Release(); }
+    }
+
     private async Task<YouTubeSession?> EnsureFreshAsync(YouTubeSession current, (long Id, CancellationToken Token) op)
     {
         if (current.ExpiresAt > UtcNow().AddSeconds(60)) return current;
         var fresh = await api.RefreshSessionAsync(current.RefreshToken, op.Token);
+        op.Token.ThrowIfCancellationRequested();
         return epoch.Commit(op.Id, () => { store.Save(fresh.RefreshToken); session = fresh; }) ? fresh : null;
     }
 

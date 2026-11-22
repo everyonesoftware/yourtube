@@ -23,12 +23,17 @@ internal sealed partial class MainWindow : Window
     private const string PlayGlyph = "\uE768";
     private const string PauseGlyph = "\uE769";
     private readonly Grid root;
-    private readonly HttpClient http = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(45) };
+    private readonly HttpClient http = new(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }) { Timeout = TimeSpan.FromSeconds(45) };
     private readonly WindowsUpdatesPanel updatesPanel;
     private readonly PlaybackResolver playbackResolver = new();
     private readonly PlaybackController<NativePlaybackSession> playback;
     private int startupQuality;
     private NativePlaybackSession? boundSession;
+    private HistoryVideo? watchSelection;
+    private TimeSpan? lastWatchPosition;
+    private bool watchAttempted;
+    private long watchStatusGeneration;
+    private CancellationTokenSource? watchRequest;
     private DispatcherQueueTimer? playerClock;
     private Storyboard? playerTapFade;
     private bool updatingTransport;
@@ -70,6 +75,12 @@ internal sealed partial class MainWindow : Window
         updatesPanel.UpdateAvailabilityChanged += RenderSettingsButton;
         C<ContentControl>("SettingsHost").Content = updatesPanel.View;
         InitializeStartupQuality();
+        C<ToggleSwitch>("WatchHistorySync").Toggled += (_, _) =>
+        {
+            CancelWatchRequest();
+            watchStatusGeneration++;
+            C<TextBlock>("WatchHistoryStatus").Text = "";
+        };
         var theater = C<MediaPlayerElement>("TheaterPlayer");
         playback = new PlaybackController<NativePlaybackSession>((id, ct, timing) => playbackResolver.ResolveAsync(id, ct, timing),
             async (media, ct, timing) => new NativePlaybackSession(await NativePlaybackSource.CreateAsync(playbackResolver, media, ct, timing, startupQuality), theater),
@@ -129,6 +140,7 @@ internal sealed partial class MainWindow : Window
         Closed += (_, _) =>
         {
             closed = true;
+            CancelWatchRequest();
             playerClock?.Stop();
             playerTapFade?.Stop();
             CancelScrub();
@@ -387,6 +399,13 @@ internal sealed partial class MainWindow : Window
     {
         if (closed) return;
         var selected = playback.Selected;
+        if (!ReferenceEquals(selected, watchSelection))
+        {
+            CancelWatchRequest();
+            watchSelection = selected;
+            watchAttempted = false;
+            lastWatchPosition = null;
+        }
         C<Grid>("BrowseAndSettings").Visibility = ToVisibility(!fullscreen && (selected is null || settingsVisible));
         C<ScrollViewer>("TheaterPanel").Visibility = ToVisibility(selected is not null && !settingsVisible);
         C<Grid>("HistoryPanel").Visibility = ToVisibility(selected is null && !settingsVisible && controller?.Phase == SessionPhase.SignedIn);
@@ -394,6 +413,7 @@ internal sealed partial class MainWindow : Window
         if (!ReferenceEquals(source, boundSession))
         {
             boundSession = source;
+            lastWatchPosition = null;
             playerTapFade?.Stop();
             PlayerMenu.Hide();
             CancelScrub();
@@ -689,8 +709,9 @@ internal sealed partial class MainWindow : Window
         UpdatePlayerOverlay();
     }
 
-    private static void Seek(NativePlaybackSession active, double seconds) => NativePlaybackSource.Attempt(() =>
+    private void Seek(NativePlaybackSession active, double seconds) => NativePlaybackSource.Attempt(() =>
     {
+        lastWatchPosition = null;
         var view = active.Player.PlaybackSession;
         if (view.CanSeek && view.NaturalDuration > TimeSpan.Zero)
             view.Position = TimeSpan.FromSeconds(Math.Clamp(seconds, 0, view.NaturalDuration.TotalSeconds));
@@ -720,7 +741,7 @@ internal sealed partial class MainWindow : Window
         bool ready = !settingsVisible && session is { IsOpened: true, HasFailed: false };
         var overlay = C<StackPanel>("PlayerOverlay");
         overlay.Visibility = ToVisibility(ready);
-        if (!ready) { playerClock?.Stop(); return; }
+        if (!ready) { lastWatchPosition = null; playerClock?.Stop(); return; }
         if (playerClock is { IsRunning: false }) playerClock.Start();
         bool enabled = InteractivePlayer is not null;
         C<Button>("PlayerPlay").IsEnabled = enabled;
@@ -735,6 +756,7 @@ internal sealed partial class MainWindow : Window
             {
                 var player = session!.Player;
                 var view = player.PlaybackSession;
+                ObserveWatchProgress(view);
                 var seek = C<Slider>("PlayerSeek");
                 double duration = Math.Max(0, view.NaturalDuration.TotalSeconds);
                 seek.IsEnabled = enabled && view.CanSeek && duration > 0;
@@ -756,6 +778,50 @@ internal sealed partial class MainWindow : Window
             });
         }
         finally { updatingTransport = false; }
+    }
+
+    private void ObserveWatchProgress(MediaPlaybackSession view)
+    {
+        if (watchAttempted || !C<ToggleSwitch>("WatchHistorySync").IsOn || playback.Busy || playback.QualityBusy || seekPointer is not null ||
+            view.PlaybackState != MediaPlaybackState.Playing || watchSelection is not { } video ||
+            controller is not { Busy: false, SelectedAccount: { } account } current)
+        {
+            lastWatchPosition = null;
+            return;
+        }
+        var prior = lastWatchPosition;
+        var position = view.Position;
+        var duration = view.NaturalDuration;
+        lastWatchPosition = position;
+        if (prior is null || prior.Value < TimeSpan.Zero || position <= prior || position > duration) return;
+        watchAttempted = true;
+        var request = watchRequest = new CancellationTokenSource();
+        _ = SendWatchStartAsync(current, account, video, duration, prior.Value, ++watchStatusGeneration, request);
+    }
+
+    private void CancelWatchRequest()
+    {
+        var request = watchRequest;
+        watchRequest = null;
+        request?.Cancel();
+    }
+
+    private async Task SendWatchStartAsync(SessionController current, YouTubeAccount account, HistoryVideo video, TimeSpan duration, TimeSpan position, long generation, CancellationTokenSource request)
+    {
+        bool? result;
+        try { result = await current.TryRecordWatchStartAsync(account, video.VideoId, duration, position, request.Token); }
+        finally
+        {
+            if (ReferenceEquals(watchRequest, request)) watchRequest = null;
+            request.Dispose();
+        }
+        if (closed || generation != watchStatusGeneration || !ReferenceEquals(account, current.SelectedAccount)) return;
+        C<TextBlock>("WatchHistoryStatus").Text = result switch
+        {
+            true => "Playback start sent. Check YouTube History to confirm.",
+            false => "Couldn’t confirm the playback start was sent. Check YouTube History.",
+            null => "No result for the last playback start. Check YouTube History."
+        };
     }
 
     private MenuFlyout PlayerMenu => (MenuFlyout)C<Button>("PlayerSettingsGear").Flyout;

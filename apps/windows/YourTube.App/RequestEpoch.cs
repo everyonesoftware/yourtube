@@ -7,6 +7,11 @@ internal sealed class RequestEpoch
     private long generation;
     private CancellationTokenSource source = new();
 
+    public (long Id, CancellationToken Token) Snapshot()
+    {
+        lock (sync) return (generation, source.Token);
+    }
+
     public (long Id, CancellationToken Token) Begin()
     {
         lock (sync)
