@@ -79,15 +79,19 @@
     <Grid>
       <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
       <Grid x:Name="TheaterHeader" Padding="28,0,28,12" ColumnSpacing="16">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
         <Button x:Name="PlayerBackButton" Content="Back to videos" Foreground="#c0d7ae"/>
         <TextBlock x:Name="PlayerFeedLabel" Grid.Column="1" VerticalAlignment="Center" Foreground="{StaticResource Muted}"/>
-        <Button x:Name="PlayerNextButton" Grid.Column="2" Content="Next"/>
       </Grid>
       <Grid x:Name="PlayerStageSlot" Grid.Row="1">
         <Grid x:Name="PlayerStage" Height="450" Background="Black">
           <MediaPlayerElement x:Name="TheaterPlayer" AreTransportControlsEnabled="False" AutoPlay="False" Stretch="Uniform" AutomationProperties.Name="Native video player"/>
           <Border x:Name="PlayerVideoHitArea" Background="Transparent" IsDoubleTapEnabled="False" AutomationProperties.AccessibilityView="Raw"/>
+          <Border x:Name="PlayerTapFeedback" Width="72" Height="72" CornerRadius="36" Background="#B3000000"
+                  HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0" IsHitTestVisible="False"
+                  AutomationProperties.AccessibilityView="Raw">
+            <FontIcon x:Name="PlayerTapIcon" FontSize="30" Foreground="White" AutomationProperties.AccessibilityView="Raw"/>
+          </Border>
           <ProgressRing x:Name="PlayerBusyRing" Width="36" Height="36" Visibility="Collapsed" IsHitTestVisible="False"/>
           <StackPanel x:Name="PlayerOverlay" VerticalAlignment="Bottom" Padding="12,8,12,6" Visibility="Collapsed" AutomationProperties.Name="Playback controls">
             <StackPanel.Background><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#00000000" Offset="0"/><GradientStop Color="#E6000000" Offset="0.55"/><GradientStop Color="#F5000000" Offset="1"/></LinearGradientBrush></StackPanel.Background>
@@ -100,7 +104,6 @@
               <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
               <StackPanel Orientation="Horizontal" Spacing="4">
                 <Button x:Name="PlayerPlay" Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Play" AutomationProperties.Name="Play"><FontIcon Glyph="&#xE768;" FontSize="18"/></Button>
-                <Button x:Name="PlayerOverlayNext" Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Next video" AutomationProperties.Name="Next video"><FontIcon Glyph="&#xE893;" FontSize="16"/></Button>
                 <Button x:Name="PlayerMute" Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Mute" AutomationProperties.Name="Mute"><FontIcon Glyph="&#xE767;" FontSize="17"/></Button>
                 <Slider x:Name="PlayerVolume" Width="70" Minimum="0" Maximum="100" Value="100" VerticalAlignment="Center" IsThumbToolTipEnabled="False" AutomationProperties.Name="Volume"/>
                 <TextBlock x:Name="PlayerTime" VerticalAlignment="Center" Text="0:00 / 0:00" Margin="6,0,0,0" TextTrimming="CharacterEllipsis"/>

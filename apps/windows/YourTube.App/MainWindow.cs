@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Windows.System;
 using Windows.Media.Playback;
 using YourTube.Core;
@@ -18,6 +19,8 @@ namespace YourTube.App;
 
 internal sealed class MainWindow : Window
 {
+    private const string PlayGlyph = "\uE768";
+    private const string PauseGlyph = "\uE769";
     private readonly Grid root;
     private readonly HttpClient http = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(45) };
     private readonly WindowsUpdatesPanel updatesPanel;
@@ -26,6 +29,7 @@ internal sealed class MainWindow : Window
     private int startupQuality;
     private NativePlaybackSession? boundSession;
     private DispatcherQueueTimer? playerClock;
+    private Storyboard? playerTapFade;
     private bool updatingTransport;
     private uint? seekPointer;
     private NativePlaybackSession? seekOwner;
@@ -79,7 +83,6 @@ internal sealed class MainWindow : Window
             else C<ListView>("HistoryList").Focus(FocusState.Programmatic);
         };
         C<Button>("PlayerRetryButton").Click += async (_, _) => { SyncPlaybackContext(); await playback.RetryAsync(); };
-        C<Button>("PlayerNextButton").Click += async (_, _) => { SyncPlaybackContext(); await playback.NextAsync(); };
         C<Button>("PlayerOpenYouTubeButton").Click += async (_, _) =>
         {
             SyncPlaybackContext();
@@ -123,6 +126,7 @@ internal sealed class MainWindow : Window
         {
             closed = true;
             playerClock?.Stop();
+            playerTapFade?.Stop();
             CancelScrub();
             ResetDescription(null);
             playback.Dispose();
@@ -324,6 +328,7 @@ internal sealed class MainWindow : Window
         if (!ReferenceEquals(source, boundSession))
         {
             boundSession = source;
+            playerTapFade?.Stop();
             PlayerMenu.Hide();
             CancelScrub();
             if (source is not null && !source.IsOpened)
@@ -349,7 +354,11 @@ internal sealed class MainWindow : Window
         C<TextBlock>("PlayerError").Text = playback.Error ?? "";
         C<TextBlock>("PlayerError").Visibility = ToVisibility(playback.Error is not null);
         if (fullscreen && (selected is null || playback.Error is not null || settingsVisible)) SetFullscreen(false, restoreFocus: false);
-        if (playback.QualityBusy) CancelScrub();
+        if (playback.QualityBusy)
+        {
+            playerTapFade?.Stop();
+            CancelScrub();
+        }
         C<TextBlock>("PlayerQualityStatus").Text = playback.QualityBusy ? "Changing video quality…" : playback.QualityError ?? "";
         C<TextBlock>("PlayerQualityStatus").Visibility = ToVisibility(playback.QualityBusy || playback.QualityError is not null);
         C<Button>("PlayerRetryButton").Visibility = ToVisibility(playback.Error is not null);
@@ -361,8 +370,6 @@ internal sealed class MainWindow : Window
         C<TextBlock>("PlayerFeedLabel").Text = $"{label} / Now playing";
         C<TextBlock>("PlayerQueueLabel").Text = playback.Queue.Count == 0 ? $"No other videos loaded in {label}" : $"Up next · from your loaded {label}";
         C<ListView>("PlayerQueue").ItemsSource = playback.Queue;
-        C<Button>("PlayerNextButton").IsEnabled = selected is not null && playback.Queue.Count > 0 && !playback.Busy;
-        C<Button>("PlayerNextButton").Visibility = ToVisibility(playback.Queue.Count > 0);
         UpdatePlayerOverlay();
     }
 
@@ -405,13 +412,8 @@ internal sealed class MainWindow : Window
         C<Button>("PlayerPlay").Click += (_, _) => TogglePlayerPlayback();
         C<Border>("PlayerVideoHitArea").Tapped += (_, args) =>
         {
-            TogglePlayerPlayback();
+            TogglePlayerPlayback(showFeedback: true);
             args.Handled = true;
-        };
-        C<Button>("PlayerOverlayNext").Click += async (_, _) =>
-        {
-            SyncPlaybackContext();
-            if (playback.Active is not null) await playback.NextAsync();
         };
         C<Button>("PlayerMute").Click += (_, _) =>
         {
@@ -472,21 +474,45 @@ internal sealed class MainWindow : Window
         playerClock.Tick += (_, _) => UpdatePlayerOverlay();
     }
 
-    private void TogglePlayerPlayback()
+    private void TogglePlayerPlayback(bool showFeedback = false)
     {
-        if (InteractivePlayer is { } active) NativePlaybackSource.Attempt(() =>
+        if (InteractivePlayer is { } active)
         {
-            var player = active.Player;
-            var view = player.PlaybackSession;
-            if (IsPlaying(view.PlaybackState)) player.Pause();
-            else
+            bool pause = false;
+            bool accepted = NativePlaybackSource.Attempt(() =>
             {
-                if (view.CanSeek && view.NaturalDuration > TimeSpan.Zero && view.Position >= view.NaturalDuration)
-                    view.Position = TimeSpan.Zero;
-                active.Play();
-            }
-        });
+                var player = active.Player;
+                var view = player.PlaybackSession;
+                pause = IsPlaying(view.PlaybackState);
+                if (pause) player.Pause();
+                else
+                {
+                    if (view.CanSeek && view.NaturalDuration > TimeSpan.Zero && view.Position >= view.NaturalDuration)
+                        view.Position = TimeSpan.Zero;
+                    active.Play();
+                }
+            });
+            if (accepted && showFeedback && ReferenceEquals(active, InteractivePlayer)) ShowPlayerTapFeedback(pause);
+        }
         UpdatePlayerOverlay();
+    }
+
+    private void ShowPlayerTapFeedback(bool pause)
+    {
+        playerTapFade?.Stop();
+        C<FontIcon>("PlayerTapIcon").Glyph = pause ? PauseGlyph : PlayGlyph;
+        if (playerTapFade is null)
+        {
+            var fade = new DoubleAnimationUsingKeyFrames();
+            fade.KeyFrames.Add(new LinearDoubleKeyFrame { KeyTime = KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(100)), Value = 1 });
+            fade.KeyFrames.Add(new LinearDoubleKeyFrame { KeyTime = KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(200)), Value = 1 });
+            fade.KeyFrames.Add(new LinearDoubleKeyFrame { KeyTime = KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(450)), Value = 0 });
+            Storyboard.SetTarget(fade, C<Border>("PlayerTapFeedback"));
+            Storyboard.SetTargetProperty(fade, nameof(UIElement.Opacity));
+            playerTapFade = new Storyboard { FillBehavior = FillBehavior.Stop };
+            playerTapFade.Children.Add(fade);
+        }
+        playerTapFade.Begin();
     }
 
     private void ApplyPlayerAudio(NativePlaybackSession active)
@@ -633,8 +659,6 @@ internal sealed class MainWindow : Window
         C<Button>("PlayerMute").IsEnabled = enabled;
         C<Button>("PlayerSettingsGear").IsEnabled = enabled;
         C<Slider>("PlayerVolume").IsEnabled = enabled;
-        C<Button>("PlayerOverlayNext").Visibility = C<Button>("PlayerNextButton").Visibility;
-        C<Button>("PlayerOverlayNext").IsEnabled = enabled;
         C<Button>("PlayerFullscreen").IsEnabled = enabled || fullscreen;
         updatingTransport = true;
         try
@@ -657,7 +681,7 @@ internal sealed class MainWindow : Window
                     if (time.Text != label) time.Text = label;
                 }
                 var playing = IsPlaying(view.PlaybackState);
-                SetIconAction(C<Button>("PlayerPlay"), playing ? "\uE769" : "\uE768", playing ? "Pause" : "Play");
+                SetIconAction(C<Button>("PlayerPlay"), playing ? PauseGlyph : PlayGlyph, playing ? "Pause" : "Play");
                 var muted = player.IsMuted || player.Volume == 0;
                 SetIconAction(C<Button>("PlayerMute"), muted ? "\uE74F" : "\uE767", muted ? "Unmute" : "Mute");
                 C<Slider>("PlayerVolume").Value = player.Volume * 100;

@@ -21,10 +21,20 @@ internal static class WiringTests
         StateTests.Verify(videoHitArea is not null && videoHitArea.Parent == player.Parent &&
             (string?)videoHitArea.Attribute("Background") == "Transparent" && videoHitArea.ElementsBeforeSelf().Contains(player) &&
             videoHitArea.ElementsAfterSelf().Contains(overlay!), "video clicks have a dedicated hit target behind the transport controls");
-        StateTests.Verify(Regex.IsMatch(code, @"C<Border>\(""PlayerVideoHitArea""\)\.Tapped\s*\+=\s*\([^\r\n]*\)\s*=>\s*\{?\s*TogglePlayerPlayback\(\)") &&
+        var feedback = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "PlayerTapFeedback");
+        StateTests.Verify(feedback is not null && feedback.Parent == player.Parent &&
+            feedback.ElementsBeforeSelf().Contains(videoHitArea!) && feedback.ElementsAfterSelf().Contains(overlay!) &&
+            (string?)feedback.Attribute("HorizontalAlignment") == "Center" && (string?)feedback.Attribute("VerticalAlignment") == "Center" &&
+            (string?)feedback.Attribute("Opacity") == "0" && (string?)feedback.Attribute("IsHitTestVisible") == "False" &&
+            (string?)feedback.Attribute("AutomationProperties.AccessibilityView") == "Raw" && Named("PlayerTapIcon").Ancestors().Contains(feedback),
+            "play/pause feedback starts hidden, centered above the video, and never intercepts input");
+        StateTests.Verify(Regex.IsMatch(code, @"C<Border>\(""PlayerVideoHitArea""\)\.Tapped\s*\+=\s*\([^\r\n]*\)\s*=>\s*\{?\s*TogglePlayerPlayback\(showFeedback: true\)") &&
             code.Contains("C<Button>(\"PlayerPlay\").Click += (_, _) => TogglePlayerPlayback();") &&
-            Regex.IsMatch(code, @"void TogglePlayerPlayback\(\)\s*\{\s*if \(InteractivePlayer is"),
-            "video clicks and the play button share the active-player guard and toggle");
+            Regex.IsMatch(code, @"void TogglePlayerPlayback\(bool showFeedback = false\)\s*\{\s*if \(InteractivePlayer is") &&
+            code.Contains("if (accepted && showFeedback && ReferenceEquals(active, InteractivePlayer)) ShowPlayerTapFeedback(pause);"),
+            "only video taps that send a command to the current player show feedback; the button shares the guarded toggle");
+        StateTests.Verify(Regex.IsMatch(code, @"if \(playback\.QualityBusy\)\s*\{[^}]*playerTapFade\?\.Stop\(\);"),
+            "feedback resets when quality switching starts, before a candidate can attach");
         var theater = Named("TheaterPanel");
         var fullscreenChange = Regex.Match(code, @"private void SetFullscreen\(bool enabled, bool restoreFocus\)[\s\S]*?\r?\n    \}").Value;
         StateTests.Verify(player.Ancestors().Contains(theater) && fullscreenChange.Length > 0 &&
@@ -46,7 +56,9 @@ internal static class WiringTests
             code.Contains("playerAudio.ToggleMute()"),
             "new videos inherit window volume and mute before they can play");
         StateTests.Verify(code.Contains("ChangeQualityAsync(active, height") && code.Contains("playbackResolver.ForQuality(active.Catalog, height)"), "native quality menu drives the validated manifest switch");
-        foreach (var action in new[] { "PlayerBackButton", "PlayerRetryButton", "PlayerOpenYouTubeButton", "PlayerNextButton" })
+        StateTests.Verify(!names.ContainsKey("PlayerOverlayNext") && !names.ContainsKey("PlayerNextButton") &&
+            !code.Contains("playback.NextAsync()"), "Theater has no dedicated Next button; the Up next shelf remains available");
+        foreach (var action in new[] { "PlayerBackButton", "PlayerRetryButton", "PlayerOpenYouTubeButton" })
             StateTests.Verify(code.Contains($"C<Button>(\"{action}\").Click +="), "native player action wired: " + action);
         StateTests.Verify(code.Contains("playback.Selected is not null && playback.Queue.Any(v => ReferenceEquals(v, video))"), "hidden or stale Up next activation is rejected before shared membership gate");
         StateTests.Verify(code.Contains("playback.Selected is not null || controller is not"), "hidden browse rows cannot activate over Theater");
