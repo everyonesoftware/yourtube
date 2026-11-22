@@ -17,6 +17,15 @@ Check(BrowserPolicy.VideoUri("../bad") is null, "invalid video ID rejected");
 Console.WriteLine("PASS: browser allowlists and canonical video IDs.");
 
 AutoStartupPreferenceTests.Run();
+var audio = new PlayerAudioState();
+audio.SetVolume(.3);
+audio.SetVolume(0);
+audio.ToggleMute();
+Check(audio.Volume == .3 && !audio.IsMuted, "unmute from zero restores the last audible level");
+audio.ToggleMute();
+Check(audio.Volume == .3 && audio.IsMuted, "muting keeps gain and persists across video replacement");
+audio.SetVolume(.15);
+Check(audio.Volume == .15 && !audio.IsMuted, "raising volume unmutes at the requested gain");
 await PlaybackStateTests.Run();
 await StateTests.Run();
 await FailureTests.Run();

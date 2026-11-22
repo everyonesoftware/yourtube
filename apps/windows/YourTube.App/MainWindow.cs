@@ -1,11 +1,16 @@
 using System.Reflection;
 using Microsoft.UI;
+using DispatcherQueueTimer = Microsoft.UI.Dispatching.DispatcherQueueTimer;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
 using Windows.System;
+using Windows.Media.Playback;
 using YourTube.Core;
 using YourTube.Playback;
 
@@ -20,6 +25,14 @@ internal sealed class MainWindow : Window
     private readonly PlaybackController<NativePlaybackSession> playback;
     private int startupQuality;
     private NativePlaybackSession? boundSession;
+    private DispatcherQueueTimer? playerClock;
+    private bool updatingTransport;
+    private uint? seekPointer;
+    private NativePlaybackSession? seekOwner;
+    private bool fullscreen;
+    private bool playerMenuOpen;
+    private readonly PlayerAudioState playerAudio = new();
+    private AppWindowPresenter? windowedPresenter;
     private PlaybackMedia? descriptionCatalog;
     private CancellationTokenSource? descriptionRequest;
     private SessionController? controller;
@@ -57,7 +70,7 @@ internal sealed class MainWindow : Window
             async (media, ct, timing) => new NativePlaybackSession(await NativePlaybackSource.CreateAsync(playbackResolver, media, ct, timing, startupQuality), theater),
             PlaybackTiming.StartIfEnabled);
         playback.Changed += RenderPlayback;
-        ((MenuFlyout)C<Button>("PlayerQualityButton").Flyout).Opening += (_, _) => PopulateQualityMenu();
+        WirePlayerOverlay();
         C<Button>("PlayerBackButton").Click += (_, _) =>
         {
             var selected = playback.Selected;
@@ -78,8 +91,7 @@ internal sealed class MainWindow : Window
             SyncPlaybackContext();
             if (args.ClickedItem is HistoryVideo video && playback.Selected is not null && playback.Queue.Any(v => ReferenceEquals(v, video))) await OpenVideoAsync(video);
         };
-        C<MediaPlayerElement>("TheaterPlayer").SizeChanged += (_, args) =>
-            C<MediaPlayerElement>("TheaterPlayer").Height = Math.Clamp(args.NewSize.Width * 9 / 16, 240, 650);
+
         C<Button>("SettingsButton").Click += async (_, _) => await NavigateAsync(settingsVisible ? lastBrowseView : BrowseView.Settings);
         C<Button>("HistoryButton").Click += async (_, _) => await NavigateAsync(BrowseView.History);
         C<Button>("SubscriptionsButton").Click += async (_, _) => await NavigateAsync(BrowseView.Subscriptions);
@@ -110,6 +122,8 @@ internal sealed class MainWindow : Window
         Closed += (_, _) =>
         {
             closed = true;
+            playerClock?.Stop();
+            CancelScrub();
             ResetDescription(null);
             playback.Dispose();
             boundSession = null;
@@ -310,7 +324,8 @@ internal sealed class MainWindow : Window
         if (!ReferenceEquals(source, boundSession))
         {
             boundSession = source;
-            ((MenuFlyout)C<Button>("PlayerQualityButton").Flyout).Hide();
+            PlayerMenu.Hide();
+            CancelScrub();
             if (source is not null && !source.IsOpened)
             {
                 try
@@ -319,6 +334,7 @@ internal sealed class MainWindow : Window
                     active.Failed += () => playback.Fail(active);
                     active.Ready += () => { if (ReferenceEquals(playback.Active, active)) RenderPlayback(); };
                     active.Prepare();
+                    ApplyPlayerAudio(active);
                     active.Open();
                     if (!active.HasFailed) active.Play();
                 }
@@ -332,14 +348,10 @@ internal sealed class MainWindow : Window
             _ = LoadDescriptionAsync(source.Catalog, (descriptionRequest = new()).Token);
         C<TextBlock>("PlayerError").Text = playback.Error ?? "";
         C<TextBlock>("PlayerError").Visibility = ToVisibility(playback.Error is not null);
-        var quality = C<Button>("PlayerQualityButton");
-        var hasQuality = source is { IsOpened: true } && source.Catalog.Qualities.Count > 0;
-        var qualityLabel = QualityLabel(playback.QualityHeight);
-        quality.Visibility = ToVisibility(hasQuality);
-        quality.IsEnabled = hasQuality && !playback.QualityBusy;
-        quality.Content = qualityLabel + "  ▾";
-        AutomationProperties.SetName(quality, "Video quality: " + qualityLabel);
+        if (fullscreen && (selected is null || playback.Error is not null || settingsVisible)) SetFullscreen(false, restoreFocus: false);
+        if (playback.QualityBusy) CancelScrub();
         C<TextBlock>("PlayerQualityStatus").Text = playback.QualityBusy ? "Changing video quality…" : playback.QualityError ?? "";
+        C<TextBlock>("PlayerQualityStatus").Visibility = ToVisibility(playback.QualityBusy || playback.QualityError is not null);
         C<Button>("PlayerRetryButton").Visibility = ToVisibility(playback.Error is not null);
         C<Button>("PlayerRetryButton").IsEnabled = selected is not null && !playback.Busy;
         C<Button>("PlayerOpenYouTubeButton").IsEnabled = selected is not null;
@@ -351,6 +363,7 @@ internal sealed class MainWindow : Window
         C<ListView>("PlayerQueue").ItemsSource = playback.Queue;
         C<Button>("PlayerNextButton").IsEnabled = selected is not null && playback.Queue.Count > 0 && !playback.Busy;
         C<Button>("PlayerNextButton").Visibility = ToVisibility(playback.Queue.Count > 0);
+        UpdatePlayerOverlay();
     }
 
     private void ResetDescription(PlaybackMedia? catalog)
@@ -371,16 +384,303 @@ internal sealed class MainWindow : Window
     }
 
     private static string QualityLabel(int? height) => height is int value ? $"{value}p" : "Auto";
+    private static string RateLabel(double rate) => rate == 1 ? "Normal" : $"{rate:0.##}×";
 
-    private void PopulateQualityMenu()
+    private NativePlaybackSession? InteractivePlayer => !closed && !settingsVisible && !playback.QualityBusy &&
+        playback.Active is { IsOpened: true, HasFailed: false } active ? active : null;
+
+    private void WirePlayerOverlay()
     {
-        var flyout = (MenuFlyout)C<Button>("PlayerQualityButton").Flyout;
+        var stage = C<Grid>("PlayerStage");
+        var seek = C<Slider>("PlayerSeek");
+        PlayerMenu.Opening += (_, _) => PopulatePlayerMenu();
+        PlayerMenu.Opened += (_, _) => playerMenuOpen = true;
+        PlayerMenu.Closed += (_, _) => playerMenuOpen = false;
+        C<Grid>("PlayerStageSlot").SizeChanged += (_, args) =>
+        {
+            if (!fullscreen && args.NewSize.Width > 0) ResizePlayerStage(args.NewSize.Width);
+        };
+        stage.SizeChanged += (_, args) =>
+            C<Slider>("PlayerVolume").Visibility = ToVisibility(args.NewSize.Width >= 450);
+        C<Button>("PlayerPlay").Click += (_, _) =>
+        {
+            if (InteractivePlayer is { } active) NativePlaybackSource.Attempt(() =>
+            {
+                var player = active.Player;
+                if (IsPlaying(player.PlaybackSession.PlaybackState)) player.Pause();
+                else
+                {
+                    var view = player.PlaybackSession;
+                    if (view.CanSeek && view.NaturalDuration > TimeSpan.Zero && view.Position >= view.NaturalDuration)
+                        view.Position = TimeSpan.Zero;
+                    active.Play();
+                }
+            });
+            UpdatePlayerOverlay();
+        };
+        C<Button>("PlayerOverlayNext").Click += async (_, _) =>
+        {
+            SyncPlaybackContext();
+            if (playback.Active is not null) await playback.NextAsync();
+        };
+        C<Button>("PlayerMute").Click += (_, _) =>
+        {
+            if (InteractivePlayer is { } active) NativePlaybackSource.Attempt(() =>
+            {
+                playerAudio.ToggleMute();
+                ApplyPlayerAudio(active);
+            });
+            UpdatePlayerOverlay();
+        };
+        C<Slider>("PlayerVolume").ValueChanged += (_, args) =>
+        {
+            if (!updatingTransport && InteractivePlayer is { } active) NativePlaybackSource.Attempt(() =>
+            {
+                playerAudio.SetVolume(args.NewValue / 100);
+                ApplyPlayerAudio(active);
+            });
+        };
+        var hitArea = C<Border>("PlayerSeekHitArea");
+        hitArea.PointerPressed += (_, args) =>
+        {
+            if (seekPointer is null && InteractivePlayer is { } active && seek.IsEnabled &&
+                args.GetCurrentPoint(hitArea).Properties.IsLeftButtonPressed && hitArea.CapturePointer(args.Pointer))
+            {
+                seekPointer = args.Pointer.PointerId;
+                seekOwner = active;
+                seek.Focus(FocusState.Pointer);
+                PreviewScrub(args);
+                args.Handled = true;
+            }
+        };
+        hitArea.PointerMoved += (_, args) =>
+        {
+            if (seekPointer != args.Pointer.PointerId) return;
+            PreviewScrub(args);
+            args.Handled = true;
+        };
+        hitArea.PointerReleased += (_, args) =>
+        {
+            if (seekPointer != args.Pointer.PointerId) return;
+            PreviewScrub(args);
+            FinishScrub(args.Pointer.PointerId, commit: true);
+            args.Handled = true;
+        };
+        hitArea.PointerCaptureLost += (_, args) => FinishScrub(args.Pointer.PointerId, commit: false);
+        hitArea.PointerCanceled += (_, args) => FinishScrub(args.Pointer.PointerId, commit: false);
+        seek.ValueChanged += (_, args) =>
+        {
+            if (updatingTransport || InteractivePlayer is not { } active) return;
+            if (seekPointer is null) Seek(active, args.NewValue);
+        };
+        C<Button>("PlayerFullscreen").Click += (_, _) => ToggleFullscreen();
+        AddFullscreenKey(Windows.System.VirtualKey.F11, toggle: true);
+        AddFullscreenKey(Windows.System.VirtualKey.Escape, toggle: false);
+
+        playerClock = root.DispatcherQueue.CreateTimer();
+        playerClock.Interval = TimeSpan.FromMilliseconds(150);
+        playerClock.Tick += (_, _) => UpdatePlayerOverlay();
+    }
+
+    private void ApplyPlayerAudio(NativePlaybackSession active)
+    {
+        // Muting goes first so restoring a saved gain never creates a loud transient.
+        if (playerAudio.IsMuted) active.Player.IsMuted = true;
+        active.Player.Volume = playerAudio.Volume;
+        if (!playerAudio.IsMuted) active.Player.IsMuted = false;
+    }
+
+    private void AddFullscreenKey(Windows.System.VirtualKey key, bool toggle)
+    {
+        var shortcut = new KeyboardAccelerator { Key = key };
+        shortcut.Invoked += (_, args) =>
+        {
+            // Escape belongs to the open menu first.
+            if (playerMenuOpen || (!fullscreen && (!toggle || InteractivePlayer is null))) return;
+            ToggleFullscreen();
+            args.Handled = true;
+        };
+        root.KeyboardAccelerators.Add(shortcut);
+    }
+
+    private void ToggleFullscreen()
+    {
+        if (fullscreen || InteractivePlayer is not null) SetFullscreen(!fullscreen, restoreFocus: true);
+    }
+
+    private void SetFullscreen(bool enabled, bool restoreFocus)
+    {
+        if (enabled == fullscreen) return;
+        var slot = C<Grid>("PlayerStageSlot");
+        var stage = C<Grid>("PlayerStage");
+        var host = C<Grid>("PlayerFullscreenHost");
+        PlayerMenu.Hide();
+        CancelScrub();
+        if (enabled)
+        {
+            windowedPresenter = AppWindow.Presenter;
+            if (!NativePlaybackSource.Attempt(() => AppWindow.SetPresenter(AppWindowPresenterKind.FullScreen)))
+            {
+                windowedPresenter = null;
+                return;
+            }
+        }
+        else if (!NativePlaybackSource.Attempt(() =>
+        {
+            if (windowedPresenter is { } prior) AppWindow.SetPresenter(prior);
+            else AppWindow.SetPresenter(AppWindowPresenterKind.Default);
+        }) && !NativePlaybackSource.Attempt(() => AppWindow.SetPresenter(AppWindowPresenterKind.Default))) return;
+        fullscreen = enabled;
+        if (enabled)
+        {
+            slot.Children.Remove(stage);
+            stage.Height = double.NaN;
+            host.Visibility = Visibility.Visible;
+            host.Children.Add(stage);
+        }
+        else
+        {
+            windowedPresenter = null;
+            host.Children.Remove(stage);
+            host.Visibility = Visibility.Collapsed;
+            ResizePlayerStage(slot.ActualWidth);
+            slot.Children.Add(stage);
+        }
+        var button = C<Button>("PlayerFullscreen");
+        SetIconAction(button, enabled ? "\uE73F" : "\uE740", enabled ? "Exit fullscreen" : "Fullscreen");
+        if (restoreFocus) button.Focus(FocusState.Programmatic);
+    }
+
+    private void ResizePlayerStage(double width) => C<Grid>("PlayerStage").Height = Math.Clamp(width * 9 / 16, 240, 650);
+
+    private void CancelScrub()
+    {
+        if (seekPointer is null) return;
+        seekPointer = null;
+        seekOwner = null;
+        C<Border>("PlayerSeekHitArea").ReleasePointerCaptures();
+    }
+
+    private void PreviewScrub(PointerRoutedEventArgs args)
+    {
+        var hitArea = C<Border>("PlayerSeekHitArea");
+        var seek = C<Slider>("PlayerSeek");
+        double width = hitArea.ActualWidth;
+        if (width <= 0) return;
+        updatingTransport = true;
+        try
+        {
+            seek.Value = seek.Maximum * Math.Clamp(args.GetCurrentPoint(hitArea).Position.X / width, 0, 1);
+            C<TextBlock>("PlayerTime").Text = $"{FormatTime(seek.Value)} / {FormatTime(seek.Maximum)}";
+        }
+        finally { updatingTransport = false; }
+    }
+
+    private void FinishScrub(uint id, bool commit)
+    {
+        if (seekPointer != id) return;
+        var active = seekOwner;
+        double position = commit ? C<Slider>("PlayerSeek").Value : 0;
+        CancelScrub();
+        if (commit && active is not null && ReferenceEquals(active, InteractivePlayer))
+            Seek(active, position);
+        UpdatePlayerOverlay();
+    }
+
+    private static void Seek(NativePlaybackSession active, double seconds) => NativePlaybackSource.Attempt(() =>
+    {
+        var view = active.Player.PlaybackSession;
+        if (view.CanSeek && view.NaturalDuration > TimeSpan.Zero)
+            view.Position = TimeSpan.FromSeconds(Math.Clamp(seconds, 0, view.NaturalDuration.TotalSeconds));
+    });
+
+    private static bool IsPlaying(MediaPlaybackState state) => state is MediaPlaybackState.Playing or MediaPlaybackState.Buffering;
+
+    private static string FormatTime(double seconds)
+    {
+        var time = TimeSpan.FromSeconds(Math.Max(0, Math.Truncate(seconds)));
+        return time.TotalHours >= 1 ? $"{(int)time.TotalHours}:{time.Minutes:00}:{time.Seconds:00}" : $"{time.Minutes}:{time.Seconds:00}";
+    }
+
+    private static void SetIconAction(Button button, string glyph, string label)
+    {
+        var icon = (FontIcon)button.Content;
+        if (icon.Glyph == glyph && AutomationProperties.GetName(button) == label) return;
+        icon.Glyph = glyph;
+        ToolTipService.SetToolTip(button, label);
+        AutomationProperties.SetName(button, label);
+    }
+
+    private void UpdatePlayerOverlay()
+    {
+        if (closed) return;
+        var session = playback.Active;
+        bool ready = !settingsVisible && session is { IsOpened: true, HasFailed: false };
+        var overlay = C<StackPanel>("PlayerOverlay");
+        overlay.Visibility = ToVisibility(ready);
+        if (!ready) { playerClock?.Stop(); return; }
+        if (playerClock is { IsRunning: false }) playerClock.Start();
+        bool enabled = InteractivePlayer is not null;
+        C<Button>("PlayerPlay").IsEnabled = enabled;
+        C<Button>("PlayerMute").IsEnabled = enabled;
+        C<Button>("PlayerSettingsGear").IsEnabled = enabled;
+        C<Slider>("PlayerVolume").IsEnabled = enabled;
+        C<Button>("PlayerOverlayNext").Visibility = C<Button>("PlayerNextButton").Visibility;
+        C<Button>("PlayerOverlayNext").IsEnabled = enabled;
+        C<Button>("PlayerFullscreen").IsEnabled = enabled || fullscreen;
+        updatingTransport = true;
+        try
+        {
+            NativePlaybackSource.Attempt(() =>
+            {
+                var player = session!.Player;
+                var view = player.PlaybackSession;
+                var seek = C<Slider>("PlayerSeek");
+                double duration = Math.Max(0, view.NaturalDuration.TotalSeconds);
+                seek.IsEnabled = enabled && view.CanSeek && duration > 0;
+                if (seekPointer is null)
+                {
+                    double position = Math.Clamp(view.Position.TotalSeconds, 0, duration);
+                    seek.Maximum = Math.Max(duration, 1);
+                    // WinUI's Slider snaps user input to StepFrequency.
+                    seek.Value = position;
+                    var time = C<TextBlock>("PlayerTime");
+                    string label = $"{FormatTime(position)} / {FormatTime(duration)}";
+                    if (time.Text != label) time.Text = label;
+                }
+                var playing = IsPlaying(view.PlaybackState);
+                SetIconAction(C<Button>("PlayerPlay"), playing ? "\uE769" : "\uE768", playing ? "Pause" : "Play");
+                var muted = player.IsMuted || player.Volume == 0;
+                SetIconAction(C<Button>("PlayerMute"), muted ? "\uE74F" : "\uE767", muted ? "Unmute" : "Mute");
+                C<Slider>("PlayerVolume").Value = player.Volume * 100;
+            });
+        }
+        finally { updatingTransport = false; }
+    }
+
+    private MenuFlyout PlayerMenu => (MenuFlyout)C<Button>("PlayerSettingsGear").Flyout;
+
+    private void PopulatePlayerMenu()
+    {
+        var flyout = PlayerMenu;
         flyout.Items.Clear();
-        if (closed || playback.QualityBusy || playback.Active is not { IsOpened: true } active) return;
-        flyout.Items.Add(new MenuFlyoutItem { Text = "Video quality", IsEnabled = false });
-        flyout.Items.Add(new MenuFlyoutSeparator());
+        if (InteractivePlayer is not { } active) return;
+        var quality = new MenuFlyoutSubItem { Text = "Quality · " + QualityLabel(playback.QualityHeight), IsEnabled = active.Catalog.Qualities.Count > 0 };
+        var speed = new MenuFlyoutSubItem { Text = "Playback speed · " + RateLabel(active.Player.PlaybackSession.PlaybackRate) };
+        flyout.Items.Add(quality);
+        flyout.Items.Add(speed);
         AddQuality(null);
         foreach (var height in active.Catalog.Qualities.Select(q => q.Height).Distinct().OrderDescending()) AddQuality(height);
+        foreach (var rate in new[] { 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2 })
+        {
+            var item = new ToggleMenuFlyoutItem { Text = RateLabel(rate), IsChecked = Math.Abs(active.Player.PlaybackSession.PlaybackRate - rate) < 0.01 };
+            item.Click += (_, _) =>
+            {
+                if (ReferenceEquals(InteractivePlayer, active))
+                    NativePlaybackSource.Attempt(() => active.Player.PlaybackSession.PlaybackRate = rate);
+            };
+            speed.Items.Add(item);
+        }
 
         void AddQuality(int? height)
         {
@@ -392,7 +692,7 @@ internal sealed class MainWindow : Window
                 await playback.ChangeQualityAsync(active, height, PrepareQualityAsync,
                     (old, candidate, token, accept) => candidate.ConfirmHandoffAsync(old, token, accept));
             };
-            flyout.Items.Add(item);
+            quality.Items.Add(item);
         }
     }
 

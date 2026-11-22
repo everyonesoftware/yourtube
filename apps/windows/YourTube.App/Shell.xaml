@@ -83,18 +83,33 @@
         <TextBlock x:Name="PlayerFeedLabel" Grid.Column="1" VerticalAlignment="Center" Foreground="{StaticResource Muted}"/>
         <Button x:Name="PlayerNextButton" Grid.Column="2" Content="Next"/>
       </Grid>
-      <Grid Background="Black" MinHeight="280">
-        <MediaPlayerElement x:Name="TheaterPlayer" Height="450" AreTransportControlsEnabled="True" AutoPlay="False" Stretch="Uniform" AutomationProperties.Name="Native video player">
-          <MediaPlayerElement.TransportControls><MediaTransportControls IsPlaybackRateButtonVisible="True" IsPlaybackRateEnabled="True" IsNextTrackButtonVisible="False" IsPreviousTrackButtonVisible="False"/></MediaPlayerElement.TransportControls>
-        </MediaPlayerElement>
-        <ProgressRing x:Name="PlayerBusyRing" Width="36" Height="36" Visibility="Collapsed" IsHitTestVisible="False"/>
-      </Grid>
-      <Grid Background="#242c28" Padding="12,4" ColumnSpacing="8">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-        <TextBlock x:Name="PlayerQualityStatus" VerticalAlignment="Center" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" Foreground="{StaticResource Muted}"/>
-        <Button x:Name="PlayerQualityButton" Grid.Column="1" Content="Auto  ▾" Foreground="#c0d7ae" IsEnabled="False" Visibility="Collapsed" AutomationProperties.Name="Video quality: Auto">
-          <Button.Flyout><MenuFlyout Placement="TopEdgeAlignedRight"/></Button.Flyout>
-        </Button>
+      <Grid x:Name="PlayerStageSlot">
+        <Grid x:Name="PlayerStage" Height="450" Background="Black">
+          <MediaPlayerElement x:Name="TheaterPlayer" AreTransportControlsEnabled="False" AutoPlay="False" Stretch="Uniform" AutomationProperties.Name="Native video player"/>
+          <ProgressRing x:Name="PlayerBusyRing" Width="36" Height="36" Visibility="Collapsed" IsHitTestVisible="False"/>
+          <StackPanel x:Name="PlayerOverlay" VerticalAlignment="Bottom" Padding="12,8,12,6" Visibility="Collapsed" AutomationProperties.Name="Playback controls">
+            <StackPanel.Background><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#00000000" Offset="0"/><GradientStop Color="#E6000000" Offset="0.55"/><GradientStop Color="#F5000000" Offset="1"/></LinearGradientBrush></StackPanel.Background>
+            <TextBlock x:Name="PlayerQualityStatus" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" Foreground="{StaticResource Muted}" Visibility="Collapsed"/>
+            <Grid>
+              <Slider x:Name="PlayerSeek" Minimum="0" Maximum="1" StepFrequency="0.1" SmallChange="5" LargeChange="10" IsThumbToolTipEnabled="False" IsHitTestVisible="False" AutomationProperties.Name="Playback position"/>
+              <Border x:Name="PlayerSeekHitArea" Background="Transparent" ManipulationMode="None" AutomationProperties.AccessibilityView="Raw"/>
+            </Grid>
+            <Grid ColumnSpacing="4">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+              <StackPanel Orientation="Horizontal" Spacing="4">
+                <Button x:Name="PlayerPlay" Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Play" AutomationProperties.Name="Play"><FontIcon Glyph="&#xE768;" FontSize="18"/></Button>
+                <Button x:Name="PlayerOverlayNext" Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Next video" AutomationProperties.Name="Next video"><FontIcon Glyph="&#xE893;" FontSize="16"/></Button>
+                <Button x:Name="PlayerMute" Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Mute" AutomationProperties.Name="Mute"><FontIcon Glyph="&#xE767;" FontSize="17"/></Button>
+                <Slider x:Name="PlayerVolume" Width="70" Minimum="0" Maximum="100" Value="100" VerticalAlignment="Center" IsThumbToolTipEnabled="False" AutomationProperties.Name="Volume"/>
+                <TextBlock x:Name="PlayerTime" VerticalAlignment="Center" Text="0:00 / 0:00" Margin="6,0,0,0" TextTrimming="CharacterEllipsis"/>
+              </StackPanel>
+              <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
+                <Button x:Name="PlayerSettingsGear" Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Player settings" AutomationProperties.Name="Player settings"><FontIcon Glyph="&#xE713;" FontSize="18"/><Button.Flyout><MenuFlyout Placement="TopEdgeAlignedRight"/></Button.Flyout></Button>
+                <Button x:Name="PlayerFullscreen" Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Fullscreen" AutomationProperties.Name="Fullscreen"><FontIcon Glyph="&#xE740;" FontSize="18"/></Button>
+              </StackPanel>
+            </Grid>
+          </StackPanel>
+        </Grid>
       </Grid>
       <StackPanel Padding="28,20,28,28" Spacing="14">
         <TextBlock x:Name="PlayerTitle" FontSize="25" FontWeight="SemiBold" TextWrapping="Wrap"/>
@@ -113,6 +128,7 @@
       </StackPanel>
     </StackPanel>
   </ScrollViewer>
+  <Grid x:Name="PlayerFullscreenHost" Grid.RowSpan="4" Canvas.ZIndex="10" Background="Black" Visibility="Collapsed" TabFocusNavigation="Cycle"/>
   <Border Grid.Row="3" Background="#242c28" Padding="28,12">
     <Grid ColumnSpacing="16"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
       <ProgressRing x:Name="BusyRing" Width="22" Height="22" IsActive="True"/>
