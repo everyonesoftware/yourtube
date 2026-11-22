@@ -513,7 +513,7 @@ internal sealed class MainWindow : Window
         if (enabled == fullscreen) return;
         var slot = C<Grid>("PlayerStageSlot");
         var stage = C<Grid>("PlayerStage");
-        var host = C<Grid>("PlayerFullscreenHost");
+        var theater = C<ScrollViewer>("TheaterPanel");
         PlayerMenu.Hide();
         CancelScrub();
         if (enabled)
@@ -531,21 +531,22 @@ internal sealed class MainWindow : Window
             else AppWindow.SetPresenter(AppWindowPresenterKind.Default);
         }) && !NativePlaybackSource.Attempt(() => AppWindow.SetPresenter(AppWindowPresenterKind.Default))) return;
         fullscreen = enabled;
-        if (enabled)
-        {
-            slot.Children.Remove(stage);
-            stage.Height = double.NaN;
-            host.Visibility = Visibility.Visible;
-            host.Children.Add(stage);
-        }
-        else
-        {
-            windowedPresenter = null;
-            host.Children.Remove(stage);
-            host.Visibility = Visibility.Collapsed;
-            ResizePlayerStage(slot.ActualWidth);
-            slot.Children.Add(stage);
-        }
+        if (!enabled) windowedPresenter = null;
+
+        // Resize Theater in place: moving the stage disconnects the live player and its focused controls.
+        var chromeVisibility = ToVisibility(!enabled);
+        C<Border>("TitleBar").Visibility = chromeVisibility;
+        C<Grid>("ShellHeader").Visibility = chromeVisibility;
+        C<Grid>("BrowseAndSettings").Visibility = chromeVisibility;
+        C<Border>("ShellStatus").Visibility = chromeVisibility;
+        C<Grid>("TheaterHeader").Visibility = chromeVisibility;
+        C<StackPanel>("TheaterDetails").Visibility = chromeVisibility;
+        Grid.SetRow(theater, enabled ? 0 : 2);
+        Grid.SetRowSpan(theater, enabled ? root.RowDefinitions.Count : 1);
+        theater.VerticalScrollBarVisibility = enabled ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
+        theater.TabFocusNavigation = enabled ? KeyboardNavigationMode.Cycle : KeyboardNavigationMode.Local;
+        if (enabled) stage.Height = double.NaN;
+        else ResizePlayerStage(slot.ActualWidth);
         var button = C<Button>("PlayerFullscreen");
         SetIconAction(button, enabled ? "\uE73F" : "\uE740", enabled ? "Exit fullscreen" : "Fullscreen");
         if (restoreFocus) button.Focus(FocusState.Programmatic);
