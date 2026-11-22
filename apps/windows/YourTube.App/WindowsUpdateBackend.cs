@@ -11,6 +11,7 @@ internal sealed class WindowsUpdateFlow : IDisposable
     private readonly Action? beforeRestart;
     private readonly CancellationTokenSource lifetime = new();
     private int busy;
+    private int startupCheckStarted;
     private object? activeDownload;
     private object? activeOffer;
     private bool disposed;
@@ -21,20 +22,26 @@ internal sealed class WindowsUpdateFlow : IDisposable
     public WindowsUpdateFlow(IWindowsUpdateBackend backend, Action? beforeRestart = null) { this.backend = backend; this.beforeRestart = beforeRestart; }
     private void Set(UpdateState next) { lock (sync) { if (disposed) return; state = next; Changed?.Invoke(); } }
     private bool Enter() { lock (sync) return !disposed && Interlocked.CompareExchange(ref busy, 1, 0) == 0; }
-    public async Task CheckAsync()
+    public Task CheckOnStartupAsync() => Interlocked.Exchange(ref startupCheckStarted, 1) == 0
+        ? CheckAsync(background: true) : Task.CompletedTask;
+
+    public Task CheckAsync() => CheckAsync(background: false);
+
+    private async Task CheckAsync(bool background)
     {
         if (!Enter()) return;
         try
         {
             if (State.Phase is UpdatePhase.Ready or UpdatePhase.Restarting) return;
-            if (!backend.IsInstalled) { Set(new(UpdatePhase.NotInstalled, "Install YourTube using its Windows installer to enable in-app updates.")); return; }
             lock (sync)
             {
                 activeOffer = null;
                 Set(new(UpdatePhase.Checking, "Checking for updates…"));
             }
-            var version = await backend.CheckAsync();
-            if (version is not null && version > backend.CurrentVersion)
+            // Reserve the same operation gate before scheduling startup work, including the lazy locator.
+            var (installed, version) = await (background ? Task.Run(FindUpdateAsync) : FindUpdateAsync());
+            if (!installed) Set(new(UpdatePhase.NotInstalled, "Install YourTube using its Windows installer to enable in-app updates."));
+            else if (version is not null)
             {
                 lock (sync)
                 {
@@ -48,6 +55,12 @@ internal sealed class WindowsUpdateFlow : IDisposable
         }
         catch { Set(new(UpdatePhase.Error, "Could not check for updates. Try again later; GitHub may be unavailable or rate-limiting requests.")); }
         finally { Interlocked.Exchange(ref busy, 0); }
+    }
+    private async Task<(bool Installed, Version? Version)> FindUpdateAsync()
+    {
+        if (!backend.IsInstalled) return (false, null);
+        var version = await backend.CheckAsync();
+        return (true, version is not null && version > backend.CurrentVersion ? version : null);
     }
     public Task RetryNotesAsync()
     {

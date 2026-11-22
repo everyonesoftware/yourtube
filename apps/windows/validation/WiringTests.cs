@@ -92,6 +92,15 @@ internal static class WiringTests
             StateTests.Verify(code.Contains($"C<Button>(\"{button}\").Click +="), "native action wired: " + button);
         StateTests.Verify(code.Contains("SetTitleBar(C<Border>(\"TitleBar\"))") && code.Contains("ExtendsContentIntoTitleBar = true"), "Music native titlebar APIs wired");
         StateTests.Verify(code.Contains("SettingsHost\").Content = updatesPanel.View") && code.Contains("updatesPanel.Dispose()"), "Settings updater integration and disposal");
+        StateTests.Verify(Regex.IsMatch(code, @"root\.Loaded\s*\+=\s*async[^;]*if \(initialized \|\| closed\) return;\s*initialized\s*=\s*true;\s*_\s*=\s*updatesPanel\.CheckOnStartupAsync\(\);\s*await InitializeServicesAsync\(\);"),
+            "startup discovery is scheduled once without awaiting it or depending on account restoration");
+        var dot = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "SettingsUpdateDot");
+        StateTests.Verify(dot is not null && dot.Ancestors().Contains(Named("SettingsButton")) &&
+            (string?)dot.Attribute("Visibility") == "Collapsed" && (string?)dot.Attribute("IsHitTestVisible") == "False" &&
+            (string?)dot.Attribute("AutomationProperties.AccessibilityView") == "Raw", "Settings has a hidden, decorative update dot");
+        StateTests.Verify(code.Contains("updatesPanel.UpdateAvailabilityChanged += RenderSettingsButton;") &&
+            code.Contains("!settingsVisible && updatesPanel.HasUpdate") && code.Contains("Settings, update available"),
+            "Settings badge follows updater state and announces the update through the existing button");
         var program = File.ReadAllText(Path.Combine(app, "Program.cs"));
         StateTests.Verify(program.IndexOf("SetAutoApplyOnStartup(false)", StringComparison.Ordinal) < program.IndexOf("InitializeComWrappers", StringComparison.Ordinal), "explicit Velopack lifecycle runs before WinUI");
         var project = XDocument.Load(Path.Combine(app, "YourTube.App.csproj"));

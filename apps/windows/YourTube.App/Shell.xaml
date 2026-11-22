@@ -17,7 +17,14 @@
   <Grid x:Name="ShellHeader" Grid.Row="1" Padding="20,10" ColumnSpacing="8">
     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
     <ComboBox x:Name="AccountChooser" PlaceholderText="Choose an account" MaxWidth="320" HorizontalAlignment="Right" VerticalAlignment="Center" Visibility="Collapsed" AutomationProperties.Name="YouTube account"/>
-    <Button x:Name="SettingsButton" Grid.Column="1" Content="Settings" VerticalAlignment="Center" AutomationProperties.Name="Show or hide Settings"/>
+    <Button x:Name="SettingsButton" Grid.Column="1" VerticalAlignment="Center" AutomationProperties.Name="Settings">
+      <StackPanel Orientation="Horizontal" Spacing="6">
+        <TextBlock x:Name="SettingsButtonLabel" Text="Settings"/>
+        <Ellipse x:Name="SettingsUpdateDot" Width="7" Height="7" VerticalAlignment="Center"
+                 Fill="{ThemeResource AccentTextFillColorPrimaryBrush}" Visibility="Collapsed"
+                 IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
+      </StackPanel>
+    </Button>
     <Button x:Name="SignOutButton" Grid.Column="2" Content="Sign out" VerticalAlignment="Center"/>
   </Grid>
   <Grid x:Name="BrowseAndSettings" Grid.Row="2" Margin="28,0,28,16">

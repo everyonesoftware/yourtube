@@ -7,7 +7,7 @@ using YourTube.Update;
 
 namespace YourTube.App;
 
-/// <summary>Native Settings content. No startup check, download, or apply. Dispose when the window closes.</summary>
+/// <summary>Native Settings content. Discovery can run at startup; download and apply are explicit.</summary>
 public sealed class WindowsUpdatesPanel : IDisposable
 {
     private const string Markup = """
@@ -109,6 +109,8 @@ public sealed class WindowsUpdatesPanel : IDisposable
     </StackPanel>
     """;
     public FrameworkElement View { get; }
+    internal bool HasUpdate { get; private set; }
+    internal event Action? UpdateAvailabilityChanged;
     private readonly WindowsUpdateFlow flow;
     private readonly DispatcherQueue dispatcher;
     private readonly TextBlock currentVersion, title, status, offeredVersion, notesStatus;
@@ -151,6 +153,7 @@ public sealed class WindowsUpdatesPanel : IDisposable
         Render();
     }
     private T Control<T>(string name) where T : FrameworkElement => (T)View.FindName(name);
+    internal Task CheckOnStartupAsync() => flow.CheckOnStartupAsync();
     private async void CheckClicked(object sender, RoutedEventArgs e) => await flow.CheckAsync();
     private async void RetryNotesClicked(object sender, RoutedEventArgs e) => await flow.RetryNotesAsync();
     private async void DownloadClicked(object sender, RoutedEventArgs e) => await flow.DownloadAsync();
@@ -196,6 +199,12 @@ public sealed class WindowsUpdatesPanel : IDisposable
         progress.Visibility = Visible(busy);
         progress.IsIndeterminate = state.Phase is UpdatePhase.Checking or UpdatePhase.Restarting || state.Phase == UpdatePhase.Downloading && state.Progress >= 100;
         progress.Value = state.Progress;
+        bool hasUpdate = state.Version is not null;
+        if (HasUpdate != hasUpdate)
+        {
+            HasUpdate = hasUpdate;
+            UpdateAvailabilityChanged?.Invoke();
+        }
     }
     private void RenderNotes(WindowsChangelog? changes, bool loading)
     {

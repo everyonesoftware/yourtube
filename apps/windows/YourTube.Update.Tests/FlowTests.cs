@@ -5,7 +5,7 @@ namespace YourTube.Update.Tests;
 public sealed class FlowTests
 {
     [Fact]
-    public async Task No_startup_work_then_explicit_check_download_restart()
+    public async Task Creating_flow_only_then_explicit_check_download_restart()
     {
         var b = new Backend(); int saved = 0;
         using var flow = new WindowsUpdateFlow(b, () => saved++);
@@ -18,6 +18,42 @@ public sealed class FlowTests
         await flow.CheckAsync(); Assert.Equal(1, b.Checks);
         await flow.RestartAsync(); Assert.Equal(1, saved); Assert.Equal(1, b.Applied);
     }
+    [Fact]
+    public async Task Startup_discovery_is_once_and_shares_the_manual_check_gate()
+    {
+        var b = new Backend { Hold = new(TaskCreationOptions.RunContinuationsAsynchronously) };
+        using var flow = new WindowsUpdateFlow(b);
+        var pending = flow.CheckOnStartupAsync();
+        Assert.Equal(UpdatePhase.Checking, flow.State.Phase);
+        await flow.CheckAsync();
+        await flow.CheckOnStartupAsync();
+        b.Hold.SetResult();
+        await pending;
+        await flow.CheckOnStartupAsync();
+        Assert.Equal(UpdatePhase.Available, flow.State.Phase);
+        Assert.Equal(1, b.Checks);
+        Assert.Equal(0, b.Downloads);
+        Assert.Equal(0, b.Applied);
+    }
+
+    [Fact]
+    public async Task Startup_failure_leaves_manual_retry_available()
+    {
+        var b = new Backend { Hold = new(TaskCreationOptions.RunContinuationsAsynchronously) };
+        using var flow = new WindowsUpdateFlow(b);
+        var pending = flow.CheckOnStartupAsync();
+        b.Hold.SetException(new IOException());
+        await pending;
+        Assert.Equal(UpdatePhase.Error, flow.State.Phase);
+        Assert.Null(flow.State.Version);
+        b.Hold = null;
+        b.Offer = null;
+        await flow.CheckAsync();
+        Assert.Equal(UpdatePhase.Current, flow.State.Phase);
+        Assert.Null(flow.State.Version);
+        Assert.Equal(2, b.Checks);
+    }
+
     [Fact]
     public async Task Late_progress_cannot_rewind_ready()
     {

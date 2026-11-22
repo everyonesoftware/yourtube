@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
+using Ellipse = Microsoft.UI.Xaml.Shapes.Ellipse;
 using Windows.System;
 using Windows.Media.Playback;
 using YourTube.Core;
@@ -67,6 +68,7 @@ internal sealed partial class MainWindow : Window
 
         // Integration point: updater owns its native view and transport, never auth.
         updatesPanel = new WindowsUpdatesPanel();
+        updatesPanel.UpdateAvailabilityChanged += RenderSettingsButton;
         C<ContentControl>("SettingsHost").Content = updatesPanel.View;
         InitializeStartupQuality();
         var theater = C<MediaPlayerElement>("TheaterPlayer");
@@ -121,7 +123,13 @@ internal sealed partial class MainWindow : Window
             libraryOrigin = video;
             await OpenVideoAsync(video);
         };
-        root.Loaded += async (_, _) => { if (!initialized) { initialized = true; await InitializeServicesAsync(); } };
+        root.Loaded += async (_, _) =>
+        {
+            if (initialized || closed) return;
+            initialized = true;
+            _ = updatesPanel.CheckOnStartupAsync();
+            await InitializeServicesAsync();
+        };
         Closed += (_, _) =>
         {
             closed = true;
@@ -134,6 +142,7 @@ internal sealed partial class MainWindow : Window
             playbackResolver.Dispose();
             controller?.Close();
             DisposeLibrary();
+            updatesPanel.UpdateAvailabilityChanged -= RenderSettingsButton;
             updatesPanel.Dispose();
             http.Dispose();
         };
@@ -206,12 +215,21 @@ internal sealed partial class MainWindow : Window
         Render();
     }
 
+    private void RenderSettingsButton()
+    {
+        bool showDot = !settingsVisible && updatesPanel.HasUpdate;
+        string label = settingsVisible ? "Back" : "Settings";
+        C<TextBlock>("SettingsButtonLabel").Text = label;
+        C<Ellipse>("SettingsUpdateDot").Visibility = ToVisibility(showDot);
+        AutomationProperties.SetName(C<Button>("SettingsButton"), showDot ? "Settings, update available" : label);
+    }
+
     private void Render()
     {
         if (closed) return;
         SyncPlaybackContext();
         C<ScrollViewer>("SettingsPanel").Visibility = ToVisibility(settingsVisible);
-        C<Button>("SettingsButton").Content = settingsVisible ? "Back" : "Settings";
+        RenderSettingsButton();
         if (controller is null)
         {
             C<ScrollViewer>("SignInPanel").Visibility = ToVisibility(!settingsVisible && initialized);
