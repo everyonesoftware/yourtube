@@ -87,6 +87,7 @@
       <Grid x:Name="PlayerStageSlot" Grid.Row="1">
         <Grid x:Name="PlayerStage" Height="450" Background="Black">
           <MediaPlayerElement x:Name="TheaterPlayer" AreTransportControlsEnabled="False" AutoPlay="False" Stretch="Uniform" AutomationProperties.Name="Native video player"/>
+          <Border x:Name="PlayerVideoHitArea" Background="Transparent" IsDoubleTapEnabled="False" AutomationProperties.AccessibilityView="Raw"/>
           <ProgressRing x:Name="PlayerBusyRing" Width="36" Height="36" Visibility="Collapsed" IsHitTestVisible="False"/>
           <StackPanel x:Name="PlayerOverlay" VerticalAlignment="Bottom" Padding="12,8,12,6" Visibility="Collapsed" AutomationProperties.Name="Playback controls">
             <StackPanel.Background><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#00000000" Offset="0"/><GradientStop Color="#E6000000" Offset="0.55"/><GradientStop Color="#F5000000" Offset="1"/></LinearGradientBrush></StackPanel.Background>

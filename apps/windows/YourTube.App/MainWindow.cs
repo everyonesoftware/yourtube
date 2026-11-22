@@ -402,21 +402,11 @@ internal sealed class MainWindow : Window
         };
         stage.SizeChanged += (_, args) =>
             C<Slider>("PlayerVolume").Visibility = ToVisibility(args.NewSize.Width >= 450);
-        C<Button>("PlayerPlay").Click += (_, _) =>
+        C<Button>("PlayerPlay").Click += (_, _) => TogglePlayerPlayback();
+        C<Border>("PlayerVideoHitArea").Tapped += (_, args) =>
         {
-            if (InteractivePlayer is { } active) NativePlaybackSource.Attempt(() =>
-            {
-                var player = active.Player;
-                if (IsPlaying(player.PlaybackSession.PlaybackState)) player.Pause();
-                else
-                {
-                    var view = player.PlaybackSession;
-                    if (view.CanSeek && view.NaturalDuration > TimeSpan.Zero && view.Position >= view.NaturalDuration)
-                        view.Position = TimeSpan.Zero;
-                    active.Play();
-                }
-            });
-            UpdatePlayerOverlay();
+            TogglePlayerPlayback();
+            args.Handled = true;
         };
         C<Button>("PlayerOverlayNext").Click += async (_, _) =>
         {
@@ -480,6 +470,23 @@ internal sealed class MainWindow : Window
         playerClock = root.DispatcherQueue.CreateTimer();
         playerClock.Interval = TimeSpan.FromMilliseconds(150);
         playerClock.Tick += (_, _) => UpdatePlayerOverlay();
+    }
+
+    private void TogglePlayerPlayback()
+    {
+        if (InteractivePlayer is { } active) NativePlaybackSource.Attempt(() =>
+        {
+            var player = active.Player;
+            var view = player.PlaybackSession;
+            if (IsPlaying(view.PlaybackState)) player.Pause();
+            else
+            {
+                if (view.CanSeek && view.NaturalDuration > TimeSpan.Zero && view.Position >= view.NaturalDuration)
+                    view.Position = TimeSpan.Zero;
+                active.Play();
+            }
+        });
+        UpdatePlayerOverlay();
     }
 
     private void ApplyPlayerAudio(NativePlaybackSession active)

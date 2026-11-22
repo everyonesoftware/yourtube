@@ -17,6 +17,14 @@ internal static class WiringTests
         var overlay = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "PlayerOverlay");
         StateTests.Verify(overlay is not null && player.Parent == overlay.Parent && (string?)player.Attribute("AreTransportControlsEnabled") == "False",
             "one custom native transport overlay shares the video stage instead of a below-video strip");
+        var videoHitArea = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "PlayerVideoHitArea");
+        StateTests.Verify(videoHitArea is not null && videoHitArea.Parent == player.Parent &&
+            (string?)videoHitArea.Attribute("Background") == "Transparent" && videoHitArea.ElementsBeforeSelf().Contains(player) &&
+            videoHitArea.ElementsAfterSelf().Contains(overlay!), "video clicks have a dedicated hit target behind the transport controls");
+        StateTests.Verify(Regex.IsMatch(code, @"C<Border>\(""PlayerVideoHitArea""\)\.Tapped\s*\+=\s*\([^\r\n]*\)\s*=>\s*\{?\s*TogglePlayerPlayback\(\)") &&
+            code.Contains("C<Button>(\"PlayerPlay\").Click += (_, _) => TogglePlayerPlayback();") &&
+            Regex.IsMatch(code, @"void TogglePlayerPlayback\(\)\s*\{\s*if \(InteractivePlayer is"),
+            "video clicks and the play button share the active-player guard and toggle");
         var theater = Named("TheaterPanel");
         var fullscreenChange = Regex.Match(code, @"private void SetFullscreen\(bool enabled, bool restoreFocus\)[\s\S]*?\r?\n    \}").Value;
         StateTests.Verify(player.Ancestors().Contains(theater) && fullscreenChange.Length > 0 &&
