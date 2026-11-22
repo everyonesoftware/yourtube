@@ -11,6 +11,7 @@ internal static class WiringTests
         XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
         var names = xml.Root!.DescendantsAndSelf().Where(e => e.Attribute(x + "Name") is not null).ToDictionary(e => e.Attribute(x + "Name")!.Value, e => e.Name.LocalName);
         var code = File.ReadAllText(Path.Combine(app, "MainWindow.cs"));
+        var libraryCode = File.ReadAllText(Path.Combine(app, "LibraryView.cs"));
         StateTests.Verify(names.TryGetValue("TheaterPlayer", out var playerType) && playerType == "MediaPlayerElement", "Theater uses a genuine native MediaPlayerElement");
         XElement Named(string name) => xml.Descendants().Single(e => (string?)e.Attribute(x + "Name") == name);
         var player = Named("TheaterPlayer");
@@ -71,9 +72,20 @@ internal static class WiringTests
         StateTests.Verify(services.Contains("=> client.GetSubscriptionsAsync(session, account, continuation, cancellationToken)"), "native subscription API forwards to the real core client");
         StateTests.Verify(code.Contains("controller.View == BrowseView.Subscriptions") && code.Contains("!settingsVisible") && code.Contains("controller.Videos.Any(v => ReferenceEquals(v, video))"), "explicit video activation is bound to the visible current feed");
         StateTests.Verify(code.Contains("new HttpClientHandler { AllowAutoRedirect = false }"), "OAuth transport refuses redirects that could forward credentials");
-        foreach (Match lookup in Regex.Matches(code, "C<(?<type>\\w+)>\\(\"(?<name>[^\"]+)\"\\)"))
+        foreach (Match lookup in Regex.Matches(code + libraryCode, "C<(?<type>\\w+)>\\(\"(?<name>[^\"]+)\"\\)"))
             StateTests.Verify(names.TryGetValue(lookup.Groups["name"].Value, out var type) && type == lookup.Groups["type"].Value, "typed native control lookup matches XML: " + lookup.Groups["name"].Value);
-        StateTests.Verify(names["HistoryList"] == "ListView" && names["SettingsHost"] == "ContentControl", "real native history and settings host");
+        var library = Named("HistoryList");
+        StateTests.Verify(library.Name.LocalName == "GridView" && library.Descendants().Any(e =>
+            e.Name.LocalName == "ItemsWrapGrid" && (string?)e.Attribute("Orientation") == "Horizontal") &&
+            (string?)library.Attribute("IsItemClickEnabled") == "True" && names["SettingsHost"] == "ContentControl",
+            "Library uses a native virtualized wrapping grid with item activation and retains Settings");
+        StateTests.Verify(Named("ChannelsList").Ancestors().Any(e => e.Name.LocalName == "Expander") &&
+            Named("SubscriptionsButton").Ancestors().Contains(Named("LibraryNavigation")) &&
+            Named("HistoryButton").Ancestors().Contains(Named("LibraryNavigation")),
+            "Library uses a dedicated feed rail and a disclosure for read-only channels");
+        StateTests.Verify(code.Contains("libraryOrigin = video;") && code.Contains("RestoreLibraryFocus(origin)") &&
+            libraryCode.Contains("ReferenceEquals(video, origin)") && libraryCode.Contains("feed.ScrollIntoView(origin)"),
+            "Back restores the originating Library card, only if it still belongs to the active feed");
         StateTests.Verify(xml.Descendants().All(e => e.Attribute(x + "Class") is null && !e.Attributes().Any(a => a.Value.Contains("{x:Bind"))), "runtime XAML needs no generated code");
         StateTests.Verify(!xml.ToString().Contains("WebView"), "no embedded login browser");
         foreach (var button in new[] { "SignInButton", "OpenActivationButton", "CancelButton", "RefreshButton", "LoadMoreButton", "SignOutButton", "SettingsButton" })

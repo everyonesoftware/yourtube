@@ -17,7 +17,7 @@ using YourTube.Playback;
 
 namespace YourTube.App;
 
-internal sealed class MainWindow : Window
+internal sealed partial class MainWindow : Window
 {
     private const string PlayGlyph = "\uE768";
     private const string PauseGlyph = "\uE769";
@@ -77,10 +77,9 @@ internal sealed class MainWindow : Window
         WirePlayerOverlay();
         C<Button>("PlayerBackButton").Click += (_, _) =>
         {
-            var selected = playback.Selected;
+            var origin = libraryOrigin;
             playback.Back();
-            if (selected is not null && C<ListView>("HistoryList").ContainerFromItem(selected) is Control item) item.Focus(FocusState.Programmatic);
-            else C<ListView>("HistoryList").Focus(FocusState.Programmatic);
+            RestoreLibraryFocus(origin);
         };
         C<Button>("PlayerRetryButton").Click += async (_, _) => { SyncPlaybackContext(); await playback.RetryAsync(); };
         C<Button>("PlayerOpenYouTubeButton").Click += async (_, _) =>
@@ -114,11 +113,12 @@ internal sealed class MainWindow : Window
             }
         };
         C<ListView>("ChannelsList").ContainerContentChanging += (_, args) => RenderChannelRow(args);
-        C<ListView>("HistoryList").ContainerContentChanging += (_, args) => RenderHistoryRow(args);
-        C<ListView>("HistoryList").ItemClick += async (_, args) =>
+        WireLibrary();
+        C<GridView>("HistoryList").ItemClick += async (_, args) =>
         {
             if (closed || settingsVisible || playback.Selected is not null || controller is not { Busy: false, Phase: SessionPhase.SignedIn } || controller.View == BrowseView.Settings || args.ClickedItem is not HistoryVideo video ||
                 !controller.Videos.Any(v => ReferenceEquals(v, video))) return;
+            libraryOrigin = video;
             await OpenVideoAsync(video);
         };
         root.Loaded += async (_, _) => { if (!initialized) { initialized = true; await InitializeServicesAsync(); } };
@@ -133,6 +133,7 @@ internal sealed class MainWindow : Window
             boundSession = null;
             playbackResolver.Dispose();
             controller?.Close();
+            DisposeLibrary();
             updatesPanel.Dispose();
             http.Dispose();
         };
@@ -221,18 +222,14 @@ internal sealed class MainWindow : Window
         {
             var signedIn = controller.Phase == SessionPhase.SignedIn;
             var subscriptions = controller.View == BrowseView.Subscriptions;
-            C<Button>("HistoryButton").IsEnabled = signedIn;
-            C<Button>("SubscriptionsButton").IsEnabled = signedIn;
-            AutomationProperties.SetName(C<Button>("HistoryButton"), !settingsVisible && !subscriptions ? "History, selected" : "History");
-            AutomationProperties.SetName(C<Button>("SubscriptionsButton"), !settingsVisible && subscriptions ? "Subscriptions, selected" : "Subscriptions");
-            C<TextBlock>("ViewHeading").Text = settingsVisible ? "Settings" : subscriptions ? "Your subscriptions" : "Your history";
-            C<TextBlock>("FeedDescription").Text = subscriptions ? "Subscribed channels and latest videos from the experimental YouTube TV feed, in provider order." : "History cards from YouTube TV. These are not timestamped watch events.";
-            C<Grid>("ChannelsPanel").Visibility = ToVisibility(subscriptions);
-            Grid.SetColumn(C<Grid>("VideosPanel"), subscriptions ? 1 : 0);
-            Grid.SetColumnSpan(C<Grid>("VideosPanel"), subscriptions ? 1 : 2);
+            SetLibraryDestination(C<Button>("HistoryButton"), "History", signedIn, !settingsVisible && !subscriptions);
+            SetLibraryDestination(C<Button>("SubscriptionsButton"), "Subscriptions", signedIn, !settingsVisible && subscriptions);
+            C<TextBlock>("ViewHeading").Text = subscriptions ? "Subscriptions" : "History";
+            C<Expander>("ChannelsPanel").Visibility = ToVisibility(subscriptions);
+            if (!subscriptions || controller.Channels.Count == 0) C<Expander>("ChannelsPanel").IsExpanded = false;
             C<TextBlock>("ChannelsStatusText").Text = controller.Channels.Count > 0 ? $"Subscribed channels ({controller.Channels.Count})" : controller.Busy ? "Loading subscribed channels…" : "No subscribed channels loaded.";
             C<TextBlock>("VideosStatusText").Text = controller.Videos.Count > 0 ? $"{(subscriptions ? "Latest subscription videos" : "History videos")} ({controller.Videos.Count})" : controller.Busy ? "Loading videos…" : "No videos loaded.";
-            AutomationProperties.SetName(C<ListView>("HistoryList"), subscriptions ? "Latest subscription videos" : "Watch history");
+            AutomationProperties.SetName(C<GridView>("HistoryList"), subscriptions ? "Latest subscription videos" : "Watch history");
             C<Grid>("HistoryPanel").Visibility = ToVisibility(!settingsVisible && signedIn && playback.Selected is null);
             C<ScrollViewer>("SignInPanel").Visibility = ToVisibility(!settingsVisible && controller.Phase == SessionPhase.SignedOut);
             C<StackPanel>("DevicePanel").Visibility = ToVisibility(!settingsVisible && controller.Phase == SessionPhase.Authorizing);
@@ -246,7 +243,8 @@ internal sealed class MainWindow : Window
             C<Button>("RefreshButton").IsEnabled = signedIn && !controller.Busy && controller.SelectedAccount is not null;
             C<Button>("LoadMoreButton").Visibility = ToVisibility(controller.Continuation is not null);
             C<Button>("LoadMoreButton").IsEnabled = signedIn && !controller.Busy;
-            C<ListView>("HistoryList").IsEnabled = signedIn && !controller.Busy;
+            C<GridView>("HistoryList").IsEnabled = signedIn && !controller.Busy;
+            C<ComboBox>("AccountChooser").Visibility = ToVisibility(signedIn);
             C<ComboBox>("AccountChooser").IsEnabled = signedIn; // Switching invalidates a pending history call.
             var authorization = controller.Authorization;
             C<TextBlock>("DeviceCode").Text = authorization?.UserCode ?? "";
@@ -268,8 +266,10 @@ internal sealed class MainWindow : Window
             }
             if (!ReferenceEquals(displayedVideos, controller.Videos))
             {
+                libraryOrigin = null;
+                CancelLibraryImages();
                 displayedVideos = controller.Videos;
-                C<ListView>("HistoryList").ItemsSource = controller.Videos;
+                C<GridView>("HistoryList").ItemsSource = controller.Videos;
             }
         }
         finally { rendering = false; }

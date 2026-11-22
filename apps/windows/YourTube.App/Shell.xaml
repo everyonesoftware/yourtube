@@ -8,44 +8,45 @@
     <Style TargetType="TextBlock"><Setter Property="FontFamily" Value="Segoe UI"/><Setter Property="Foreground" Value="#edf0e9"/></Style>
     <Style TargetType="Button"><Setter Property="CornerRadius" Value="5"/></Style>
     <DataTemplate x:Key="HistoryRowTemplate"><Grid Padding="14,10" MinHeight="76"/></DataTemplate>
+    <DataTemplate x:Key="LibraryCardTemplate"><Grid Padding="5"/></DataTemplate>
   </Grid.Resources>
   <Grid.RowDefinitions><RowDefinition Height="40"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
   <Border x:Name="TitleBar" Grid.Row="0" Background="#242c28" Padding="16,0,150,0">
     <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center"><FontIcon Glyph="&#xE714;" FontSize="15" Foreground="#c0d7ae"/><TextBlock Text="YourTube" FontSize="13"/></StackPanel>
   </Border>
-  <Grid x:Name="ShellHeader" Grid.Row="1" Padding="28,20" ColumnSpacing="16">
+  <Grid x:Name="ShellHeader" Grid.Row="1" Padding="20,10" ColumnSpacing="8">
     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-    <StackPanel Spacing="8"><TextBlock x:Name="ViewHeading" Text="Your history" FontSize="28" FontWeight="SemiBold"/><StackPanel Orientation="Horizontal" Spacing="8"><Button x:Name="HistoryButton" Content="History" IsEnabled="False"/><Button x:Name="SubscriptionsButton" Content="Subscriptions" IsEnabled="False"/></StackPanel></StackPanel>
+    <ComboBox x:Name="AccountChooser" PlaceholderText="Choose an account" MaxWidth="320" HorizontalAlignment="Right" VerticalAlignment="Center" Visibility="Collapsed" AutomationProperties.Name="YouTube account"/>
     <Button x:Name="SettingsButton" Grid.Column="1" Content="Settings" VerticalAlignment="Center" AutomationProperties.Name="Show or hide Settings"/>
     <Button x:Name="SignOutButton" Grid.Column="2" Content="Sign out" VerticalAlignment="Center"/>
   </Grid>
   <Grid x:Name="BrowseAndSettings" Grid.Row="2" Margin="28,0,28,16">
-    <Grid x:Name="HistoryPanel" Visibility="Collapsed" RowSpacing="14">
-      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-      <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-        <ComboBox x:Name="AccountChooser" Header="YouTube account" PlaceholderText="Choose an account" HorizontalAlignment="Stretch" AutomationProperties.Name="YouTube account"/>
-        <Button x:Name="RefreshButton" Grid.Column="1" Content="Refresh" VerticalAlignment="Bottom" IsEnabled="False"/>
-      </Grid>
-      <TextBlock x:Name="FeedDescription" Grid.Row="1" Text="History cards from YouTube TV. These are not timestamped watch events." Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
-      <Grid Grid.Row="2" ColumnSpacing="16">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="260"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-        <Grid x:Name="ChannelsPanel" Visibility="Collapsed" RowSpacing="8">
-          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-          <TextBlock x:Name="ChannelsStatusText" Text="Subscribed channels" FontWeight="SemiBold" TextWrapping="Wrap"/>
-          <ListView x:Name="ChannelsList" Grid.Row="1" ItemTemplate="{StaticResource HistoryRowTemplate}" SelectionMode="None" HorizontalContentAlignment="Stretch" AutomationProperties.Name="Subscribed channels">
+    <Grid x:Name="HistoryPanel" Visibility="Collapsed" RowSpacing="10" ColumnSpacing="16">
+      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+      <StackPanel x:Name="LibraryNavigation" Grid.Row="1" Spacing="6" Width="148">
+        <Button x:Name="SubscriptionsButton" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" IsEnabled="False"><StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE714;" FontSize="15"/><TextBlock Text="Subscriptions"/></StackPanel></Button>
+        <Button x:Name="HistoryButton" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" IsEnabled="False"><StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE81C;" FontSize="15"/><TextBlock Text="History"/></StackPanel></Button>
+      </StackPanel>
+      <Grid x:Name="LibraryContent" Grid.Row="1" Grid.Column="1" RowSpacing="8">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Grid ColumnSpacing="12">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <StackPanel Spacing="4"><TextBlock x:Name="ViewHeading" Text="History" FontSize="28" FontWeight="SemiBold" TextWrapping="Wrap" AutomationProperties.HeadingLevel="Level1"/><TextBlock x:Name="VideosStatusText" Foreground="{StaticResource Muted}" TextWrapping="Wrap"/></StackPanel>
+          <Button x:Name="RefreshButton" Grid.Column="1" Content="Refresh" VerticalAlignment="Center" IsEnabled="False"/>
+        </Grid>
+        <Expander x:Name="ChannelsPanel" Grid.Row="1" Visibility="Collapsed" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+          <Expander.Header><TextBlock x:Name="ChannelsStatusText" Text="Subscribed channels" TextWrapping="Wrap"/></Expander.Header>
+          <ListView x:Name="ChannelsList" MaxHeight="136" ItemTemplate="{StaticResource HistoryRowTemplate}" SelectionMode="None" HorizontalContentAlignment="Stretch" AutomationProperties.Name="Subscribed channels">
             <ListView.ItemsPanel><ItemsPanelTemplate><ItemsStackPanel Orientation="Vertical"/></ItemsPanelTemplate></ListView.ItemsPanel>
           </ListView>
-        </Grid>
-        <Grid x:Name="VideosPanel" Grid.ColumnSpan="2" RowSpacing="8">
-          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-          <TextBlock x:Name="VideosStatusText" Text="History videos" FontWeight="SemiBold" TextWrapping="Wrap"/>
-          <ListView x:Name="HistoryList" Grid.Row="1" ItemTemplate="{StaticResource HistoryRowTemplate}" IsItemClickEnabled="True" SelectionMode="None" HorizontalContentAlignment="Stretch" AutomationProperties.Name="Watch history">
-            <ListView.ItemsPanel><ItemsPanelTemplate><ItemsStackPanel Orientation="Vertical"/></ItemsPanelTemplate></ListView.ItemsPanel>
-            <ListView.ItemContainerStyle><Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/></Style></ListView.ItemContainerStyle>
-          </ListView>
-        </Grid>
+        </Expander>
+        <GridView x:Name="HistoryList" Grid.Row="2" Padding="0,0,12,0" ItemTemplate="{StaticResource LibraryCardTemplate}" IsItemClickEnabled="True" SelectionMode="None" ScrollViewer.HorizontalScrollMode="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Watch history">
+          <GridView.ItemsPanel><ItemsPanelTemplate><ItemsWrapGrid Orientation="Horizontal" ItemWidth="230" ItemHeight="212"/></ItemsPanelTemplate></GridView.ItemsPanel>
+          <GridView.ItemContainerStyle><Style TargetType="GridViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="VerticalContentAlignment" Value="Stretch"/><Setter Property="Margin" Value="0"/></Style></GridView.ItemContainerStyle>
+        </GridView>
+        <Button x:Name="LoadMoreButton" Grid.Row="3" Content="Load more" HorizontalAlignment="Center" Visibility="Collapsed"/>
       </Grid>
-      <Button x:Name="LoadMoreButton" Grid.Row="3" Content="Load more" HorizontalAlignment="Center" Visibility="Collapsed"/>
     </Grid>
     <ScrollViewer x:Name="SignInPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
       <StackPanel MaxWidth="620" HorizontalAlignment="Left" Spacing="18" Margin="0,20,0,20">
