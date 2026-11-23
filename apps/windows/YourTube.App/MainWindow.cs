@@ -27,11 +27,13 @@ internal sealed partial class MainWindow : Window
     private readonly WindowsUpdatesPanel updatesPanel;
     private readonly PlaybackResolver playbackResolver = new();
     private readonly PlaybackController<NativePlaybackSession> playback;
+    private readonly bool compareWatchLookups = Environment.GetEnvironmentVariable("YOURTUBE_WATCH_LOOKUP_COMPARE") == "1";
     private int startupQuality;
     private NativePlaybackSession? boundSession;
     private HistoryVideo? watchSelection;
     private TimeSpan? lastWatchPosition;
     private bool watchAttempted;
+    private YouTubeAccount? watchStatusIdentity;
     private long watchStatusGeneration;
     private CancellationTokenSource? watchRequest;
     private DispatcherQueueTimer? playerClock;
@@ -75,12 +77,12 @@ internal sealed partial class MainWindow : Window
         updatesPanel.UpdateAvailabilityChanged += RenderSettingsButton;
         C<ContentControl>("SettingsHost").Content = updatesPanel.View;
         InitializeStartupQuality();
-        C<ToggleSwitch>("WatchHistorySync").Toggled += (_, _) =>
+        if (compareWatchLookups)
         {
-            CancelWatchRequest();
-            watchStatusGeneration++;
-            C<TextBlock>("WatchHistoryStatus").Text = "";
-        };
+            C<ToggleSwitch>("WatchHistorySync").Header = "Compare YouTube History lookups (diagnostic)";
+            C<TextBlock>("WatchHistoryHelp").Text = "Off each time the app opens. When enabled, compares two signed-in player lookups after playback starts. No history write is sent.";
+        }
+        C<ToggleSwitch>("WatchHistorySync").Toggled += (_, _) => ResetWatchStatus();
         var theater = C<MediaPlayerElement>("TheaterPlayer");
         playback = new PlaybackController<NativePlaybackSession>((id, ct, timing) => playbackResolver.ResolveAsync(id, ct, timing),
             async (media, ct, timing) => new NativePlaybackSession(await NativePlaybackSource.CreateAsync(playbackResolver, media, ct, timing, startupQuality), theater),
@@ -294,6 +296,12 @@ internal sealed partial class MainWindow : Window
     private void Render()
     {
         if (closed) return;
+        var watchIdentity = controller is { Phase: SessionPhase.SignedIn } ? controller.SelectedAccount : null;
+        if (!ReferenceEquals(watchStatusIdentity, watchIdentity))
+        {
+            watchStatusIdentity = watchIdentity;
+            ResetWatchStatus();
+        }
         SyncPlaybackContext();
         C<ScrollViewer>("SettingsPanel").Visibility = ToVisibility(settingsVisible);
         RenderSettingsButton();
@@ -806,16 +814,42 @@ internal sealed partial class MainWindow : Window
         request?.Cancel();
     }
 
+    private void ResetWatchStatus()
+    {
+        CancelWatchRequest();
+        watchStatusGeneration++;
+        C<TextBlock>("WatchHistoryStatus").Text = "";
+    }
+
     private async Task SendWatchStartAsync(SessionController current, YouTubeAccount account, HistoryVideo video, TimeSpan duration, TimeSpan position, long generation, CancellationTokenSource request)
     {
         string? result;
-        try { result = await current.TryRecordWatchStartAsync(account, video.VideoId, duration, position, request.Token); }
+        try
+        {
+            result = compareWatchLookups
+                ? await current.TryCompareWatchLookupsAsync(account, video.VideoId, request.Token)
+                : await current.TryRecordWatchStartAsync(account, video.VideoId, duration, position, request.Token);
+        }
         finally
         {
             if (ReferenceEquals(watchRequest, request)) watchRequest = null;
             request.Dispose();
         }
         if (closed || generation != watchStatusGeneration || !ReferenceEquals(account, current.SelectedAccount)) return;
+        if (compareWatchLookups)
+        {
+            C<TextBlock>("WatchHistoryStatus").Text = (result switch
+            {
+                "watch_account_failed" or "auth_required" => "Account preparation failed.",
+                "watch_discovery_failed" => "YouTube TV client setup failed.",
+                "watch_lookup_failed" => "The player lookup comparison did not complete.",
+                "watch_timed_out" => "The player lookup comparison timed out.",
+                null => "The player lookup comparison was interrupted.",
+                "watch_failed" => "The player lookup comparison failed.",
+                _ => result
+            }) + " No history write was sent.";
+            return;
+        }
         C<TextBlock>("WatchHistoryStatus").Text = result switch
         {
             "watch_sent" => "Playback start sent. Check YouTube History to confirm it was saved.",

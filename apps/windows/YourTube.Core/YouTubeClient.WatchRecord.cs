@@ -5,21 +5,49 @@ using System.Text.RegularExpressions;
 
 namespace YourTube.Core;
 
+public sealed record WatchLookupResult(string Status, bool TrackingUsable);
+public sealed record WatchLookupComparison(WatchLookupResult Baseline, WatchLookupResult Candidate);
+
 public sealed partial class YouTubeClient
 {
+    public async Task<WatchLookupComparison> CompareWatchLookupsAsync(YouTubeSession session, YouTubeAccount account, string videoId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ValidateSession(session);
+        if (!IsWatchVideoId(videoId)) throw InvalidArgument();
+        await PrepareWatchLookupAsync(cancellationToken);
+        var nonce = WatchNonce();
+        var baseline = await InspectAsync(false);
+        var candidate = await InspectAsync(true);
+        return new(baseline, candidate);
+
+        async Task<WatchLookupResult> InspectAsync(bool tvPlayerHeaders)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var player = await LookupWatchPlayerAsync(session, account, videoId, nonce, cancellationToken, tvPlayerHeaders);
+            cancellationToken.ThrowIfCancellationRequested();
+            var status = await ReadWatchStatusAsync(player, cancellationToken);
+            if (status != "OK")
+                return new(status is "LOGIN_REQUIRED" or "UNPLAYABLE" or "ERROR" or "AGE_CHECK_REQUIRED" or "CONTENT_CHECK_REQUIRED" or "LIVE_STREAM_OFFLINE" ? status : "OTHER", false);
+            try
+            {
+                await WatchStageAsync("watch_tracking_unusable", () => Task.FromResult(WatchTrackingValues(player, videoId)), cancellationToken);
+                return new("OK", true);
+            }
+            catch (YouTubeException error) when (error.Code == "watch_tracking_unusable") { return new("OK", false); }
+        }
+    }
+
     public async Task RecordWatchStartAsync(YouTubeSession session, YouTubeAccount account, string videoId, TimeSpan duration, TimeSpan position, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ValidateSession(session);
-        if (!Regex.IsMatch(videoId, @"\A[A-Za-z0-9_-]{11}\z") || duration <= TimeSpan.Zero || position < TimeSpan.Zero || position > duration)
+        if (!IsWatchVideoId(videoId) || duration <= TimeSpan.Zero || position < TimeSpan.Zero || position > duration)
             throw InvalidArgument();
-        await WatchStageAsync("watch_discovery_failed", async () => { await BootstrapAsync(cancellationToken); return true; }, cancellationToken);
-        var nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(12)).Replace('+', '-').Replace('/', '_');
-        var player = await WatchStageAsync("watch_lookup_failed", () => PostAsync("youtubei/v1/player", new
-        {
-            context = Context(account.PageId), videoId, cpn = nonce
-        }, cancellationToken, session: session, pageId: account.PageId), cancellationToken);
-        var status = await WatchStageAsync("watch_lookup_failed", () => Task.FromResult(Required(player.GetProperty("playabilityStatus"), "status")), cancellationToken);
+        await PrepareWatchLookupAsync(cancellationToken);
+        var nonce = WatchNonce();
+        var player = await LookupWatchPlayerAsync(session, account, videoId, nonce, cancellationToken);
+        var status = await ReadWatchStatusAsync(player, cancellationToken);
         if (status != "OK") throw new YouTubeException("watch_lookup_not_playable", "The YouTube player lookup did not return a playable video.");
         var target = await WatchStageAsync("watch_tracking_unusable", () => Task.FromResult(WatchTarget(player, videoId, duration, position, nonce)), cancellationToken);
         var accepted = await WatchStageAsync("watch_record_unconfirmed", async () =>
@@ -36,6 +64,18 @@ public sealed partial class YouTubeClient
         if (!accepted) throw new YouTubeException("watch_record_rejected", "YouTube returned an unsuccessful status for the watch-history request.");
     }
 
+    private static bool IsWatchVideoId(string videoId) => Regex.IsMatch(videoId, @"\A[A-Za-z0-9_-]{11}\z");
+    private static string WatchNonce() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(12)).Replace('+', '-').Replace('/', '_');
+    private Task PrepareWatchLookupAsync(CancellationToken ct) =>
+        WatchStageAsync("watch_discovery_failed", async () => { await BootstrapAsync(ct); return true; }, ct);
+
+    private Task<JsonElement> LookupWatchPlayerAsync(YouTubeSession session, YouTubeAccount account, string videoId, string nonce, CancellationToken ct, bool tvPlayerHeaders = false) =>
+        WatchStageAsync("watch_lookup_failed", () => PostAsync("youtubei/v1/player", new { context = Context(account.PageId), videoId, cpn = nonce },
+            ct, session: session, pageId: account.PageId, tvPlayerHeaders: tvPlayerHeaders), ct);
+
+    private static Task<string> ReadWatchStatusAsync(JsonElement player, CancellationToken ct) =>
+        WatchStageAsync("watch_lookup_failed", () => Task.FromResult(Required(player.GetProperty("playabilityStatus"), "status")), ct);
+
     private static async Task<T> WatchStageAsync<T>(string code, Func<Task<T>> action, CancellationToken ct)
     {
         try { return await SafeAsync(action, ct); }
@@ -43,6 +83,14 @@ public sealed partial class YouTubeClient
     }
 
     private static string WatchTarget(JsonElement player, string videoId, TimeSpan duration, TimeSpan position, string nonce)
+    {
+        var values = WatchTrackingValues(player, videoId);
+        string Seconds(TimeSpan value) => value.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture);
+        return $"https://www.youtube.com/api/stats/playback?ns=yt&ver=2&docid={videoId}&len={Seconds(duration)}&cmt={Seconds(position)}&cpn={nonce}" +
+            $"&ei={Uri.EscapeDataString(values["ei"])}&vm={Uri.EscapeDataString(values["vm"])}&of={Uri.EscapeDataString(values["of"])}";
+    }
+
+    private static Dictionary<string, string> WatchTrackingValues(JsonElement player, string videoId)
     {
         if (Required(player.GetProperty("videoDetails"), "videoId") != videoId)
             throw Invalid();
@@ -61,9 +109,6 @@ public sealed partial class YouTubeClient
             if (split.Length != 2 || !values.TryAdd(name, Uri.UnescapeDataString(split[1].Replace('+', ' ')))) throw Invalid();
         }
         if (values.Count != 3 || values.Values.Any(value => string.IsNullOrWhiteSpace(value) || value.Any(char.IsControl))) throw Invalid();
-
-        string Seconds(TimeSpan value) => value.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture);
-        return $"https://www.youtube.com/api/stats/playback?ns=yt&ver=2&docid={videoId}&len={Seconds(duration)}&cmt={Seconds(position)}&cpn={nonce}" +
-            $"&ei={Uri.EscapeDataString(values["ei"])}&vm={Uri.EscapeDataString(values["vm"])}&of={Uri.EscapeDataString(values["of"])}";
+        return values;
     }
 }

@@ -6,6 +6,39 @@ namespace YourTube.Core.Tests;
 
 public sealed class WatchRecordTests
 {
+    [Theory]
+    [InlineData(null)]
+    [InlineData("brand-page")]
+    public async Task ComparisonUsesSameIdentityAndNeverSendsTrackingRequests(string? page)
+    {
+        const string denied = "{\"playabilityStatus\":{\"status\":\"LOGIN_REQUIRED\",\"reason\":\"private-marker\"}}";
+        using var transport = new ClientTests.Transport(ClientTests.Html, ClientTests.Script, denied,
+            Player("https://s.youtube.com/api/stats/watchtime?ei=event&vm=monitor&of=opaque"));
+        using var http = new HttpClient(transport);
+        var clock = new ClientTests.Clock();
+        var result = await clock.Client(http).CompareWatchLookupsAsync(new("access", "refresh", clock.Now.AddHours(1)), new("Identity", null, page), Video);
+        Assert.Equal("LOGIN_REQUIRED", result.Baseline.Status);
+        Assert.False(result.Baseline.TrackingUsable);
+        Assert.Equal("OK", result.Candidate.Status);
+        Assert.True(result.Candidate.TrackingUsable);
+        Assert.Equal(4, transport.Requests.Count);
+        for (int i = 2; i <= 3; i++)
+        {
+            var request = transport.Requests[i];
+            Assert.Equal("https://www.youtube.com/youtubei/v1/player", request.Url);
+            Assert.Equal("Bearer access", request.Auth);
+            Assert.Equal(page, request.Page);
+            using var body = JsonDocument.Parse(request.Body);
+            var user = body.RootElement.GetProperty("context").GetProperty("user");
+            Assert.Equal(page, user.TryGetProperty("onBehalfOfUser", out var identity) ? identity.GetString() : null);
+        }
+        Assert.Null(transport.RequestHeaders[2].GetValueOrDefault("X-Youtube-Client-Name"));
+        Assert.Equal("7", transport.RequestHeaders[3]["X-Youtube-Client-Name"]);
+        Assert.Equal("7.test", transport.RequestHeaders[3]["X-Youtube-Client-Version"]);
+        Assert.Equal("visitor", transport.RequestHeaders[3]["X-Goog-Visitor-Id"]);
+        Assert.DoesNotContain("private-marker", result.ToString());
+    }
+
     private const string Video = "abcdefghijk";
     private static string Player(string url, string id = Video) => JsonSerializer.Serialize(new
     {

@@ -101,6 +101,8 @@ internal static class StateTests
         await controller.SignInAsync();
         await controller.SelectAccountAsync(TestApi.B);
         Verify(await controller.TryRecordWatchStartAsync(TestApi.A, "abcdefghijk", length, position) is null && api.WatchCalls == 0, "watch writes cannot choose another identity");
+        Verify(await controller.TryCompareWatchLookupsAsync(TestApi.A, "abcdefghijk") is null && api.CompareCalls == 0, "lookup comparison cannot choose another identity");
+        Verify(await controller.TryCompareWatchLookupsAsync(TestApi.B, "abcdefghijk") == "Baseline: LOGIN_REQUIRED, tracking not usable. TV headers: OK, tracking usable." && api.CompareCalls == 1 && api.WatchCalls == 0, "diagnostic compares without recording a start");
         api.Watch = (account, id, duration, start, _) =>
         {
             Verify(ReferenceEquals(account, TestApi.B) && id == "abcdefghijk" && duration == length && start == position, "watch data belongs to selected playback and identity");
@@ -158,6 +160,14 @@ internal sealed class TestStore : ITokenStore
 
 internal sealed class TestApi : IYouTubeApi
 {
+    public int CompareCalls;
+    public Task<WatchLookupComparison> CompareWatchLookupsAsync(YouTubeSession session, YouTubeAccount account, string videoId, CancellationToken cancellationToken)
+    {
+        CompareCalls++;
+        StateTests.Verify(ReferenceEquals(account, B) && videoId == "abcdefghijk", "diagnostic uses the selected playback and identity");
+        return Task.FromResult(new WatchLookupComparison(new("LOGIN_REQUIRED", false), new("OK", true)));
+    }
+
     public int WatchCalls;
     public Func<YouTubeAccount, string, TimeSpan, TimeSpan, CancellationToken, Task> Watch = (_, _, _, _, _) => Task.CompletedTask;
     public Task RecordWatchStartAsync(YouTubeSession session, YouTubeAccount account, string videoId, TimeSpan duration, TimeSpan position, CancellationToken cancellationToken)
