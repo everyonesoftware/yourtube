@@ -72,8 +72,18 @@ internal static class WiringTests
         StateTests.Verify(services.Contains("=> client.GetSubscriptionsAsync(session, account, continuation, cancellationToken)"), "native subscription API forwards to the real core client");
         StateTests.Verify(code.Contains("controller.View == BrowseView.Subscriptions") && code.Contains("!settingsVisible") && code.Contains("controller.Videos.Any(v => ReferenceEquals(v, video))"), "explicit video activation is bound to the visible current feed");
         StateTests.Verify(code.Contains("new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }"), "OAuth transport refuses redirects and does not retain cookies");
-        StateTests.Verify(Named("WatchHistorySync").Ancestors().Contains(Named("SettingsPanel")) && (string?)Named("WatchHistorySync").Attribute("IsOn") is null or "False" &&
-            code.Contains("!C<ToggleSwitch>(\"WatchHistorySync\").IsOn") && services.Contains("=> client.RecordWatchStartAsync("), "watch reporting is opt-in and uses the authenticated client");
+        var historySwitch = Named("WatchHistorySync");
+        StateTests.Verify(historySwitch.Ancestors().Contains(Named("SettingsPanel")) &&
+            (string?)historySwitch.Attribute("Header") == "Update YouTube History" && (string?)historySwitch.Attribute("IsOn") == "True",
+            "Update YouTube History starts on in Playback settings");
+        StateTests.Verify(code.Contains("!C<ToggleSwitch>(\"WatchHistorySync\").IsOn") && services.Contains("=> client.RecordWatchStartAsync("),
+            "the switch still controls authenticated watch reporting");
+        StateTests.Verify(Regex.IsMatch(code, @"if \(compareWatchLookups\)\s*\{[^}]*\.IsOn = false;[^}]*Compare YouTube History lookups \(diagnostic\)"),
+            "the diagnostic replacement still starts off");
+        StateTests.Verify(code.Contains("root.KeyboardAcceleratorPlacementMode = KeyboardAcceleratorPlacementMode.Hidden;") &&
+            code.Contains("AddFullscreenKey(Windows.System.VirtualKey.F11, toggle: true);") &&
+            code.Contains("AddFullscreenKey(Windows.System.VirtualKey.Escape, toggle: false);"),
+            "the window hides automatic shortcut popups without losing fullscreen keys");
         StateTests.Verify(code.Contains("var watchIdentity = controller is { Phase: SessionPhase.SignedIn } ? controller.SelectedAccount : null;") &&
             code.Contains("if (!ReferenceEquals(watchStatusIdentity, watchIdentity))") &&
             code.ReplaceLineEndings("\n").Contains("watchStatusIdentity = watchIdentity;\n            ResetWatchStatus();"),

@@ -79,6 +79,7 @@ internal sealed partial class MainWindow : Window
         InitializeStartupQuality();
         if (compareWatchLookups)
         {
+            C<ToggleSwitch>("WatchHistorySync").IsOn = false;
             C<ToggleSwitch>("WatchHistorySync").Header = "Compare YouTube History lookups (diagnostic)";
             C<TextBlock>("WatchHistoryHelp").Text = "Off each time the app opens. When enabled, compares two signed-in player lookups after playback starts. No history write is sent.";
         }
@@ -587,6 +588,7 @@ internal sealed partial class MainWindow : Window
             if (seekPointer is null) Seek(active, args.NewValue);
         };
         C<Button>("PlayerFullscreen").Click += (_, _) => ToggleFullscreen();
+        root.KeyboardAcceleratorPlacementMode = KeyboardAcceleratorPlacementMode.Hidden;
         AddFullscreenKey(Windows.System.VirtualKey.F11, toggle: true);
         AddFullscreenKey(Windows.System.VirtualKey.Escape, toggle: false);
 
