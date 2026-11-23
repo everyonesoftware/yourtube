@@ -159,9 +159,20 @@ internal static class WiringTests
             code.Contains("C<ListView>(\"HomeShelvesList\").Visibility = ToVisibility(home)") &&
             code.Contains("C<GridView>(\"HistoryList\").Visibility = ToVisibility(!home)"),
             "Home and the flat feed are mutually exclusive in the same finite viewport below shared feed status");
-        StateTests.Verify(Named("HomeLoadMoreButton").Ancestors().Any(e => e.Parent == home && e.Name.LocalName == "ListView.Footer") &&
-            code.Contains("C<Button>(\"HomeLoadMoreButton\").Click +=") && code.Contains("LoadHistoryAsync(append: true)"),
-            "Home pagination is explicit and follows the shelves in their scroller");
+        StateTests.Verify(!names.ContainsKey("HomeLoadMoreButton") &&
+            Named("HomeRetryButton").Ancestors().Any(e => e.Parent == home && e.Name.LocalName == "ListView.Footer") &&
+            code.Contains("ToVisibility(home && controller.HomeAppendFailed)"),
+            "Home pagination needs no button unless the next-page request failed");
+        StateTests.Verify(libraryCode.Contains("scroller.ViewChanged += HomeViewChanged") &&
+            libraryCode.Contains("scroller.ScrollableHeight - scroller.VerticalOffset <= scroller.ViewportHeight / 2") &&
+            libraryCode.Contains("HomeAppendFailed: false") && libraryCode.Contains("await current.LoadHistoryAsync(append: true)"),
+            "scrolling near the end of Home requests its continuation but does not automatically retry failures");
+        StateTests.Verify(libraryCode.Contains("shelves.LayoutUpdated +=") && libraryCode.Contains("ViewportHeight: > 0, ScrollableHeight: 0") &&
+            libraryCode.Contains("QueueHomePage(underfilled: true)"), "a laid-out Home feed too short to scroll continues even without mouse or keyboard input");
+        StateTests.Verify(code.Contains("ToVisibility(browsing && busy && !current.HomeAppending)") &&
+            Regex.Matches(code, @"controller is (?:not )?\{ CanPlayFeed: true \}").Count >= 2 &&
+            libraryCode.Contains("CanPlayFeed: true, View: BrowseView.Home"),
+            "a pending automatic Home request cannot expose a sign-out Cancel button or block playback of existing cards");
         var shelfTemplate = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Key") == "HomeShelfTemplate");
         var shelfCards = shelfTemplate?.Descendants().SingleOrDefault(e => e.Name.LocalName == "GridView");
         StateTests.Verify(shelfCards is not null && (string?)home.Attribute("ItemTemplate") == "{StaticResource HomeShelfTemplate}" &&
@@ -171,15 +182,16 @@ internal static class WiringTests
                 e.Name.LocalName == "ItemsWrapGrid" && (string?)e.Attribute("Orientation") == "Vertical" && (string?)e.Attribute("MaximumRowsOrColumns") == "1"),
             "each Home shelf renders shared native cards in a single horizontal scroll row");
         var bindShelf = Regex.Match(libraryCode, @"private void RenderHomeShelf\([^\r\n]*\)[\s\S]*?\r?\n    \}").Value;
-        StateTests.Verify(Regex.IsMatch(bindShelf,
-            @"feed\.RemoveHandler\(UIElement\.PointerWheelChangedEvent, homeShelfWheelHandler\);[\s\S]*?if \(shelf is null\) return;[\s\S]*?feed\.AddHandler\(UIElement\.PointerWheelChangedEvent, homeShelfWheelHandler, handledEventsToo: true\);"),
-            "recycled Home shelf grids forward wheel input even when the inner grid has handled it, without accumulating handlers");
+        StateTests.Verify(bindShelf.Contains("WireHomeShelfWheel(feed)") &&
+            libraryCode.Contains("scroller.Content is not UIElement wheelSurface") &&
+            libraryCode.Contains("wheelSurface.AddHandler(UIElement.PointerWheelChangedEvent, handler, handledEventsToo: true)") &&
+            libraryCode.Contains("wheelSurface.RemoveHandler(UIElement.PointerWheelChangedEvent, handler)"),
+            "Home intercepts the wheel below the shelf scroller before it can scroll, without accumulating handlers");
         var shelfWheel = Regex.Match(libraryCode, @"private void ForwardHomeShelfWheel\([^\r\n]*\)[\s\S]*?\r?\n    \}").Value;
-        StateTests.Verify(bindShelf.Contains("homeShelfWheelHandler ??= ForwardHomeShelfWheel;") &&
-            Regex.IsMatch(shelfWheel, @"if \([^\r\n]*IsHorizontalMouseWheel[^\r\n]*KeyModifiers != VirtualKeyModifiers\.None\) return;") &&
-            shelfWheel.Contains("C<ListView>(\"HomeShelvesList\")") && shelfWheel.Contains("VisualTreeHelper.GetParent") &&
-            Regex.IsMatch(shelfWheel, @"\.ChangeView\(null, [^,]+, null, disableAnimation: true\)") && shelfWheel.Contains("args.Handled = true;"),
-            "an ordinary wheel turn over a Home card scrolls only the outer list vertically, leaving horizontal and modified gestures to WinUI");
+        StateTests.Verify(Regex.IsMatch(shelfWheel, @"args\.Handled = true;\s*if \(\(args\.KeyModifiers & VirtualKeyModifiers\.Shift\) != 0\)") &&
+            shelfWheel.Contains("scroller.ChangeView(offset, null, null, disableAnimation: true)") &&
+            shelfWheel.Contains("outer.ChangeView(null, vertical, null, disableAnimation: true)"),
+            "Home wheel input is consumed once: Shift scrolls the row, otherwise a vertical wheel scrolls only the feed");
         StateTests.Verify(code.Contains("RenderHomeShelves(signedIn && home ? controller.HomeShelves : [])") &&
             libraryCode.Contains("header.Text = shelf.Title") && libraryCode.Contains("feed.ItemsSource = shelf.Videos") &&
             libraryCode.Contains("homeShelves.Add(shelves[i])") && Regex.IsMatch(libraryCode, @"if \(!keepsPrefix\)\s*\{[^}]*homeShelves\.Clear\(\)"),

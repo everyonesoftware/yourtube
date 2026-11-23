@@ -92,7 +92,7 @@
                   ItemTemplate="{StaticResource HomeShelfTemplate}"
                   ScrollViewer.HorizontalScrollMode="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Home shelves">
           <ListView.ItemContainerStyle><Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="0"/><Setter Property="IsTabStop" Value="False"/></Style></ListView.ItemContainerStyle>
-          <ListView.Footer><Button x:Name="HomeLoadMoreButton" Content="Load more" Margin="0,0,0,16" HorizontalAlignment="Center" Visibility="Collapsed"/></ListView.Footer>
+          <ListView.Footer><Button x:Name="HomeRetryButton" Content="Retry loading more rows" Margin="0,0,0,16" HorizontalAlignment="Center" Visibility="Collapsed"/></ListView.Footer>
         </ListView>
       </Grid>
     </Grid>

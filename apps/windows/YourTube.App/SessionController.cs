@@ -40,7 +40,10 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
     public IReadOnlyList<HistoryVideo> Videos { get; private set; } = [];
     public IReadOnlyList<SubscribedChannel> Channels { get; private set; } = [];
     public IReadOnlyList<HomeShelf> HomeShelves { get; private set; } = [];
+    public bool HomeAppending { get; private set; }
+    public bool HomeAppendFailed { get; private set; }
     public BrowseView View { get; private set; } = BrowseView.Home;
+    public bool CanPlayFeed => Phase == SessionPhase.SignedIn && View != BrowseView.Settings && (!Busy || HomeAppending);
     public async Task NavigateAsync(BrowseView view)
     {
         if (Phase != SessionPhase.SignedIn || View == view) return;
@@ -117,7 +120,7 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
         });
     }
 
-    private void Finish(long id) => epoch.Commit(id, () => { Busy = false; Changed?.Invoke(); });
+    private void Finish(long id) => epoch.Commit(id, () => { Busy = false; HomeAppending = false; Changed?.Invoke(); });
     private void ClearPrivateState()
     {
         session = null; Authorization = null; Accounts = []; SelectedAccount = null;
@@ -127,6 +130,8 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
     {
         subscriptionCursors.Clear();
         homeCursors.Clear();
+        HomeAppending = false;
+        HomeAppendFailed = false;
         Videos = []; Channels = []; HomeShelves = []; Continuation = null;
     }
     public async Task SignInAsync()
@@ -203,6 +208,7 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
             }
             continuation = append ? Continuation : null;
             var label = view switch { BrowseView.Home => "Home videos", BrowseView.Subscriptions => "subscriptions", _ => "history" };
+            HomeAppending = append && view == BrowseView.Home;
             Busy = true; Status = append ? $"Loading more {label}…" : $"Loading {label}…"; Changed?.Invoke();
         });
         try
@@ -215,12 +221,17 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
                 var home = await api.GetHomeAsync(captured, account, continuation, op.Token);
                 epoch.Commit(op.Id, () =>
                 {
-                    HomeShelves = append ? HomeShelves.Concat(home.Shelves).ToArray() : home.Shelves;
-                    Videos = HomeShelves.SelectMany(shelf => shelf.Videos).ToArray();
+                    if (!append || home.Shelves.Count > 0)
+                    {
+                        HomeShelves = append ? HomeShelves.Concat(home.Shelves).ToArray() : home.Shelves;
+                        Videos = HomeShelves.SelectMany(shelf => shelf.Videos).ToArray();
+                    }
                     if (!append) homeCursors.Clear();
                     if (continuation is not null) homeCursors.Add(continuation);
                     var stopped = home.Continuation is not null && homeCursors.Contains(home.Continuation);
                     Continuation = stopped || string.IsNullOrWhiteSpace(home.Continuation) ? null : home.Continuation;
+                    // A continuation that adds no rows must not cause unbounded auto-fetches on a short viewport.
+                    HomeAppendFailed = append && home.Shelves.Count == 0 && Continuation is not null;
                     Status = stopped ? "YouTube repeated a Home page. Refresh to try again." : home.Message ?? "";
                 });
                 return;
@@ -248,7 +259,11 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
                 Status = page.Message ?? (Videos.Count == 0 ? "No history cards were returned for this account." : "");
             });
         }
-        catch (Exception error) { Fail(op.Id, error); }
+        catch (Exception error)
+        {
+            if (view == BrowseView.Home && append) epoch.Commit(op.Id, () => HomeAppendFailed = true);
+            Fail(op.Id, error);
+        }
         finally { if (restoring is null) Finish(op.Id); }
     }
     public async Task<string?> TryRecordWatchStartAsync(YouTubeAccount account, string videoId, TimeSpan duration, TimeSpan position, CancellationToken playbackToken = default, Action<YouTubeClient.WatchRecord>? onStarted = null)

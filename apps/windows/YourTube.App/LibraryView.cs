@@ -19,7 +19,9 @@ internal sealed partial class MainWindow
     private readonly LibraryThumbnails libraryThumbnails = new();
     private readonly Dictionary<SelectorItem, (GridView Feed, CancellationTokenSource Request)> libraryImages = new();
     private readonly ObservableCollection<HomeShelf> homeShelves = new();
-    private PointerEventHandler? homeShelfWheelHandler;
+    private ScrollViewer? homeScroller;
+    private double homeScrollOffset;
+    private bool homePageQueued;
     private HistoryVideo? libraryOrigin;
     private HomeShelf? homeOrigin;
     private bool? compactLibrary;
@@ -34,6 +36,68 @@ internal sealed partial class MainWindow
         var shelves = C<ListView>("HomeShelvesList");
         shelves.ItemsSource = homeShelves;
         shelves.ContainerContentChanging += (_, args) => RenderHomeShelf(args);
+        shelves.Loaded += (_, _) =>
+        {
+            shelves.ApplyTemplate();
+            if (FindFeedScroller(shelves) is not { } scroller || ReferenceEquals(homeScroller, scroller)) return;
+            DetachHomeScroller();
+            homeScroller = scroller;
+            homeScrollOffset = scroller.VerticalOffset;
+            scroller.ViewChanged += HomeViewChanged;
+        };
+        shelves.Unloaded += (_, _) => DetachHomeScroller();
+        shelves.LayoutUpdated += (_, _) =>
+        {
+            if (HomeUnderfilled()) QueueHomePage(underfilled: true);
+        };
+        // A downward gesture may not change the offset at the end of a short page.
+        shelves.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler((_, args) =>
+        {
+            var wheel = args.GetCurrentPoint(shelves).Properties;
+            if (!wheel.IsHorizontalMouseWheel && wheel.MouseWheelDelta < 0 && (args.KeyModifiers & VirtualKeyModifiers.Shift) == 0)
+                QueueHomePage();
+        }), handledEventsToo: true);
+        shelves.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler((_, args) =>
+        {
+            if (args.Key is VirtualKey.Down or VirtualKey.PageDown or VirtualKey.End) QueueHomePage();
+        }), handledEventsToo: true);
+    }
+
+    private void DetachHomeScroller()
+    {
+        if (homeScroller is { } scroller) scroller.ViewChanged -= HomeViewChanged;
+        homeScroller = null;
+    }
+
+    private void HomeViewChanged(object? sender, ScrollViewerViewChangedEventArgs args)
+    {
+        if (homeScroller is not { } scroller) return;
+        var movedDown = scroller.VerticalOffset > homeScrollOffset;
+        homeScrollOffset = scroller.VerticalOffset;
+        if (movedDown) QueueHomePage();
+    }
+
+    private bool HomeNearEnd() => homeScroller is { ViewportHeight: > 0 } scroller &&
+        scroller.ScrollableHeight - scroller.VerticalOffset <= scroller.ViewportHeight / 2;
+
+    private bool HomeUnderfilled() => homeScroller is { ViewportHeight: > 0, ScrollableHeight: 0 };
+
+    private void QueueHomePage(bool underfilled = false)
+    {
+        if (homePageQueued || !HomeNearEnd() || closed || settingsVisible || playback.Selected is not null ||
+            controller is not { Busy: false, Phase: SessionPhase.SignedIn, View: BrowseView.Home,
+                SelectedAccount: { } account, Continuation: { } cursor, HomeAppendFailed: false } current) return;
+        var rows = current.HomeShelves;
+        // Don't mutate the ItemsSource inside a native scroll/input callback.
+        homePageQueued = DispatcherQueue.TryEnqueue(async () =>
+        {
+            homePageQueued = false;
+            if (closed || settingsVisible || playback.Selected is not null || !HomeNearEnd() || (underfilled && !HomeUnderfilled()) ||
+                !ReferenceEquals(current, controller) || current is not { Busy: false, Phase: SessionPhase.SignedIn,
+                    View: BrowseView.Home, HomeAppendFailed: false } || !ReferenceEquals(account, current.SelectedAccount) ||
+                !ReferenceEquals(rows, current.HomeShelves) || cursor != current.Continuation) return;
+            await current.LoadHistoryAsync(append: true);
+        });
     }
 
     private void ArrangeLibraryNavigation(double width)
@@ -82,7 +146,7 @@ internal sealed partial class MainWindow
     {
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (closed || settingsVisible || playback.Selected is not null || controller is not { Phase: SessionPhase.SignedIn, Busy: false }) return;
+            if (closed || settingsVisible || playback.Selected is not null || controller is not { CanPlayFeed: true }) return;
             if (controller.View == BrowseView.Home)
             {
                 RestoreHomeFocus(origin);
@@ -121,8 +185,6 @@ internal sealed partial class MainWindow
         var shelf = !closed && !args.InRecycleQueue ? args.Item as HomeShelf : null;
         if (ReferenceEquals(feed.Tag, shelf)) return;
 
-        homeShelfWheelHandler ??= ForwardHomeShelfWheel;
-        if (feed.Tag is HomeShelf) feed.RemoveHandler(UIElement.PointerWheelChangedEvent, homeShelfWheelHandler);
         feed.Tag = null;
         feed.ItemsSource = null;
         CancelLibraryImages(feed);
@@ -137,34 +199,63 @@ internal sealed partial class MainWindow
         feed.Tag = shelf;
         feed.ContainerContentChanging += RenderShelfCard;
         feed.ItemClick += OpenHomeVideoAsync;
-        // A shelf GridView can handle the wheel before the outer ListView sees it.
-        feed.AddHandler(UIElement.PointerWheelChangedEvent, homeShelfWheelHandler, handledEventsToo: true);
+        if (host.Tag is null)
+        {
+            host.Tag = true;
+            WireHomeShelfWheel(feed);
+        }
         feed.ItemsSource = shelf.Videos;
         args.Handled = true;
     }
 
-    private void ForwardHomeShelfWheel(object sender, PointerRoutedEventArgs args)
+    private static ScrollViewer? FindFeedScroller(DependencyObject parent)
     {
-        if (closed || sender is not GridView { Tag: HomeShelf } feed) return;
-        var wheel = args.GetCurrentPoint(feed).Properties;
-        if (wheel.IsHorizontalMouseWheel || args.KeyModifiers != VirtualKeyModifiers.None) return;
-        if (wheel.MouseWheelDelta == 0) return;
-
-        var shelves = C<ListView>("HomeShelvesList");
-        ScrollViewer? outer = null;
-        var ancestor = VisualTreeHelper.GetParent(feed);
-        while (ancestor is not null && !ReferenceEquals(ancestor, shelves))
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
         {
-            if (ancestor is ScrollViewer scroller) outer = scroller;
-            ancestor = VisualTreeHelper.GetParent(ancestor);
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if (child is ScrollViewer scroller) return scroller;
+            if (FindFeedScroller(child) is { } descendant) return descendant;
         }
-        if (ancestor is null || outer is null) return;
+        return null;
+    }
 
-        const double dipPerNotch = 48;
-        const double wheelDeltaPerNotch = 120;
-        var offset = Math.Clamp(outer.VerticalOffset - wheel.MouseWheelDelta / wheelDeltaPerNotch * dipPerNotch, 0, outer.ScrollableHeight);
+    private void WireHomeShelfWheel(GridView feed)
+    {
+        Action? detach = null;
+        void Attach()
+        {
+            detach?.Invoke();
+            detach = null;
+            feed.ApplyTemplate();
+            if (FindFeedScroller(feed) is not { } scroller || scroller.Content is not UIElement wheelSurface) return;
+            // Intercept below the inner ScrollViewer, before native wheel-to-horizontal conversion.
+            scroller.HorizontalSnapPointsType = SnapPointsType.None;
+            PointerEventHandler handler = (_, args) => ForwardHomeShelfWheel(feed, scroller, args);
+            wheelSurface.AddHandler(UIElement.PointerWheelChangedEvent, handler, handledEventsToo: true);
+            detach = () => wheelSurface.RemoveHandler(UIElement.PointerWheelChangedEvent, handler);
+        }
+        feed.Loaded += (_, _) => Attach();
+        feed.Unloaded += (_, _) => { detach?.Invoke(); detach = null; };
+        if (feed.IsLoaded) Attach();
+    }
+
+    private void ForwardHomeShelfWheel(GridView feed, ScrollViewer scroller, PointerRoutedEventArgs args)
+    {
+        if (closed || feed.Tag is not HomeShelf) return;
+        var wheel = args.GetCurrentPoint(feed).Properties;
+        var delta = wheel.MouseWheelDelta / 120.0 * 48;
+        if (delta == 0) return;
         args.Handled = true;
-        if (offset != outer.VerticalOffset) outer.ChangeView(null, offset, null, disableAnimation: true);
+        if ((args.KeyModifiers & VirtualKeyModifiers.Shift) != 0)
+        {
+            var offset = Math.Clamp(scroller.HorizontalOffset + (wheel.IsHorizontalMouseWheel ? delta : -delta), 0, scroller.ScrollableWidth);
+            if (offset != scroller.HorizontalOffset) scroller.ChangeView(offset, null, null, disableAnimation: true);
+        }
+        else if (!wheel.IsHorizontalMouseWheel && homeScroller is { } outer)
+        {
+            var vertical = Math.Clamp(outer.VerticalOffset - delta, 0, outer.ScrollableHeight);
+            if (vertical != outer.VerticalOffset) outer.ChangeView(null, vertical, null, disableAnimation: true);
+        }
     }
 
     private void RenderShelfCard(ListViewBase sender, ContainerContentChangingEventArgs args) => RenderLibraryCard((GridView)sender, args, resize: false);
@@ -172,7 +263,7 @@ internal sealed partial class MainWindow
     private async void OpenHomeVideoAsync(object sender, ItemClickEventArgs args)
     {
         if (closed || settingsVisible || playback.Selected is not null ||
-            controller is not { Busy: false, Phase: SessionPhase.SignedIn, View: BrowseView.Home } current ||
+            controller is not { CanPlayFeed: true, View: BrowseView.Home } current ||
             sender is not GridView { Tag: HomeShelf shelf } || args.ClickedItem is not HistoryVideo video ||
             !current.HomeShelves.Any(candidate => ReferenceEquals(candidate, shelf)) ||
             !shelf.Videos.Any(candidate => ReferenceEquals(candidate, video))) return;

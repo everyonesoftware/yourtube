@@ -62,10 +62,20 @@ internal sealed class PlaybackController<T>(Func<string, CancellationToken, Task
     public void SetContext(bool eligible, object? account, BrowseView view, IReadOnlyList<HistoryVideo> feed)
     {
         if (disposed) return;
-        if (!eligible || !ReferenceEquals(this.account, account) || this.view != view || !ReferenceEquals(this.feed, feed)) Back();
+        if (!eligible || !ReferenceEquals(this.account, account) || this.view != view ||
+            (!ReferenceEquals(this.feed, feed) && !IsHomeAppend(view, feed))) Back();
         this.eligible = eligible && account is not null && view != BrowseView.Settings;
         this.account = account; this.view = view; this.feed = feed;
     }
+
+    private bool IsHomeAppend(BrowseView view, IReadOnlyList<HistoryVideo> next)
+    {
+        if (view != BrowseView.Home || feed.Count == 0 || next.Count <= feed.Count) return false;
+        for (var i = 0; i < feed.Count; i++)
+            if (!ReferenceEquals(feed[i], next[i])) return false;
+        return true;
+    }
+
     private bool CanSelect(HistoryVideo video) => !disposed && eligible && feed.Any(v => ReferenceEquals(v, video)) && BrowserPolicy.VideoUri(video.VideoId) is not null;
     public async Task SelectAsync(HistoryVideo video)
     {
