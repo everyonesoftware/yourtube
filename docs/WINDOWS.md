@@ -43,6 +43,10 @@ This checks real C#/WinUI references only. **Do not distribute this output:** it
 
 ## Publication and verification
 
+### History paging diagnostics
+
+If loading more **History** videos fails with an unsupported response, share only the `HP-…` code after **History diagnostic** in the feed status. It distinguishes response decoding (`R`), container selection (`C`), and card/cursor parsing (`I`). Any suffix uses fixed labels and JSON value types, not response content. No log, additional request, or upload is created. Do not share account details, watch history, tokens, cursors, or raw responses.
+
 ### Home acceptance (first Windows implementation)
 
 After sign-in, select a YouTube identity to load **Home**. Compare the Recommended and Shorts shelves with that identity’s YouTube TV Home feed when they’re available. Scrolling near the bottom automatically requests the next set of shelves when available. If that request fails, use **Retry loading more rows**. If YouTube does not supply Shorts, YourTube does not make up a shelf or fetch a separate Shorts feed. The page shows video cards, not channel or playlist tiles.

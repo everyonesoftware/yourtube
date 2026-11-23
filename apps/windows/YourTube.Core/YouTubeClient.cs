@@ -328,9 +328,72 @@ public sealed partial class YouTubeClient
         // AppClient.TV.browseTemplate carries these flags for history and continuation alike.
         var payload = new Dictionary<string, object?> { ["context"] = Context(account.PageId), ["racyCheckOk"] = true, ["contentCheckOk"] = true };
         payload[continuation is null ? "browseId" : "continuation"] = continuation ?? "FEhistory";
-        var json = await PostAsync("youtubei/v1/browse", payload, cancellationToken, session: session, pageId: account.PageId);
-        return ParseVideoPage(HistoryContainer(json));
+        JsonElement json = default;
+        var stage = "R";
+        try
+        {
+            json = await PostAsync("youtubei/v1/browse", payload, cancellationToken, session: session, pageId: account.PageId);
+            stage = "C";
+            var container = HistoryContainer(json);
+            stage = "I";
+            return ParseVideoPage(container);
+        }
+        catch (Exception error) when (continuation is not null &&
+            (error is YouTubeException { Code: "invalid_response" } or JsonException or InvalidOperationException or
+                KeyNotFoundException or FormatException or ArgumentException or RegexMatchTimeoutException or OverflowException))
+        {
+            throw HistoryPagingFailure(stage, json);
+        }
     }, cancellationToken);
+
+    private static YouTubeException HistoryPagingFailure(string stage, JsonElement json)
+    {
+        // Emit only fixed labels and JSON kinds: never copy response keys or values into the message.
+        var parts = new List<string> { "HP-" + stage };
+        void Add(string label, JsonElement value)
+        {
+            if (value.ValueKind == JsonValueKind.Undefined) return;
+            parts.Add(label + ":" + (value.ValueKind switch
+            {
+                JsonValueKind.Object => "o",
+                JsonValueKind.Array => "a",
+                JsonValueKind.Null => "n",
+                _ => "v"
+            }));
+        }
+
+        var content = At(json, "contents");
+        var tv = At(content, "tvBrowseRenderer", "content");
+        var continuation = At(json, "continuationContents");
+        Add("F", content);
+        Add("T", tv);
+        Add("N", At(tv, "tvSecondaryNavRenderer"));
+        Add("S", At(tv, "tvSurfaceContentRenderer", "content"));
+        Add("K", continuation);
+        Add("G", At(continuation, "gridContinuation"));
+        Add("L", At(continuation, "sectionListContinuation"));
+        Add("H", At(continuation, "horizontalListContinuation"));
+        Add("P", At(continuation, "playlistVideoListContinuation"));
+        Add("V", At(continuation, "tvSurfaceContentContinuation", "content"));
+        if (continuation.ValueKind == JsonValueKind.Object && continuation.EnumerateObject().Take(12).Any(property =>
+            property.Name is not ("gridContinuation" or "sectionListContinuation" or "horizontalListContinuation" or
+                "playlistVideoListContinuation" or "tvSurfaceContentContinuation")))
+            Add("D", continuation);
+
+        foreach (var (key, label) in new[] { ("onResponseReceivedActions", "A"), ("onResponseReceivedEndpoints", "E"), ("onResponseReceivedCommands", "M") })
+        {
+            var actions = At(json, key);
+            Add(label, actions);
+            if (actions.ValueKind != JsonValueKind.Array) continue;
+            foreach (var (command, suffix) in new[] { ("appendContinuationItemsAction", "A"), ("reloadContinuationItemsCommand", "R"), ("reloadContinuationItemsAction", "X") })
+            {
+                var match = actions.EnumerateArray().Take(12).Select(action => At(action, command))
+                    .FirstOrDefault(value => value.ValueKind != JsonValueKind.Undefined);
+                Add(label + suffix, match);
+            }
+        }
+        return new YouTubeException("invalid_response", "YouTube returned an unsupported response. History diagnostic: " + string.Join('/', parts));
+    }
 
     private static HistoryPage ParseVideoPage(JsonElement container)
     {

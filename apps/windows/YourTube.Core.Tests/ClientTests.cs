@@ -512,4 +512,21 @@ public sealed class ClientTests
         Assert.Empty(page.Videos);
         Assert.Null(page.Continuation);
     }
+
+    [Theory]
+    [InlineData("not JSON private-marker", "HP-R")]
+    [InlineData("{\"continuationContents\":{\"private-marker\":{}},\"onResponseReceivedCommands\":[{\"reloadContinuationItemsCommand\":{\"slot\":\"private-marker\"}}]}", "HP-C/K:o/D:o/M:a/MR:o")]
+    [InlineData("{\"continuationContents\":{\"gridContinuation\":{\"continuations\":[{\"nextContinuationData\":{\"continuation\":null}}],\"items\":[{\"videoRenderer\":{\"title\":\"private-marker\"}}]}}}", "HP-I/K:o/G:o")]
+    public async Task HistoryPagingFailureIncludesOnlyAllowlistedDiagnostic(string response, string diagnostic)
+    {
+        using var transport = new Transport(Html, Script, response);
+        using var http = new HttpClient(transport);
+        var clock = new Clock();
+        var error = await Assert.ThrowsAsync<YouTubeException>(() => clock.Client(http).GetHistoryAsync(
+            new("private-access", "private-refresh", clock.Now.AddHours(1)), new("private-name", null, "private-page"), "private-cursor"));
+        Assert.Equal("invalid_response", error.Code);
+        Assert.Equal($"YouTube returned an unsupported response. History diagnostic: {diagnostic}", error.Message);
+        Assert.Null(error.InnerException);
+        Assert.Equal(3, transport.Requests.Count);
+    }
 }
