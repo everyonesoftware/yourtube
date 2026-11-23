@@ -128,24 +128,12 @@
     </ScrollViewer>
   </Grid>
   </Grid>
-  <ScrollViewer x:Name="TheaterPanel" Grid.Row="1" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+  <ScrollViewer x:Name="TheaterPanel" Grid.Row="1" Visibility="Collapsed" VerticalScrollBarVisibility="Auto"
+                HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled" ZoomMode="Disabled"
+                HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
     <Grid>
-      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-      <Grid x:Name="TheaterHeader" Padding="28,0,28,12" ColumnSpacing="16">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-        <Button x:Name="PlayerBackButton" Content="Back to videos" Foreground="#c0d7ae"/>
-        <TextBlock x:Name="PlayerFeedLabel" Grid.Column="1" VerticalAlignment="Center" Foreground="{StaticResource Muted}"/>
-        <Button x:Name="PlayerSettingsPageButton" Grid.Column="2" Background="Transparent" BorderThickness="0" AutomationProperties.Name="Settings">
-          <StackPanel Orientation="Horizontal" Spacing="9">
-            <TextBlock Text="Settings"/>
-            <Ellipse x:Name="PlayerSettingsUpdateDot" Width="7" Height="7" VerticalAlignment="Center"
-                     Fill="{ThemeResource AccentTextFillColorPrimaryBrush}" Visibility="Collapsed"
-                     IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
-          </StackPanel>
-        </Button>
-      </Grid>
-      <Grid x:Name="PlayerStageSlot" Grid.Row="1">
-        <Grid x:Name="PlayerStage" Height="450" Background="Black">
+      <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Grid x:Name="PlayerStage" Background="Black">
           <MediaPlayerElement x:Name="TheaterPlayer" AreTransportControlsEnabled="False" AutoPlay="False" Stretch="Uniform" AutomationProperties.Name="Native video player"/>
           <Border x:Name="PlayerVideoHitArea" Background="Transparent" IsDoubleTapEnabled="False" AutomationProperties.AccessibilityView="Raw"/>
           <Border x:Name="PlayerTapFeedback" Width="72" Height="72" CornerRadius="36" Background="#B3000000"
@@ -163,12 +151,13 @@
             </Grid>
             <Grid ColumnSpacing="4">
               <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-              <StackPanel Orientation="Horizontal" Spacing="4">
+              <Grid ColumnSpacing="4">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                 <Button x:Name="PlayerPlay" Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Play" AutomationProperties.Name="Play"><FontIcon Glyph="&#xE768;" FontSize="18"/></Button>
-                <Button x:Name="PlayerMute" Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Mute" AutomationProperties.Name="Mute"><FontIcon Glyph="&#xE767;" FontSize="17"/></Button>
-                <Slider x:Name="PlayerVolume" Width="70" Minimum="0" Maximum="100" Value="100" VerticalAlignment="Center" IsThumbToolTipEnabled="False" AutomationProperties.Name="Volume"/>
-                <TextBlock x:Name="PlayerTime" VerticalAlignment="Center" Text="0:00 / 0:00" Margin="6,0,0,0" TextTrimming="CharacterEllipsis"/>
-              </StackPanel>
+                <Button x:Name="PlayerMute" Grid.Column="1" Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Mute" AutomationProperties.Name="Mute"><FontIcon Glyph="&#xE767;" FontSize="17"/></Button>
+                <Slider x:Name="PlayerVolume" Grid.Column="2" Width="70" Minimum="0" Maximum="100" Value="100" VerticalAlignment="Center" IsThumbToolTipEnabled="False" AutomationProperties.Name="Volume"/>
+                <TextBlock x:Name="PlayerTime" Grid.Column="3" VerticalAlignment="Center" Text="0:00 / 0:00" Margin="6,0,0,0" TextTrimming="CharacterEllipsis"/>
+              </Grid>
               <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
                 <Button x:Name="PlayerSettingsGear" Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Player settings" AutomationProperties.Name="Player settings"><FontIcon Glyph="&#xE713;" FontSize="18"/><Button.Flyout><MenuFlyout Placement="TopEdgeAlignedRight"/></Button.Flyout></Button>
                 <Button x:Name="PlayerFullscreen" Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Fullscreen" AutomationProperties.Name="Fullscreen"><FontIcon Glyph="&#xE740;" FontSize="18"/></Button>
@@ -180,9 +169,8 @@
                   ToolTipService.ToolTip="Close video" AutomationProperties.Name="Close video">
             <FontIcon Glyph="&#xE711;" FontSize="14" AutomationProperties.AccessibilityView="Raw"/>
           </Button>
-        </Grid>
       </Grid>
-      <StackPanel x:Name="TheaterDetails" Grid.Row="2" Padding="28,20,28,28" Spacing="14">
+      <StackPanel x:Name="TheaterDetails" Grid.Row="1" Padding="28,20,28,28" Spacing="14">
         <TextBlock x:Name="PlayerTitle" FontSize="25" FontWeight="SemiBold" TextWrapping="Wrap"/>
         <TextBlock x:Name="PlayerAuthor" Foreground="#c0d7ae" TextWrapping="Wrap"/>
         <TextBlock x:Name="PlayerError" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" Visibility="Collapsed"/>
@@ -190,6 +178,7 @@
           <Button x:Name="PlayerRetryButton" Content="Retry native playback" Visibility="Collapsed"/>
           <Button x:Name="PlayerOpenYouTubeButton" Content="Open YouTube"/>
         </StackPanel>
+        <TextBlock x:Name="PlayerBrowserNotice" Visibility="Collapsed" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
         <TextBlock x:Name="PlayerDescription" TextWrapping="Wrap" MaxHeight="180" IsTextSelectionEnabled="True"/>
         <TextBlock x:Name="PlayerQueueLabel" FontSize="19" FontWeight="SemiBold"/>
         <ListView x:Name="PlayerQueue" ItemTemplate="{StaticResource HistoryRowTemplate}" IsItemClickEnabled="True" SelectionMode="None" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollMode="Enabled" ScrollViewer.VerticalScrollMode="Disabled" AutomationProperties.Name="Up next from current feed">

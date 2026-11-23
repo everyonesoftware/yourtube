@@ -15,6 +15,22 @@ internal static class WiringTests
         StateTests.Verify(names.TryGetValue("TheaterPlayer", out var playerType) && playerType == "MediaPlayerElement", "Theater uses a genuine native MediaPlayerElement");
         XElement Named(string name) => xml.Descendants().Single(e => (string?)e.Attribute(x + "Name") == name);
         var player = Named("TheaterPlayer");
+        var theater = Named("TheaterPanel");
+        var stage = Named("PlayerStage");
+        StateTests.Verify((string?)player.Attribute("Stretch") == "Uniform" &&
+            (string?)theater.Attribute("HorizontalScrollMode") == "Disabled" &&
+            code.Contains("PlayerStageLayout.FitHeight(viewportWidth, viewportHeight)") &&
+            code.Contains("theater.SizeChanged += (_, args) => ResizePlayerStage(args.NewSize.Width, args.NewSize.Height);"),
+            "the windowed stage fits the scroll viewport in both dimensions without distorting the picture");
+        StateTests.Verify(stage.Parent == Named("TheaterDetails").Parent &&
+            stage.ElementsAfterSelf().Contains(Named("TheaterDetails")), "details remain below the video in the same scroller");
+        StateTests.Verify(names.ContainsKey("PlayerBrowserNotice") && Named("PlayerBrowserNotice").Parent == Named("TheaterDetails") &&
+            (string?)Named("PlayerBrowserNotice").Attribute("AutomationProperties.LiveSetting") == "Polite" &&
+            Regex.IsMatch(code, @"if \(video is not null\) ShowPlayerBrowserNotice\(message\);\s*else") &&
+            Regex.IsMatch(code, @"if \(!ReferenceEquals\(selected, watchSelection\)\)\s*\{\s*ShowPlayerBrowserNotice\(null\);"),
+            "a failed Open YouTube launch is announced beside the action and clears when the video changes");
+        StateTests.Verify(!names.ContainsKey("TheaterHeader") && !names.ContainsKey("PlayerBackButton") &&
+            !names.ContainsKey("PlayerSettingsPageButton"), "Theater has no separate navigation or app Settings row");
         var overlay = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "PlayerOverlay");
         StateTests.Verify(overlay is not null && player.Parent == overlay.Parent && (string?)player.Attribute("AreTransportControlsEnabled") == "False",
             "one custom native transport overlay shares the video stage instead of a below-video strip");
@@ -24,13 +40,13 @@ internal static class WiringTests
             (string?)close.Attribute("AutomationProperties.Name") == "Close video",
             "the top-right close action is on the stage and remains reachable independently of the transport");
         StateTests.Verify(code.Contains("C<Button>(\"PlayerCloseButton\").Click += (_, _) => CloseVideo();") &&
-            code.Contains("C<Button>(\"PlayerBackButton\").Click += (_, _) => CloseVideo();") &&
             Regex.IsMatch(code, @"void CloseVideo\(\)\s*\{[^}]*playback\.Back\(\);\s*RestoreLibraryFocus\(origin\);"),
-            "close and Back share the existing feed return and restore focus to the original card");
+            "close returns to the feed and restores focus to the original card");
         StateTests.Verify(code.Contains("stage.PointerEntered +=") && code.Contains("UIElement.PointerMovedEvent") &&
             code.Contains("stage.PointerExited +=") && code.Contains("overlay.OpacityTransition") &&
+            code.Contains("PlayerControlsVisibility.ShouldShow(fullscreen, playerRunning,") &&
             code.Contains("overlay.IsHitTestVisible = show;"),
-            "routed activity drives the transport fade without leaving an invisible mouse hit target");
+            "routed activity drives the fullscreen transport fade without leaving an invisible mouse hit target");
         var videoHitArea = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "PlayerVideoHitArea");
         StateTests.Verify(videoHitArea is not null && videoHitArea.Parent == player.Parent &&
             (string?)videoHitArea.Attribute("Background") == "Transparent" && videoHitArea.ElementsBeforeSelf().Contains(player) &&
@@ -49,7 +65,6 @@ internal static class WiringTests
             "only video taps that send a command to the current player show feedback; the button shares the guarded toggle");
         StateTests.Verify(Regex.IsMatch(code, @"if \(playback\.QualityBusy\)\s*\{[^}]*playerTapFade\?\.Stop\(\);"),
             "feedback resets when quality switching starts, before a candidate can attach");
-        var theater = Named("TheaterPanel");
         var fullscreenChange = Regex.Match(code, @"private void SetFullscreen\(bool enabled, bool restoreFocus\)[\s\S]*?\r?\n    \}").Value;
         StateTests.Verify(player.Ancestors().Contains(theater) && fullscreenChange.Length > 0 &&
             !Regex.IsMatch(fullscreenChange, @"\.Children\.(Add|Remove|Clear|Insert|RemoveAt)\("),
@@ -72,7 +87,7 @@ internal static class WiringTests
         StateTests.Verify(code.Contains("ChangeQualityAsync(active, height") && code.Contains("playbackResolver.ForQuality(active.Catalog, height)"), "native quality menu drives the validated manifest switch");
         StateTests.Verify(!names.ContainsKey("PlayerOverlayNext") && !names.ContainsKey("PlayerNextButton") &&
             !code.Contains("playback.NextAsync()"), "Theater has no dedicated Next button; the Up next shelf remains available");
-        foreach (var action in new[] { "PlayerBackButton", "PlayerRetryButton", "PlayerOpenYouTubeButton" })
+        foreach (var action in new[] { "PlayerRetryButton", "PlayerOpenYouTubeButton" })
             StateTests.Verify(code.Contains($"C<Button>(\"{action}\").Click +="), "native player action wired: " + action);
         StateTests.Verify(code.Contains("playback.Selected is not null && playback.Queue.Any(v => ReferenceEquals(v, video))"), "hidden or stale Up next activation is rejected before shared membership gate");
         StateTests.Verify(code.Contains("playback.Selected is not null || controller is not"), "hidden browse rows cannot activate over Theater");
@@ -181,10 +196,11 @@ internal static class WiringTests
         StateTests.Verify(accountFooter.Parent == xml.Root && (string?)accountFooter.Attribute("Grid.Row") == "2" &&
             accountButton.Parent == accountFooter && (string?)accountButton.Attribute("HorizontalAlignment") == "Left" &&
             (string?)accountButton.Descendants().Single(e => e.Name.LocalName == "MenuFlyout").Attribute("Placement") == "TopEdgeAlignedLeft" &&
-            fullscreenChange.Contains("C<Grid>(\"ShellFooter\").Visibility = chromeVisibility;") &&
+            code.Contains("C<Grid>(\"ShellFooter\").Visibility = ToVisibility(!showTheater);") &&
+            !fullscreenChange.Contains("ShellFooter") &&
             fullscreenChange.Contains("Grid.SetRow(theater, enabled ? 0 : 1);") &&
             (string?)theater.Attribute("Grid.Row") == "1" && !names.ContainsKey("AccountChooser"),
-            "the account menu anchors to the bottom left in every windowed view and opens upward");
+            "the account menu opens upward from the bottom left outside Theater and stays hidden during fullscreen transitions");
         StateTests.Verify(names.TryGetValue("AccountAvatar", out var avatarType) && avatarType == "Ellipse" &&
             Named("AccountAvatar").Ancestors().Contains(accountButton) &&
             (string?)Named("AccountAvatar").Attribute("Visibility") == "Collapsed" &&
@@ -220,10 +236,7 @@ internal static class WiringTests
         StateTests.Verify(code.Contains("updatesPanel.UpdateAvailabilityChanged += RenderSettingsButton;") &&
             code.Contains("!settingsVisible && updatesPanel.HasUpdate") && code.Contains("Settings, update available"),
             "Settings badge follows updater state and announces the update through the existing button");
-        StateTests.Verify(Named("PlayerSettingsPageButton").Descendants().Any(e => (string?)e.Attribute(x + "Name") == "PlayerSettingsUpdateDot" &&
-            (string?)e.Attribute("Visibility") == "Collapsed") && code.Contains("C<Ellipse>(\"PlayerSettingsUpdateDot\").Visibility = ToVisibility(showDot)") &&
-            code.Contains("AutomationProperties.SetName(C<Button>(\"PlayerSettingsPageButton\"), accessibleName)"),
-            "the visible Settings button in windowed Theater shows and announces the same available update");
+
         var program = File.ReadAllText(Path.Combine(app, "Program.cs"));
         StateTests.Verify(program.IndexOf("SetAutoApplyOnStartup(false)", StringComparison.Ordinal) < program.IndexOf("InitializeComWrappers", StringComparison.Ordinal), "explicit Velopack lifecycle runs before WinUI");
         var project = XDocument.Load(Path.Combine(app, "YourTube.App.csproj"));

@@ -105,7 +105,6 @@ internal sealed partial class MainWindow : Window
             PlaybackTiming.StartIfEnabled);
         playback.Changed += RenderPlayback;
         WirePlayerOverlay();
-        C<Button>("PlayerBackButton").Click += (_, _) => CloseVideo();
         C<Button>("PlayerCloseButton").Click += (_, _) => CloseVideo();
         C<Button>("PlayerRetryButton").Click += async (_, _) => { SyncPlaybackContext(); await playback.RetryAsync(); };
         C<Button>("PlayerOpenYouTubeButton").Click += async (_, _) =>
@@ -121,7 +120,6 @@ internal sealed partial class MainWindow : Window
         };
 
         C<Button>("SettingsButton").Click += async (_, _) => await NavigateAsync(settingsVisible ? lastBrowseView : BrowseView.Settings);
-        C<Button>("PlayerSettingsPageButton").Click += async (_, _) => await NavigateAsync(BrowseView.Settings);
         C<Button>("HomeButton").Click += async (_, _) => await NavigateAsync(BrowseView.Home);
         C<Button>("HistoryButton").Click += async (_, _) => await NavigateAsync(BrowseView.History);
         C<Button>("SubscriptionsButton").Click += async (_, _) => await NavigateAsync(BrowseView.Subscriptions);
@@ -260,10 +258,8 @@ internal sealed partial class MainWindow : Window
         string label = settingsVisible ? "Back" : "Settings";
         C<TextBlock>("SettingsButtonLabel").Text = label;
         C<Ellipse>("SettingsUpdateDot").Visibility = ToVisibility(showDot);
-        C<Ellipse>("PlayerSettingsUpdateDot").Visibility = ToVisibility(showDot);
         string accessibleName = showDot ? "Settings, update available" : "Settings";
         AutomationProperties.SetName(C<Button>("SettingsButton"), settingsVisible ? label : accessibleName);
-        AutomationProperties.SetName(C<Button>("PlayerSettingsPageButton"), accessibleName);
     }
 
     private void UpdateTitleBarInsets()
@@ -499,14 +495,20 @@ internal sealed partial class MainWindow : Window
     {
         if (closed) return;
         var selected = playback.Selected;
+        var theater = C<ScrollViewer>("TheaterPanel");
         if (!ReferenceEquals(selected, watchSelection))
         {
+            ShowPlayerBrowserNotice(null);
+            if (theater.VerticalOffset > 0) theater.ChangeView(null, 0, null, disableAnimation: true);
             CancelWatchRequest();
             watchSelection = selected;
             watchAttempted = false;
         }
-        C<Grid>("BrowseAndSettings").Visibility = ToVisibility(!fullscreen && (selected is null || settingsVisible));
-        C<ScrollViewer>("TheaterPanel").Visibility = ToVisibility(selected is not null && !settingsVisible);
+        bool showTheater = selected is not null && !settingsVisible;
+        if (showTheater && theater.Visibility != Visibility.Visible) C<Button>("AccountButton").Flyout.Hide();
+        C<Grid>("BrowseAndSettings").Visibility = ToVisibility(!fullscreen && !showTheater);
+        theater.Visibility = ToVisibility(showTheater);
+        C<Grid>("ShellFooter").Visibility = ToVisibility(!showTheater);
         C<Grid>("HistoryPanel").Visibility = ToVisibility(selected is null && !settingsVisible && controller?.Phase == SessionPhase.SignedIn);
         var source = playback.Active;
         if (!ReferenceEquals(source, boundSession))
@@ -558,7 +560,6 @@ internal sealed partial class MainWindow : Window
             BrowseView.Subscriptions => "subscriptions",
             _ => "history"
         };
-        C<TextBlock>("PlayerFeedLabel").Text = $"{label} / Now playing";
         C<TextBlock>("PlayerQueueLabel").Text = playback.Queue.Count == 0 ? $"No other videos loaded in {label}" : $"Up next · from your loaded {label}";
         C<ListView>("PlayerQueue").ItemsSource = playback.Queue;
         UpdatePlayerOverlay();
@@ -604,10 +605,8 @@ internal sealed partial class MainWindow : Window
         PlayerMenu.Opening += (_, _) => PopulatePlayerMenu();
         PlayerMenu.Opened += (_, _) => { playerMenuOpen = true; UpdatePlayerControlsVisibility(); };
         PlayerMenu.Closed += (_, _) => { playerMenuOpen = false; UpdatePlayerControlsVisibility(); };
-        C<Grid>("PlayerStageSlot").SizeChanged += (_, args) =>
-        {
-            if (!fullscreen && args.NewSize.Width > 0) ResizePlayerStage(args.NewSize.Width);
-        };
+        var theater = C<ScrollViewer>("TheaterPanel");
+        theater.SizeChanged += (_, args) => ResizePlayerStage(args.NewSize.Width, args.NewSize.Height);
         stage.SizeChanged += (_, args) =>
             C<Slider>("PlayerVolume").Visibility = ToVisibility(args.NewSize.Width >= 450);
         C<Button>("PlayerPlay").Click += (_, _) => TogglePlayerPlayback();
@@ -705,7 +704,7 @@ internal sealed partial class MainWindow : Window
                 break;
             }
         }
-        bool show = PlayerControlsVisibility.ShouldShow(playerRunning, lastPlayerMouseActivity, Environment.TickCount64, interacting);
+        bool show = PlayerControlsVisibility.ShouldShow(fullscreen, playerRunning, lastPlayerMouseActivity, Environment.TickCount64, interacting);
         if (overlay.IsHitTestVisible == show) return;
         overlay.OpacityTransition = show ? playerFadeIn : playerFadeOut;
         overlay.Opacity = show ? 1 : 0;
@@ -783,7 +782,6 @@ internal sealed partial class MainWindow : Window
     private void SetFullscreen(bool enabled, bool restoreFocus)
     {
         if (enabled == fullscreen) return;
-        var slot = C<Grid>("PlayerStageSlot");
         var stage = C<Grid>("PlayerStage");
         var theater = C<ScrollViewer>("TheaterPanel");
         PlayerMenu.Hide();
@@ -808,25 +806,27 @@ internal sealed partial class MainWindow : Window
         // Resize Theater in place: moving the stage disconnects the live player and its focused controls.
         var chromeVisibility = ToVisibility(!enabled);
         C<Border>("TitleBar").Visibility = chromeVisibility;
-        C<Grid>("ShellFooter").Visibility = chromeVisibility;
         if (!enabled) UpdateTitleBarInsets();
         C<Grid>("BrowseAndSettings").Visibility = ToVisibility(!enabled && (playback.Selected is null || settingsVisible));
-        if (enabled) C<Button>("AccountButton").Flyout.Hide();
         RenderStatus();
-        C<Grid>("TheaterHeader").Visibility = chromeVisibility;
         C<StackPanel>("TheaterDetails").Visibility = chromeVisibility;
         Grid.SetRow(theater, enabled ? 0 : 1);
         Grid.SetRowSpan(theater, enabled ? root.RowDefinitions.Count : 1);
         theater.VerticalScrollBarVisibility = enabled ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
         theater.TabFocusNavigation = enabled ? KeyboardNavigationMode.Cycle : KeyboardNavigationMode.Local;
         if (enabled) stage.Height = double.NaN;
-        else ResizePlayerStage(slot.ActualWidth);
+        else ResizePlayerStage(theater.ActualWidth, theater.ActualHeight);
         var button = C<Button>("PlayerFullscreen");
         SetIconAction(button, enabled ? "\uE73F" : "\uE740", enabled ? "Exit fullscreen" : "Fullscreen");
         if (restoreFocus) button.Focus(FocusState.Programmatic);
+        UpdatePlayerControlsVisibility();
     }
 
-    private void ResizePlayerStage(double width) => C<Grid>("PlayerStage").Height = Math.Clamp(width * 9 / 16, 240, 650);
+    private void ResizePlayerStage(double viewportWidth, double viewportHeight)
+    {
+        if (!fullscreen && viewportWidth > 0 && viewportHeight > 0)
+            C<Grid>("PlayerStage").Height = PlayerStageLayout.FitHeight(viewportWidth, viewportHeight);
+    }
 
     private void CancelScrub()
     {
@@ -1194,13 +1194,26 @@ internal sealed partial class MainWindow : Window
     {
         var video = playback.Selected;
         var authorization = controller?.Authorization;
+        if (video is not null) ShowPlayerBrowserNotice(null);
         try
         {
             if (await Launcher.LaunchUriAsync(uri)) return;
         }
         catch { }
         if (closed || settingsVisible || !ReferenceEquals(video, playback.Selected) || !ReferenceEquals(authorization, controller?.Authorization)) return;
-        browserNotice = "Windows could not open your default browser.";
-        RenderStatus();
+        const string message = "Windows could not open your default browser.";
+        if (video is not null) ShowPlayerBrowserNotice(message);
+        else
+        {
+            browserNotice = message;
+            RenderStatus();
+        }
+    }
+
+    private void ShowPlayerBrowserNotice(string? message)
+    {
+        var notice = C<TextBlock>("PlayerBrowserNotice");
+        notice.Visibility = ToVisibility(message is not null);
+        notice.Text = message ?? "";
     }
 }
