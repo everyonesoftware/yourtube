@@ -46,7 +46,7 @@ internal sealed partial class MainWindow : Window
     private Storyboard? playerTapFade;
     private bool playerRunning;
     private Windows.Foundation.Point? playerMousePosition;
-    private long? lastPlayerMouseActivity;
+    private long? lastPlayerActivity;
     private readonly ScalarTransition playerFadeIn = new() { Duration = TimeSpan.FromMilliseconds(110) };
     private readonly ScalarTransition playerFadeOut = new() { Duration = TimeSpan.FromMilliseconds(220) };
     private bool updatingTransport;
@@ -598,10 +598,10 @@ internal sealed partial class MainWindow : Window
         {
             if (args.Pointer.PointerDeviceType != Microsoft.UI.Input.PointerDeviceType.Mouse) return;
             playerMousePosition = null;
-            lastPlayerMouseActivity = null;
+            lastPlayerActivity = null;
             UpdatePlayerControlsVisibility();
         };
-        C<StackPanel>("PlayerOverlay").GotFocus += (_, _) => UpdatePlayerControlsVisibility();
+        C<Grid>("PlayerOverlay").GotFocus += (_, _) => UpdatePlayerControlsVisibility();
         PlayerMenu.Opening += (_, _) => PopulatePlayerMenu();
         PlayerMenu.Opened += (_, _) => { playerMenuOpen = true; UpdatePlayerControlsVisibility(); };
         PlayerMenu.Closed += (_, _) => { playerMenuOpen = false; UpdatePlayerControlsVisibility(); };
@@ -612,7 +612,12 @@ internal sealed partial class MainWindow : Window
         C<Button>("PlayerPlay").Click += (_, _) => TogglePlayerPlayback();
         C<Border>("PlayerVideoHitArea").Tapped += (_, args) =>
         {
-            TogglePlayerPlayback(showFeedback: true);
+            if (args.PointerDeviceType != Microsoft.UI.Input.PointerDeviceType.Mouse && !C<Grid>("PlayerOverlay").IsHitTestVisible)
+            {
+                lastPlayerActivity = Environment.TickCount64;
+                UpdatePlayerControlsVisibility();
+            }
+            else TogglePlayerPlayback(showFeedback: true);
             args.Handled = true;
         };
         C<Button>("PlayerMute").Click += (_, _) =>
@@ -684,14 +689,14 @@ internal sealed partial class MainWindow : Window
             point.Y >= 0 && point.Y < stage.ActualHeight ? point : null;
         if (Nullable.Equals(position, playerMousePosition)) return;
         playerMousePosition = position;
-        lastPlayerMouseActivity = position is not null ? Environment.TickCount64 : null;
+        lastPlayerActivity = position is not null ? Environment.TickCount64 : null;
         UpdatePlayerControlsVisibility();
     }
 
     private void UpdatePlayerControlsVisibility()
     {
         if (closed) return;
-        var overlay = C<StackPanel>("PlayerOverlay");
+        var overlay = C<Grid>("PlayerOverlay");
         if (overlay.Visibility != Visibility.Visible) return;
         bool interacting = playerMenuOpen || seekPointer is not null;
         if (!interacting && root.XamlRoot is { } xamlRoot &&
@@ -704,7 +709,7 @@ internal sealed partial class MainWindow : Window
                 break;
             }
         }
-        bool show = PlayerControlsVisibility.ShouldShow(fullscreen, playerRunning, lastPlayerMouseActivity, Environment.TickCount64, interacting);
+        bool show = PlayerControlsVisibility.ShouldShow(playerRunning, lastPlayerActivity, Environment.TickCount64, interacting);
         if (overlay.IsHitTestVisible == show) return;
         overlay.OpacityTransition = show ? playerFadeIn : playerFadeOut;
         overlay.Opacity = show ? 1 : 0;
@@ -916,22 +921,28 @@ internal sealed partial class MainWindow : Window
     {
         if (closed) return;
         var session = playback.Active;
-        bool ready = !settingsVisible && session is { IsOpened: true, HasFailed: false };
-        var overlay = C<StackPanel>("PlayerOverlay");
-        overlay.Visibility = ToVisibility(ready);
+        bool theaterActive = !settingsVisible && playback.Selected is not null;
+        bool ready = theaterActive && session is { IsOpened: true, HasFailed: false };
+        var overlay = C<Grid>("PlayerOverlay");
+        overlay.Visibility = ToVisibility(theaterActive);
+        C<StackPanel>("PlayerTransport").Visibility = ToVisibility(ready);
         if (!ready)
         {
             watchProgress.BreakSegment();
             playerRunning = false;
             if (playback.Selected is null)
             {
-                lastPlayerMouseActivity = null;
+                lastPlayerActivity = null;
                 playerMousePosition = null;
             }
-            overlay.OpacityTransition = null;
-            overlay.Opacity = 0;
-            overlay.IsHitTestVisible = false;
+            if (!theaterActive)
+            {
+                overlay.OpacityTransition = null;
+                overlay.Opacity = 0;
+                overlay.IsHitTestVisible = false;
+            }
             playerClock?.Stop();
+            UpdatePlayerControlsVisibility();
             return;
         }
         if (playerClock is { IsRunning: false }) playerClock.Start();
@@ -964,7 +975,7 @@ internal sealed partial class MainWindow : Window
                 }
                 var playing = IsPlaying(view.PlaybackState);
                 if (playing && !playerRunning && playerMousePosition is not null)
-                    lastPlayerMouseActivity = Environment.TickCount64;
+                    lastPlayerActivity = Environment.TickCount64;
                 playerRunning = playing;
                 SetIconAction(C<Button>("PlayerPlay"), playing ? PauseGlyph : PlayGlyph, playing ? "Pause" : "Play");
                 var muted = player.IsMuted || player.Volume == 0;

@@ -142,7 +142,8 @@
             <FontIcon x:Name="PlayerTapIcon" FontSize="30" Foreground="White" AutomationProperties.AccessibilityView="Raw"/>
           </Border>
           <ProgressRing x:Name="PlayerBusyRing" Width="36" Height="36" Visibility="Collapsed" IsHitTestVisible="False"/>
-          <StackPanel x:Name="PlayerOverlay" VerticalAlignment="Bottom" Padding="12,8,12,6" Visibility="Collapsed" Opacity="0" IsHitTestVisible="False" AutomationProperties.Name="Playback controls">
+          <Grid x:Name="PlayerOverlay" Visibility="Collapsed" Opacity="0" IsHitTestVisible="False" AutomationProperties.Name="Playback controls">
+            <StackPanel x:Name="PlayerTransport" VerticalAlignment="Bottom" Padding="12,8,12,6" Visibility="Collapsed">
             <StackPanel.Background><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#00000000" Offset="0"/><GradientStop Color="#E6000000" Offset="0.55"/><GradientStop Color="#F5000000" Offset="1"/></LinearGradientBrush></StackPanel.Background>
             <TextBlock x:Name="PlayerQualityStatus" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" Foreground="{StaticResource Muted}" Visibility="Collapsed"/>
             <Grid>
@@ -163,12 +164,13 @@
                 <Button x:Name="PlayerFullscreen" Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Fullscreen" AutomationProperties.Name="Fullscreen"><FontIcon Glyph="&#xE740;" FontSize="18"/></Button>
               </StackPanel>
             </Grid>
-          </StackPanel>
-          <Button x:Name="PlayerCloseButton" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="12"
-                  Width="36" Height="36" Padding="0" Background="#B3000000" Foreground="White" BorderThickness="0" CornerRadius="18"
-                  ToolTipService.ToolTip="Close video" AutomationProperties.Name="Close video">
-            <FontIcon Glyph="&#xE711;" FontSize="14" AutomationProperties.AccessibilityView="Raw"/>
-          </Button>
+            </StackPanel>
+            <Button x:Name="PlayerCloseButton" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="12"
+                    Width="36" Height="36" Padding="0" Background="#B3000000" Foreground="White" BorderThickness="0" CornerRadius="18"
+                    ToolTipService.ToolTip="Close video" AutomationProperties.Name="Close video">
+              <FontIcon Glyph="&#xE711;" FontSize="14" AutomationProperties.AccessibilityView="Raw"/>
+            </Button>
+          </Grid>
       </Grid>
       <StackPanel x:Name="TheaterDetails" Grid.Row="1" Padding="28,20,28,28" Spacing="14">
         <TextBlock x:Name="PlayerTitle" FontSize="25" FontWeight="SemiBold" TextWrapping="Wrap"/>

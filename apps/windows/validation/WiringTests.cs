@@ -35,18 +35,25 @@ internal static class WiringTests
         StateTests.Verify(overlay is not null && player.Parent == overlay.Parent && (string?)player.Attribute("AreTransportControlsEnabled") == "False",
             "one custom native transport overlay shares the video stage instead of a below-video strip");
         var close = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "PlayerCloseButton");
-        StateTests.Verify(close?.Name.LocalName == "Button" && close.Parent == player.Parent && close.ElementsBeforeSelf().Contains(overlay!) &&
+        var transport = Named("PlayerTransport");
+        StateTests.Verify(overlay?.Name.LocalName == "Grid" && overlay.Attribute("Background") is null &&
+            close?.Name.LocalName == "Button" && close.Parent == overlay && transport.Parent == overlay &&
+            close.ElementsBeforeSelf().Contains(transport) && (string?)transport.Attribute("VerticalAlignment") == "Bottom" &&
             (string?)close.Attribute("HorizontalAlignment") == "Right" && (string?)close.Attribute("VerticalAlignment") == "Top" &&
             (string?)close.Attribute("AutomationProperties.Name") == "Close video",
-            "the top-right close action is on the stage and remains reachable independently of the transport");
+            "the top-right close action and bottom transport share a fading overlay that leaves the video surface tappable");
+        StateTests.Verify(code.Contains("overlay.Visibility = ToVisibility(theaterActive);") &&
+            code.Contains("C<StackPanel>(\"PlayerTransport\").Visibility = ToVisibility(ready);") &&
+            Regex.IsMatch(code, @"playerClock\?\.Stop\(\);\s*UpdatePlayerControlsVisibility\(\);\s*return;"),
+            "the close action remains available while playback loads or has failed, independently of transport readiness");
         StateTests.Verify(code.Contains("C<Button>(\"PlayerCloseButton\").Click += (_, _) => CloseVideo();") &&
             Regex.IsMatch(code, @"void CloseVideo\(\)\s*\{[^}]*playback\.Back\(\);\s*RestoreLibraryFocus\(origin\);"),
             "close returns to the feed and restores focus to the original card");
         StateTests.Verify(code.Contains("stage.PointerEntered +=") && code.Contains("UIElement.PointerMovedEvent") &&
             code.Contains("stage.PointerExited +=") && code.Contains("overlay.OpacityTransition") &&
-            code.Contains("PlayerControlsVisibility.ShouldShow(fullscreen, playerRunning,") &&
+            Regex.IsMatch(code, @"bool show = PlayerControlsVisibility\.ShouldShow\(playerRunning, lastPlayerActivity, Environment\.TickCount64, interacting\);") &&
             code.Contains("overlay.IsHitTestVisible = show;"),
-            "routed activity drives the fullscreen transport fade without leaving an invisible mouse hit target");
+            "routed activity drives the same transport fade in both modes without leaving an invisible mouse hit target");
         var videoHitArea = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "PlayerVideoHitArea");
         StateTests.Verify(videoHitArea is not null && videoHitArea.Parent == player.Parent &&
             (string?)videoHitArea.Attribute("Background") == "Transparent" && videoHitArea.ElementsBeforeSelf().Contains(player) &&
@@ -58,7 +65,9 @@ internal static class WiringTests
             (string?)feedback.Attribute("Opacity") == "0" && (string?)feedback.Attribute("IsHitTestVisible") == "False" &&
             (string?)feedback.Attribute("AutomationProperties.AccessibilityView") == "Raw" && Named("PlayerTapIcon").Ancestors().Contains(feedback),
             "play/pause feedback starts hidden, centered above the video, and never intercepts input");
-        StateTests.Verify(Regex.IsMatch(code, @"C<Border>\(""PlayerVideoHitArea""\)\.Tapped\s*\+=\s*\([^\r\n]*\)\s*=>\s*\{?\s*TogglePlayerPlayback\(showFeedback: true\)") &&
+        StateTests.Verify(Regex.IsMatch(code, @"C<Border>\(""PlayerVideoHitArea""\)\.Tapped\s*\+=\s*\([^\r\n]*\)\s*=>\s*\{\s*if \(args\.PointerDeviceType != Microsoft\.UI\.Input\.PointerDeviceType\.Mouse && !C<Grid>\(""PlayerOverlay""\)\.IsHitTestVisible\)\s*\{\s*lastPlayerActivity = Environment\.TickCount64;\s*UpdatePlayerControlsVisibility\(\);\s*\}\s*else TogglePlayerPlayback\(showFeedback: true\);\s*args\.Handled = true;"),
+            "touch and pen taps reveal hidden controls without pausing playback; other video taps still toggle playback");
+        StateTests.Verify(
             code.Contains("C<Button>(\"PlayerPlay\").Click += (_, _) => TogglePlayerPlayback();") &&
             Regex.IsMatch(code, @"void TogglePlayerPlayback\(bool showFeedback = false\)\s*\{\s*if \(InteractivePlayer is") &&
             code.Contains("if (accepted && showFeedback && ReferenceEquals(active, InteractivePlayer)) ShowPlayerTapFeedback(pause);"),
@@ -71,7 +80,7 @@ internal static class WiringTests
             "entering and exiting fullscreen keeps the live media and overlay attached to the same Theater tree");
         foreach (var (name, type) in new[] { ("PlayerSeek", "Slider"), ("PlayerPlay", "Button"), ("PlayerMute", "Button"),
             ("PlayerVolume", "Slider"), ("PlayerSettingsGear", "Button"), ("PlayerFullscreen", "Button") })
-            StateTests.Verify(Named(name).Name.LocalName == type && Named(name).Ancestors().Contains(overlay!), "native action inside the video overlay: " + name);
+            StateTests.Verify(Named(name).Name.LocalName == type && Named(name).Ancestors().Contains(transport), "native action inside the bottom transport: " + name);
         StateTests.Verify(!names.ContainsKey("PlayerQualityButton") && code.Contains("new MenuFlyoutSubItem") && code.Contains("Text = \"Quality"), "quality is under the on-video gear, not a separate selector");
         var hitArea = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "PlayerSeekHitArea");
         var slider = Named("PlayerSeek");
