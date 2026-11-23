@@ -63,14 +63,14 @@ internal sealed class PlaybackController<T>(Func<string, CancellationToken, Task
     {
         if (disposed) return;
         if (!eligible || !ReferenceEquals(this.account, account) || this.view != view ||
-            (!ReferenceEquals(this.feed, feed) && !IsHomeAppend(view, feed))) Back();
+            (!ReferenceEquals(this.feed, feed) && !IsFeedAppend(feed))) Back();
         this.eligible = eligible && account is not null && view != BrowseView.Settings;
         this.account = account; this.view = view; this.feed = feed;
     }
 
-    private bool IsHomeAppend(BrowseView view, IReadOnlyList<HistoryVideo> next)
+    private bool IsFeedAppend(IReadOnlyList<HistoryVideo> next)
     {
-        if (view != BrowseView.Home || feed.Count == 0 || next.Count <= feed.Count) return false;
+        if (feed.Count == 0 || next.Count <= feed.Count) return false;
         for (var i = 0; i < feed.Count; i++)
             if (!ReferenceEquals(feed[i], next[i])) return false;
         return true;

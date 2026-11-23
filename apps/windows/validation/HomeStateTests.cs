@@ -36,15 +36,15 @@ internal static class HomeStateTests
         };
         var append = controller.LoadHistoryAsync(append: true);
         await controller.LoadHistoryAsync(append: true);
-        Verify(failedRequests == 1 && controller.Busy && controller.HomeAppending && !controller.HomeAppendFailed && controller.CanPlayFeed,
+        Verify(failedRequests == 1 && controller.Busy && controller.Appending && !controller.AppendFailed && controller.CanPlayFeed,
             "one Home append runs at a time without blocking playback of existing rows");
         failure.SetException(new YouTubeException("network", "Could not load more rows."));
         await append;
-        Verify(controller.HomeAppendFailed && !controller.Busy && !controller.HomeAppending && controller.Continuation == "next" &&
+        Verify(controller.AppendFailed && !controller.Busy && !controller.Appending && controller.Continuation == "next" &&
             ReferenceEquals(controller.HomeShelves[0], recommended), "a failed Home append preserves rows and the cursor for an explicit retry");
         api.Home = initialHome;
         await controller.LoadHistoryAsync(append: true);
-        Verify(!controller.HomeAppendFailed && ReferenceEquals(controller.HomeShelves[0], recommended), "a successful retry clears the failure without replacing existing rows");
+        Verify(!controller.AppendFailed && ReferenceEquals(controller.HomeShelves[0], recommended), "a successful retry clears the failure without replacing existing rows");
         Verify(controller.HomeShelves.SequenceEqual([recommended, shorts, extra]) && controller.Continuation is null, "Home appends provider shelves and stops a repeated page cursor");
         await controller.LoadHistoryAsync();
         Verify(controller.HomeShelves.SequenceEqual([recommended, shorts]) && controller.Continuation == "next", "Home refresh replaces shelves and resets pagination");
@@ -65,7 +65,7 @@ internal static class HomeStateTests
             "a successful Home append extends Up next without interrupting playback started while loading");
         api.Home = (_, _) => Task.FromResult(new HomePage([], "after-empty", null));
         await controller.LoadHistoryAsync(append: true);
-        Verify(controller.HomeAppendFailed && controller.Continuation == "after-empty" && controller.HomeShelves.Count == 3 && ReferenceEquals(playback.Active, active),
+        Verify(controller.AppendFailed && controller.Continuation == "after-empty" && controller.HomeShelves.Count == 3 && ReferenceEquals(playback.Active, active),
             "a continuation without rows pauses automatic paging and preserves the next cursor for retry");
         var late = new TaskCompletionSource<HomePage>();
         api.Home = (_, _) => late.Task;
@@ -74,7 +74,7 @@ internal static class HomeStateTests
         Verify(playback.Active is null && active!.Disposed, "leaving Home still stops playback and disposes its source");
         late.SetResult(new([extra], "stale", null));
         await pending;
-        Verify(controller.HomeShelves.Count == 0 && controller.Videos.Count == 0 && controller.Continuation is null && !controller.Busy && !controller.HomeAppendFailed, "late Home response cannot restore private shelves after navigation");
+        Verify(controller.HomeShelves.Count == 0 && controller.Videos.Count == 0 && controller.Continuation is null && !controller.Busy && !controller.AppendFailed, "late Home response cannot restore private shelves after navigation");
         Console.WriteLine("PASS: Home default route, card identity, shelf pagination, refresh and stale results.");
     }
 

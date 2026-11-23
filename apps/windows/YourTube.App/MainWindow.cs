@@ -129,17 +129,17 @@ internal sealed partial class MainWindow : Window
         C<Button>("CancelButton").Click += (_, _) => { playback.Back(); controller?.Cancel(); };
         C<Button>("FeedCancelButton").Click += (_, _) =>
         {
-            if (controller is { Busy: true, HomeAppending: false } current) { playback.Back(); current.Cancel(); }
+            if (controller is { Busy: true, Appending: false } current) { playback.Back(); current.Cancel(); }
         };
         C<Button>("RefreshButton").Click += async (_, _) => { if (controller is not null) await controller.LoadHistoryAsync(); };
-        C<Button>("LoadMoreButton").Click += async (_, _) =>
+        C<Button>("FeedRetryButton").Click += async (_, _) =>
         {
-            if (!settingsVisible && playback.Selected is null && controller is { View: BrowseView.History or BrowseView.Subscriptions } current)
+            if (!closed && !settingsVisible && playback.Selected is null && controller is { View: BrowseView.History or BrowseView.Subscriptions, AppendFailed: true } current)
                 await current.LoadHistoryAsync(append: true);
         };
         C<Button>("HomeRetryButton").Click += async (_, _) =>
         {
-            if (!closed && !settingsVisible && playback.Selected is null && controller is { View: BrowseView.Home, HomeAppendFailed: true } current)
+            if (!closed && !settingsVisible && playback.Selected is null && controller is { View: BrowseView.Home, AppendFailed: true } current)
                 await current.LoadHistoryAsync(append: true);
         };
         var accountMenu = (MenuFlyout)C<Button>("AccountButton").Flyout;
@@ -149,7 +149,7 @@ internal sealed partial class MainWindow : Window
         WireLibrary();
         C<GridView>("HistoryList").ItemClick += async (_, args) =>
         {
-            if (closed || settingsVisible || playback.Selected is not null || controller is not { Busy: false, Phase: SessionPhase.SignedIn, View: BrowseView.History or BrowseView.Subscriptions } || args.ClickedItem is not HistoryVideo video ||
+            if (closed || settingsVisible || playback.Selected is not null || controller is not { CanPlayFeed: true, View: BrowseView.History or BrowseView.Subscriptions } || args.ClickedItem is not HistoryVideo video ||
                 !controller.Videos.Any(v => ReferenceEquals(v, video))) return;
             libraryOrigin = video;
             await OpenVideoAsync(video);
@@ -316,7 +316,7 @@ internal sealed partial class MainWindow : Window
         C<TextBlock>("FeedStatusText").Text = browsing ? current.Status : "";
         C<ProgressRing>("FeedBusyRing").IsActive = browsing && busy;
         C<ProgressRing>("FeedBusyRing").Visibility = ToVisibility(browsing && busy);
-        C<Button>("FeedCancelButton").Visibility = ToVisibility(browsing && busy && !current.HomeAppending);
+        C<Button>("FeedCancelButton").Visibility = ToVisibility(browsing && busy && !current.Appending);
         var shared = !fullscreen && !browsing && (browserNotice is not null || (show && current.Phase != SessionPhase.SignedIn));
         C<Border>("ShellStatus").Visibility = ToVisibility(shared);
         C<TextBlock>("StatusText").Text = shared ? browserNotice ?? current.Status : "";
@@ -367,11 +367,11 @@ internal sealed partial class MainWindow : Window
             C<Button>("RestoreButton").IsEnabled = !controller.Busy;
 
             C<Button>("RefreshButton").IsEnabled = signedIn && !controller.Busy && controller.SelectedAccount is not null;
-            C<Button>("LoadMoreButton").Visibility = ToVisibility(!home && controller.Continuation is not null);
-            C<Button>("LoadMoreButton").IsEnabled = signedIn && !home && !controller.Busy;
-            C<Button>("HomeRetryButton").Visibility = ToVisibility(home && controller.HomeAppendFailed);
+            C<Button>("FeedRetryButton").Visibility = ToVisibility(!home && controller.AppendFailed);
+            C<Button>("FeedRetryButton").IsEnabled = signedIn && !home && !controller.Busy;
+            C<Button>("HomeRetryButton").Visibility = ToVisibility(home && controller.AppendFailed);
             C<Button>("HomeRetryButton").IsEnabled = signedIn && home && !controller.Busy;
-            C<GridView>("HistoryList").IsItemClickEnabled = signedIn && !home && !controller.Busy;
+            C<GridView>("HistoryList").IsItemClickEnabled = !home && controller.CanPlayFeed;
             var accountButton = C<Button>("AccountButton");
             var accountName = controller.SelectedAccount?.Name;
             var label = string.IsNullOrWhiteSpace(accountName) ? (signedIn && controller.Accounts.Count > 0 ? "Choose account" : "Account") : accountName;
@@ -392,15 +392,7 @@ internal sealed partial class MainWindow : Window
                 C<ListView>("ChannelsList").ItemsSource = controller.Channels;
             }
             RenderHomeShelves(signedIn && home ? controller.HomeShelves : []);
-            var flatVideos = signedIn && !home ? controller.Videos : null;
-            if (!ReferenceEquals(displayedVideos, flatVideos))
-            {
-                libraryOrigin = null;
-                var feed = C<GridView>("HistoryList");
-                CancelLibraryImages(feed);
-                displayedVideos = flatVideos;
-                feed.ItemsSource = flatVideos;
-            }
+            RenderLibraryVideos(signedIn && !home ? controller.Videos : null);
         }
         RenderPlayback();
     }

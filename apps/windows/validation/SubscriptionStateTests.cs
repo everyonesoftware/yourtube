@@ -32,8 +32,73 @@ internal static class SubscriptionStateTests
         Verify(controller.Channels.Count == 0 && controller.Videos.Count == 0 && controller.Continuation is null && !controller.Busy && store.Value is null, "late subscription response cannot resurrect sign-out data or credentials");
         Console.WriteLine("PASS: account switching and sign-out clear subscription data and reject late results.");
         await Pagination();
+        await FlatFeedBackgroundPaging(BrowseView.Subscriptions);
+        await FlatFeedBackgroundPaging(BrowseView.History);
         await NavigationAndFailures();
         await AccountAndRevocation();
+    }
+
+    private static async Task FlatFeedBackgroundPaging(BrowseView view)
+    {
+        var api = new TestApi();
+        var controller = new SessionController(api, new TestStore(), "fixture-device");
+        var original = Video("aaaaaaaaaaa");
+        var added = Video("bbbbbbbbbbb");
+        var page = new TaskCompletionSource<HistoryPage>();
+        var requests = new List<string>();
+        Task<HistoryPage> ReadPage(string? cursor)
+        {
+            if (cursor is null) return Task.FromResult(new HistoryPage([original], "second", null));
+            requests.Add(cursor);
+            return page.Task;
+        }
+        api.History = (_, cursor) => ReadPage(cursor);
+        api.Subscriptions = async (_, cursor) =>
+        {
+            var result = await ReadPage(cursor);
+            return new([cursor is null ? Channel : new("Unexpected channel", false)], result.Videos, result.Continuation, result.Message);
+        };
+        await controller.SignInAsync();
+        await controller.SelectAccountAsync(TestApi.A);
+        await controller.NavigateAsync(view);
+        var channels = controller.Channels;
+        var pending = controller.LoadHistoryAsync(append: true);
+        await controller.LoadHistoryAsync(append: true);
+        Verify(controller.Busy && controller.CanPlayFeed && requests.SequenceEqual(["second"]), $"{view} keeps existing cards playable and coalesces paging while the next page is pending");
+        page.SetException(new YouTubeException("network", "Could not load the next page."));
+        await pending;
+        Verify(!controller.Busy && controller.AppendFailed && controller.Continuation == "second" && ReferenceEquals(controller.Videos.Single(), original), $"{view} retains cards and cursor and pauses automatic paging on failure");
+        using var playback = new PlaybackController<PlaybackHandle>((_, _) => Task.FromResult(new PlaybackHandle()));
+        void SyncPlayback() => playback.SetContext(controller.CanPlayFeed, controller.SelectedAccount, controller.View, controller.Videos);
+        controller.Changed += SyncPlayback;
+        SyncPlayback();
+        page = new();
+        pending = controller.LoadHistoryAsync(append: true);
+        await playback.SelectAsync(original);
+        var source = playback.Active;
+        Verify(source is not null, $"{view} starts playback from an existing card while a page is pending");
+        page.SetResult(new([original, added], "third", null));
+        await pending;
+        Verify(ReferenceEquals(playback.Active, source) && !source!.Disposed && ReferenceEquals(playback.Selected, original) &&
+            playback.Queue.SequenceEqual([added]), $"{view} appending a page updates Up next without interrupting playback");
+        Verify(!controller.AppendFailed && controller.Videos.SequenceEqual([original, added]) && ReferenceEquals(controller.Videos[0], original) && ReferenceEquals(controller.Channels, channels), $"{view} resumes paging on retry and appends distinct cards without replacing existing cards or channels");
+        page = new();
+        pending = controller.LoadHistoryAsync(append: true);
+        page.SetResult(new([added], "fourth", null));
+        await pending;
+        Verify(controller.AppendFailed && controller.Continuation == "fourth" && controller.Videos.Count == 2, $"{view} pauses automatic paging but preserves a usable cursor after a duplicate-only page");
+        page = new();
+        pending = controller.LoadHistoryAsync(append: true);
+        page.SetResult(new([], "second", null));
+        await pending;
+        Verify(!controller.AppendFailed && controller.Continuation is null && requests.SequenceEqual(["second", "second", "third", "fourth"]), $"{view} stops on a cyclic cursor and hides retry");
+        Console.WriteLine($"PASS: {view} background pagination, retry, card identity and cursor cycles.");
+    }
+
+    private sealed class PlaybackHandle : IDisposable
+    {
+        public bool Disposed { get; private set; }
+        public void Dispose() => Disposed = true;
     }
 
     private static async Task NavigationAndFailures()

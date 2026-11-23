@@ -20,8 +20,7 @@ internal sealed partial class MainWindow
     private readonly Dictionary<SelectorItem, (GridView Feed, CancellationTokenSource Request)> libraryImages = new();
     private readonly ObservableCollection<HomeShelf> homeShelves = new();
     private ScrollViewer? homeScroller;
-    private double homeScrollOffset;
-    private bool homePageQueued;
+    private readonly ObservableCollection<HistoryVideo> libraryVideos = new();
     private HistoryVideo? libraryOrigin;
     private HomeShelf? homeOrigin;
     private bool? compactLibrary;
@@ -29,6 +28,8 @@ internal sealed partial class MainWindow
     private void WireLibrary()
     {
         var feed = C<GridView>("HistoryList");
+        feed.ItemsSource = libraryVideos;
+        WireFeedPaging(feed, home: false);
         C<Grid>("BrowseAndSettings").SizeChanged += (_, args) => ArrangeLibraryNavigation(args.NewSize.Width);
         feed.SizeChanged += (_, _) => SizeLibraryCards(feed);
         feed.Loaded += (_, _) => SizeLibraryCards(feed);
@@ -36,68 +37,77 @@ internal sealed partial class MainWindow
         var shelves = C<ListView>("HomeShelvesList");
         shelves.ItemsSource = homeShelves;
         shelves.ContainerContentChanging += (_, args) => RenderHomeShelf(args);
-        shelves.Loaded += (_, _) =>
+        WireFeedPaging(shelves, home: true);
+    }
+
+    private void WireFeedPaging(ListViewBase feed, bool home)
+    {
+        ScrollViewer? scroller = null;
+        double offset = 0;
+        bool queued = false;
+        feed.Loaded += (_, _) =>
         {
-            shelves.ApplyTemplate();
-            if (FindFeedScroller(shelves) is not { } scroller || ReferenceEquals(homeScroller, scroller)) return;
-            DetachHomeScroller();
-            homeScroller = scroller;
-            homeScrollOffset = scroller.VerticalOffset;
-            scroller.ViewChanged += HomeViewChanged;
+            feed.ApplyTemplate();
+            if (FindFeedScroller(feed) is not { } found || ReferenceEquals(scroller, found)) return;
+            Detach();
+            scroller = found;
+            if (home) homeScroller = found;
+            offset = found.VerticalOffset;
+            found.ViewChanged += ViewChanged;
         };
-        shelves.Unloaded += (_, _) => DetachHomeScroller();
-        shelves.LayoutUpdated += (_, _) =>
-        {
-            if (HomeUnderfilled()) QueueHomePage(underfilled: true);
-        };
+        feed.Unloaded += (_, _) => Detach();
+        feed.LayoutUpdated += (_, _) => QueuePage(underfilled: true);
         // A downward gesture may not change the offset at the end of a short page.
-        shelves.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler((_, args) =>
+        feed.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler((_, args) =>
         {
-            var wheel = args.GetCurrentPoint(shelves).Properties;
+            var wheel = args.GetCurrentPoint(feed).Properties;
             if (!wheel.IsHorizontalMouseWheel && wheel.MouseWheelDelta < 0 && (args.KeyModifiers & VirtualKeyModifiers.Shift) == 0)
-                QueueHomePage();
+                QueuePage();
         }), handledEventsToo: true);
-        shelves.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler((_, args) =>
+        feed.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler((_, args) =>
         {
-            if (args.Key is VirtualKey.Down or VirtualKey.PageDown or VirtualKey.End) QueueHomePage();
+            if (args.Key is VirtualKey.Down or VirtualKey.PageDown or VirtualKey.End) QueuePage();
         }), handledEventsToo: true);
-    }
 
-    private void DetachHomeScroller()
-    {
-        if (homeScroller is { } scroller) scroller.ViewChanged -= HomeViewChanged;
-        homeScroller = null;
-    }
-
-    private void HomeViewChanged(object? sender, ScrollViewerViewChangedEventArgs args)
-    {
-        if (homeScroller is not { } scroller) return;
-        var movedDown = scroller.VerticalOffset > homeScrollOffset;
-        homeScrollOffset = scroller.VerticalOffset;
-        if (movedDown) QueueHomePage();
-    }
-
-    private bool HomeNearEnd() => homeScroller is { ViewportHeight: > 0 } scroller &&
-        scroller.ScrollableHeight - scroller.VerticalOffset <= scroller.ViewportHeight / 2;
-
-    private bool HomeUnderfilled() => homeScroller is { ViewportHeight: > 0, ScrollableHeight: 0 };
-
-    private void QueueHomePage(bool underfilled = false)
-    {
-        if (homePageQueued || !HomeNearEnd() || closed || settingsVisible || playback.Selected is not null ||
-            controller is not { Busy: false, Phase: SessionPhase.SignedIn, View: BrowseView.Home,
-                SelectedAccount: { } account, Continuation: { } cursor, HomeAppendFailed: false } current) return;
-        var rows = current.HomeShelves;
-        // Don't mutate the ItemsSource inside a native scroll/input callback.
-        homePageQueued = DispatcherQueue.TryEnqueue(async () =>
+        void Detach()
         {
-            homePageQueued = false;
-            if (closed || settingsVisible || playback.Selected is not null || !HomeNearEnd() || (underfilled && !HomeUnderfilled()) ||
-                !ReferenceEquals(current, controller) || current is not { Busy: false, Phase: SessionPhase.SignedIn,
-                    View: BrowseView.Home, HomeAppendFailed: false } || !ReferenceEquals(account, current.SelectedAccount) ||
-                !ReferenceEquals(rows, current.HomeShelves) || cursor != current.Continuation) return;
-            await current.LoadHistoryAsync(append: true);
-        });
+            if (scroller is not null) scroller.ViewChanged -= ViewChanged;
+            scroller = null;
+            if (home) homeScroller = null;
+        }
+
+        void ViewChanged(object? sender, ScrollViewerViewChangedEventArgs args)
+        {
+            if (scroller is null) return;
+            var movedDown = scroller.VerticalOffset > offset;
+            offset = scroller.VerticalOffset;
+            if (movedDown) QueuePage();
+        }
+
+        static bool NearEnd(ScrollViewer candidate, bool underfilled) => candidate.ViewportHeight > 0 &&
+            (underfilled ? candidate.ScrollableHeight == 0 :
+                candidate.ScrollableHeight - candidate.VerticalOffset <= candidate.ViewportHeight / 2);
+        bool IsActive(BrowseView view) => !closed && !settingsVisible && playback.Selected is null &&
+            feed.Visibility == Visibility.Visible && (home ? view == BrowseView.Home : view is BrowseView.History or BrowseView.Subscriptions);
+
+        void QueuePage(bool underfilled = false)
+        {
+            if (queued || scroller is not { } candidate || !NearEnd(candidate, underfilled) ||
+                controller is not { Busy: false, Phase: SessionPhase.SignedIn, AppendFailed: false,
+                    SelectedAccount: { } account, Continuation: { } cursor } current || !IsActive(current.View)) return;
+            var view = current.View;
+            var videos = current.Videos;
+            // Don't mutate the collection inside a native scroll/input callback.
+            queued = DispatcherQueue.TryEnqueue(async () =>
+            {
+                queued = false;
+                if (!ReferenceEquals(candidate, scroller) || !NearEnd(candidate, underfilled) ||
+                    !ReferenceEquals(current, controller) || current is not { Busy: false, Phase: SessionPhase.SignedIn, AppendFailed: false } ||
+                    current.View != view || !IsActive(view) || !ReferenceEquals(account, current.SelectedAccount) ||
+                    !ReferenceEquals(videos, current.Videos) || cursor != current.Continuation) return;
+                await current.LoadHistoryAsync(append: true);
+            });
+        }
     }
 
     private void ArrangeLibraryNavigation(double width)
@@ -176,6 +186,22 @@ internal sealed partial class MainWindow
             homeShelves.Clear();
         }
         for (var i = homeShelves.Count; i < shelves.Count; i++) homeShelves.Add(shelves[i]);
+    }
+
+    private void RenderLibraryVideos(IReadOnlyList<HistoryVideo>? videos)
+    {
+        if (ReferenceEquals(displayedVideos, videos)) return;
+        displayedVideos = videos;
+        var keepsPrefix = videos is not null && libraryVideos.Count <= videos.Count &&
+            libraryVideos.Select((video, i) => ReferenceEquals(video, videos[i])).All(same => same);
+        if (!keepsPrefix)
+        {
+            libraryOrigin = null;
+            CancelLibraryImages(C<GridView>("HistoryList"));
+            libraryVideos.Clear();
+        }
+        if (videos is not null)
+            for (var i = libraryVideos.Count; i < videos.Count; i++) libraryVideos.Add(videos[i]);
     }
 
     private void RenderHomeShelf(ContainerContentChangingEventArgs args)

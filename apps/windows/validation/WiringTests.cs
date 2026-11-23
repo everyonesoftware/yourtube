@@ -161,15 +161,15 @@ internal static class WiringTests
             "Home and the flat feed are mutually exclusive in the same finite viewport below shared feed status");
         StateTests.Verify(!names.ContainsKey("HomeLoadMoreButton") &&
             Named("HomeRetryButton").Ancestors().Any(e => e.Parent == home && e.Name.LocalName == "ListView.Footer") &&
-            code.Contains("ToVisibility(home && controller.HomeAppendFailed)"),
+            code.Contains("ToVisibility(home && controller.AppendFailed)"),
             "Home pagination needs no button unless the next-page request failed");
-        StateTests.Verify(libraryCode.Contains("scroller.ViewChanged += HomeViewChanged") &&
-            libraryCode.Contains("scroller.ScrollableHeight - scroller.VerticalOffset <= scroller.ViewportHeight / 2") &&
-            libraryCode.Contains("HomeAppendFailed: false") && libraryCode.Contains("await current.LoadHistoryAsync(append: true)"),
+        StateTests.Verify(libraryCode.Contains("found.ViewChanged += ViewChanged") &&
+            libraryCode.Contains("candidate.ScrollableHeight - candidate.VerticalOffset <= candidate.ViewportHeight / 2") &&
+            libraryCode.Contains("AppendFailed: false") && libraryCode.Contains("await current.LoadHistoryAsync(append: true)"),
             "scrolling near the end of Home requests its continuation but does not automatically retry failures");
-        StateTests.Verify(libraryCode.Contains("shelves.LayoutUpdated +=") && libraryCode.Contains("ViewportHeight: > 0, ScrollableHeight: 0") &&
-            libraryCode.Contains("QueueHomePage(underfilled: true)"), "a laid-out Home feed too short to scroll continues even without mouse or keyboard input");
-        StateTests.Verify(code.Contains("ToVisibility(browsing && busy && !current.HomeAppending)") &&
+        StateTests.Verify(libraryCode.Contains("feed.LayoutUpdated +=") && libraryCode.Contains("candidate.ScrollableHeight == 0") &&
+            libraryCode.Contains("QueuePage(underfilled: true)"), "a laid-out Home feed too short to scroll continues even without mouse or keyboard input");
+        StateTests.Verify(code.Contains("ToVisibility(browsing && busy && !current.Appending)") &&
             Regex.Matches(code, @"controller is (?:not )?\{ CanPlayFeed: true \}").Count >= 2 &&
             libraryCode.Contains("CanPlayFeed: true, View: BrowseView.Home"),
             "a pending automatic Home request cannot expose a sign-out Cancel button or block playback of existing cards");
@@ -228,7 +228,10 @@ internal static class WiringTests
             code.Contains("RenderAccountAvatar(signedIn ? controller.SelectedAccount : null)") &&
             code.Contains("ReferenceEquals(account, avatarAccount)") &&
             code.Contains("avatarRequest?.Cancel()"), "the account picture starts hidden and follows the selected identity without stale completions");
-        StateTests.Verify(Named("LoadMoreButton").Ancestors().Any(e => e.Parent == library && e.Name.LocalName == "GridView.Footer"), "pagination follows the virtualized cards inside the feed scroller");
+        StateTests.Verify(!names.ContainsKey("LoadMoreButton") && libraryCode.Contains("WireFeedPaging(feed, home: false)") &&
+            Named("FeedRetryButton").Ancestors().Any(e => e.Parent == library && e.Name.LocalName == "GridView.Footer") &&
+            code.Contains("ToVisibility(!home && controller.AppendFailed)"),
+            "Subscriptions and History page automatically through their grid and show a footer action only when paging is paused");
         StateTests.Verify(Named("FeedStatus").Ancestors().Contains(Named("LibraryContent")) && (string?)Named("ShellStatus").Attribute("Visibility") == "Collapsed", "feed feedback is inline and the shell has no permanent status footer");
         StateTests.Verify(library.Name.LocalName == "GridView" && library.Descendants().Any(e =>
             e.Name.LocalName == "ItemsWrapGrid" && (string?)e.Attribute("Orientation") == "Horizontal") &&
@@ -243,7 +246,7 @@ internal static class WiringTests
             "Back restores the originating Library card, only if it still belongs to the active feed");
         StateTests.Verify(xml.Descendants().All(e => e.Attribute(x + "Class") is null && !e.Attributes().Any(a => a.Value.Contains("{x:Bind"))), "runtime XAML needs no generated code");
         StateTests.Verify(!xml.ToString().Contains("WebView"), "no embedded login browser");
-        foreach (var button in new[] { "SignInButton", "OpenActivationButton", "CancelButton", "RefreshButton", "LoadMoreButton", "SettingsButton" })
+        foreach (var button in new[] { "SignInButton", "OpenActivationButton", "CancelButton", "RefreshButton", "FeedRetryButton", "SettingsButton" })
             StateTests.Verify(code.Contains($"C<Button>(\"{button}\").Click +="), "native action wired: " + button);
         StateTests.Verify(code.Contains("await current.SelectAccountAsync(account)") && code.Contains("current.SignOut()"), "account menu uses the existing identity and sign-out boundaries");
         StateTests.Verify(code.Contains("SetTitleBar(C<Border>(\"TitleBar\"))") && code.Contains("ExtendsContentIntoTitleBar = true"), "Music native titlebar APIs wired");

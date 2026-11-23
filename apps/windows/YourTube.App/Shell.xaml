@@ -86,7 +86,7 @@
         </Grid>
         <GridView x:Name="HistoryList" Grid.Row="3" Padding="0,0,8,0" ItemTemplate="{StaticResource LibraryCardTemplate}" ItemContainerStyle="{StaticResource LibraryCardContainer}" IsItemClickEnabled="True" SelectionMode="None" ScrollViewer.HorizontalScrollMode="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Watch history">
           <GridView.ItemsPanel><ItemsPanelTemplate><ItemsWrapGrid Orientation="Horizontal" ItemWidth="230" ItemHeight="212"/></ItemsPanelTemplate></GridView.ItemsPanel>
-          <GridView.Footer><Button x:Name="LoadMoreButton" Content="Load more" Margin="0,0,0,16" HorizontalAlignment="Center" Visibility="Collapsed"/></GridView.Footer>
+          <GridView.Footer><Button x:Name="FeedRetryButton" Content="Retry loading more videos" Margin="0,0,0,16" HorizontalAlignment="Center" Visibility="Collapsed"/></GridView.Footer>
         </GridView>
         <ListView x:Name="HomeShelvesList" Grid.Row="3" Padding="0,0,8,0" SelectionMode="None" Visibility="Collapsed"
                   ItemTemplate="{StaticResource HomeShelfTemplate}"
