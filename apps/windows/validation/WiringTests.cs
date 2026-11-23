@@ -78,6 +78,8 @@ internal static class WiringTests
             StateTests.Verify(names.TryGetValue(lookup.Groups["name"].Value, out var type) && type == lookup.Groups["type"].Value, "typed native control lookup matches XML: " + lookup.Groups["name"].Value);
         var library = Named("HistoryList");
         StateTests.Verify(Named("SettingsButton").Ancestors().Contains(Named("LibraryNavigation")), "Settings belongs to the same rail as the two feeds");
+        StateTests.Verify(libraryCode.Contains("else button.ClearValue(Control.ForegroundProperty);") && !libraryCode.Contains("button.Foreground = active ?"),
+            "inactive navigation destinations restore the theme foreground instead of overriding it with a null brush");
         StateTests.Verify(Named("AppBrand").Ancestors().Contains(Named("ShellHeader")) && Named("AccountButton").Ancestors().Contains(Named("ShellHeader")) && !names.ContainsKey("AccountChooser"), "a compact account menu balances the brand header rather than exposing an account picker");
         StateTests.Verify(Named("LoadMoreButton").Ancestors().Any(e => e.Parent == library && e.Name.LocalName == "GridView.Footer"), "pagination follows the virtualized cards inside the feed scroller");
         StateTests.Verify(Named("FeedStatus").Ancestors().Contains(Named("LibraryContent")) && (string?)Named("ShellStatus").Attribute("Visibility") == "Collapsed", "feed feedback is inline and the shell has no permanent status footer");

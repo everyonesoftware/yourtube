@@ -60,7 +60,8 @@ internal sealed partial class MainWindow
     {
         button.IsEnabled = enabled;
         button.Background = active ? new SolidColorBrush(ColorHelper.FromArgb(255, 51, 66, 54)) : new SolidColorBrush(Colors.Transparent);
-        button.Foreground = active ? new SolidColorBrush(ColorHelper.FromArgb(255, 192, 215, 174)) : null;
+        if (active) button.Foreground = new SolidColorBrush(ColorHelper.FromArgb(255, 192, 215, 174));
+        else button.ClearValue(Control.ForegroundProperty);
         AutomationProperties.SetName(button, active ? $"{title}, selected" : title);
     }
 
