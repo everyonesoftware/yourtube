@@ -138,7 +138,23 @@ internal static class WiringTests
         StateTests.Verify(Named("SettingsButton").Ancestors().Contains(Named("LibraryNavigation")), "Settings belongs to the same rail as the browse feeds");
         StateTests.Verify(libraryCode.Contains("else button.ClearValue(Control.ForegroundProperty);") && !libraryCode.Contains("button.Foreground = active ?"),
             "inactive navigation destinations restore the theme foreground instead of overriding it with a null brush");
-        StateTests.Verify(Named("AppBrand").Ancestors().Contains(Named("ShellHeader")) && Named("AccountButton").Ancestors().Contains(Named("ShellHeader")) && !names.ContainsKey("AccountChooser"), "a compact account menu balances the brand header rather than exposing an account picker");
+        var titleBar = Named("TitleBar");
+        var brand = Named("AppBrand");
+        StateTests.Verify(!names.ContainsKey("ShellHeader") && brand.Parent == titleBar &&
+            (string?)brand.Attribute("HorizontalAlignment") == "Right" &&
+            brand.Descendants().Any(e => e.Name.LocalName == "FontIcon") &&
+            brand.Elements().Any(e => (string?)e.Attribute("Text") == "YourTube") &&
+            code.Contains("AppWindow.TitleBar.RightInset / xamlRoot.RasterizationScale"),
+            "the app has no separate top bar; its brand is right aligned clear of the Windows caption buttons");
+        var accountFooter = Named("ShellFooter");
+        var accountButton = Named("AccountButton");
+        StateTests.Verify(accountFooter.Parent == xml.Root && (string?)accountFooter.Attribute("Grid.Row") == "2" &&
+            accountButton.Parent == accountFooter && (string?)accountButton.Attribute("HorizontalAlignment") == "Left" &&
+            (string?)accountButton.Descendants().Single(e => e.Name.LocalName == "MenuFlyout").Attribute("Placement") == "TopEdgeAlignedLeft" &&
+            fullscreenChange.Contains("C<Grid>(\"ShellFooter\").Visibility = chromeVisibility;") &&
+            fullscreenChange.Contains("Grid.SetRow(theater, enabled ? 0 : 1);") &&
+            (string?)theater.Attribute("Grid.Row") == "1" && !names.ContainsKey("AccountChooser"),
+            "the account menu anchors to the bottom left in every windowed view and opens upward");
         StateTests.Verify(Named("LoadMoreButton").Ancestors().Any(e => e.Parent == library && e.Name.LocalName == "GridView.Footer"), "pagination follows the virtualized cards inside the feed scroller");
         StateTests.Verify(Named("FeedStatus").Ancestors().Contains(Named("LibraryContent")) && (string?)Named("ShellStatus").Attribute("Visibility") == "Collapsed", "feed feedback is inline and the shell has no permanent status footer");
         StateTests.Verify(library.Name.LocalName == "GridView" && library.Descendants().Any(e =>

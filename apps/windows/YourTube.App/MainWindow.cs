@@ -66,10 +66,12 @@ internal sealed partial class MainWindow : Window
         Content = root;
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(C<Border>("TitleBar"));
+        root.Loaded += (_, _) => UpdateTitleBarInsets();
+        root.SizeChanged += (_, _) => UpdateTitleBarInsets();
         AppWindow.Resize(new Windows.Graphics.SizeInt32(1120, 800));
-        AppWindow.TitleBar.ButtonBackgroundColor = ColorHelper.FromArgb(255, 36, 44, 40);
+        AppWindow.TitleBar.ButtonBackgroundColor = ColorHelper.FromArgb(255, 28, 33, 31);
         AppWindow.TitleBar.ButtonForegroundColor = ColorHelper.FromArgb(255, 237, 240, 233);
-        AppWindow.TitleBar.ButtonInactiveBackgroundColor = ColorHelper.FromArgb(255, 36, 44, 40);
+        AppWindow.TitleBar.ButtonInactiveBackgroundColor = ColorHelper.FromArgb(255, 28, 33, 31);
         AppWindow.TitleBar.ButtonInactiveForegroundColor = ColorHelper.FromArgb(255, 172, 184, 174);
 
         // Integration point: updater owns its native view and transport, never auth.
@@ -250,6 +252,14 @@ internal sealed partial class MainWindow : Window
         string accessibleName = showDot ? "Settings, update available" : "Settings";
         AutomationProperties.SetName(C<Button>("SettingsButton"), settingsVisible ? label : accessibleName);
         AutomationProperties.SetName(C<Button>("PlayerSettingsPageButton"), accessibleName);
+    }
+
+    private void UpdateTitleBarInsets()
+    {
+        if (closed || fullscreen || root.XamlRoot is not { } xamlRoot) return;
+        double left = AppWindow.TitleBar.LeftInset / xamlRoot.RasterizationScale;
+        double right = AppWindow.TitleBar.RightInset / xamlRoot.RasterizationScale;
+        C<Border>("TitleBar").Padding = new Thickness(left + 16, 0, right + 12, 0);
     }
 
     private void PopulateAccountMenu(MenuFlyout menu)
@@ -692,13 +702,14 @@ internal sealed partial class MainWindow : Window
         // Resize Theater in place: moving the stage disconnects the live player and its focused controls.
         var chromeVisibility = ToVisibility(!enabled);
         C<Border>("TitleBar").Visibility = chromeVisibility;
-        C<Grid>("ShellHeader").Visibility = chromeVisibility;
+        C<Grid>("ShellFooter").Visibility = chromeVisibility;
+        if (!enabled) UpdateTitleBarInsets();
         C<Grid>("BrowseAndSettings").Visibility = ToVisibility(!enabled && (playback.Selected is null || settingsVisible));
         if (enabled) C<Button>("AccountButton").Flyout.Hide();
         RenderStatus();
         C<Grid>("TheaterHeader").Visibility = chromeVisibility;
         C<StackPanel>("TheaterDetails").Visibility = chromeVisibility;
-        Grid.SetRow(theater, enabled ? 0 : 2);
+        Grid.SetRow(theater, enabled ? 0 : 1);
         Grid.SetRowSpan(theater, enabled ? root.RowDefinitions.Count : 1);
         theater.VerticalScrollBarVisibility = enabled ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
         theater.TabFocusNavigation = enabled ? KeyboardNavigationMode.Cycle : KeyboardNavigationMode.Local;
