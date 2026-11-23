@@ -76,7 +76,7 @@ internal static class WiringTests
             code.Contains("!C<ToggleSwitch>(\"WatchHistorySync\").IsOn") && services.Contains("=> client.RecordWatchStartAsync("), "watch reporting is opt-in and uses the authenticated client");
         StateTests.Verify(code.Contains("var watchIdentity = controller is { Phase: SessionPhase.SignedIn } ? controller.SelectedAccount : null;") &&
             code.Contains("if (!ReferenceEquals(watchStatusIdentity, watchIdentity))") &&
-            code.Contains("watchStatusIdentity = watchIdentity;\n            ResetWatchStatus();"),
+            code.ReplaceLineEndings("\n").Contains("watchStatusIdentity = watchIdentity;\n            ResetWatchStatus();"),
             "watch status resets on account changes or sign-out, not when the same account opens Settings");
         foreach (Match lookup in Regex.Matches(code + libraryCode, "C<(?<type>\\w+)>\\(\"(?<name>[^\"]+)\"\\)"))
             StateTests.Verify(names.TryGetValue(lookup.Groups["name"].Value, out var type) && type == lookup.Groups["type"].Value, "typed native control lookup matches XML: " + lookup.Groups["name"].Value);
