@@ -141,11 +141,12 @@ internal static class WiringTests
         var titleBar = Named("TitleBar");
         var brand = Named("AppBrand");
         StateTests.Verify(!names.ContainsKey("ShellHeader") && brand.Parent == titleBar &&
-            (string?)brand.Attribute("HorizontalAlignment") == "Right" &&
+            (string?)brand.Attribute("HorizontalAlignment") == "Left" &&
             brand.Descendants().Any(e => e.Name.LocalName == "FontIcon") &&
             brand.Elements().Any(e => (string?)e.Attribute("Text") == "YourTube") &&
+            code.Contains("AppWindow.TitleBar.LeftInset / xamlRoot.RasterizationScale") &&
             code.Contains("AppWindow.TitleBar.RightInset / xamlRoot.RasterizationScale"),
-            "the app has no separate top bar; its brand is right aligned clear of the Windows caption buttons");
+            "the app has no separate top bar; its brand is left aligned in the native title bar");
         var accountFooter = Named("ShellFooter");
         var accountButton = Named("AccountButton");
         StateTests.Verify(accountFooter.Parent == xml.Root && (string?)accountFooter.Attribute("Grid.Row") == "2" &&
@@ -155,6 +156,12 @@ internal static class WiringTests
             fullscreenChange.Contains("Grid.SetRow(theater, enabled ? 0 : 1);") &&
             (string?)theater.Attribute("Grid.Row") == "1" && !names.ContainsKey("AccountChooser"),
             "the account menu anchors to the bottom left in every windowed view and opens upward");
+        StateTests.Verify(names.TryGetValue("AccountAvatar", out var avatarType) && avatarType == "Ellipse" &&
+            Named("AccountAvatar").Ancestors().Contains(accountButton) &&
+            (string?)Named("AccountAvatar").Attribute("Visibility") == "Collapsed" &&
+            code.Contains("RenderAccountAvatar(signedIn ? controller.SelectedAccount : null)") &&
+            code.Contains("ReferenceEquals(account, avatarAccount)") &&
+            code.Contains("avatarRequest?.Cancel()"), "the account picture starts hidden and follows the selected identity without stale completions");
         StateTests.Verify(Named("LoadMoreButton").Ancestors().Any(e => e.Parent == library && e.Name.LocalName == "GridView.Footer"), "pagination follows the virtualized cards inside the feed scroller");
         StateTests.Verify(Named("FeedStatus").Ancestors().Contains(Named("LibraryContent")) && (string?)Named("ShellStatus").Attribute("Visibility") == "Collapsed", "feed feedback is inline and the shell has no permanent status footer");
         StateTests.Verify(library.Name.LocalName == "GridView" && library.Descendants().Any(e =>

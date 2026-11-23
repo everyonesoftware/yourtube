@@ -15,6 +15,38 @@ public sealed class LibraryThumbnailsTests
     private static readonly byte[] Image = Convert.FromBase64String(
         "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAAAP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8Af//Z");
 
+    [Theory]
+    [InlineData("https://lh3.googleusercontent.com/fixture", "image/jpeg")]
+    [InlineData("https://yt3.ggpht.com/fixture", "image/png")]
+    [InlineData("https://yt3.googleusercontent.com/fixture", "image/webp")]
+    public async Task AvatarUsesCredentialFreeImageTransport(string url, string contentType)
+    {
+        var uri = new Uri(url);
+        var http = new ThumbnailHttp((request, _) =>
+        {
+            var response = Jpeg();
+            response.Content.Headers.ContentType = new MediaTypeHeaderValue(contentType);
+            return Task.FromResult(response);
+        }, url);
+        using var thumbnails = new LibraryThumbnails(http);
+        Assert.Equal(Image, await thumbnails.LoadAvatarAsync(uri, CancellationToken.None));
+        Assert.Equal(1, http.RequestCount);
+    }
+
+    [Theory]
+    [InlineData("https://lh3.googleusercontent.com.example.com/fixture")]
+    [InlineData("http://lh3.googleusercontent.com/fixture")]
+    [InlineData("https://user@lh3.googleusercontent.com/fixture")]
+    [InlineData("https://lh3.googleusercontent.com:8443/fixture")]
+    [InlineData("https://lh3.googleusercontent.com/fixture#fragment")]
+    public async Task UnsafeAvatarUriNeverReachesTransport(string url)
+    {
+        var http = new ThumbnailHttp((_, _) => throw new InvalidOperationException("Unexpected request"));
+        using var thumbnails = new LibraryThumbnails(http);
+        Assert.Null(await thumbnails.LoadAvatarAsync(new Uri(url), CancellationToken.None));
+        Assert.Equal(0, http.RequestCount);
+    }
+
     [Fact]
     public async Task LoadsJpegViaCanonicalCredentialFreeGet()
     {
@@ -288,7 +320,8 @@ public sealed class LibraryThumbnailsTests
     };
 
     // A strict HTTP boundary: no fallback to the network and no substitute loader.
-    private sealed class ThumbnailHttp(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond)
+    private sealed class ThumbnailHttp(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond,
+        string expectedUrl = $"https://i.ytimg.com/vi/{VideoId}/mqdefault.jpg")
         : HttpMessageHandler
     {
         private int requestCount;
@@ -298,7 +331,7 @@ public sealed class LibraryThumbnailsTests
         {
             Interlocked.Increment(ref requestCount);
             Assert.Equal(HttpMethod.Get, request.Method);
-            Assert.Equal($"https://i.ytimg.com/vi/{VideoId}/mqdefault.jpg", request.RequestUri?.AbsoluteUri);
+            Assert.Equal(expectedUrl, request.RequestUri?.AbsoluteUri);
             Assert.Null(request.Content);
             Assert.Empty(request.Headers);
             return respond(request, token);

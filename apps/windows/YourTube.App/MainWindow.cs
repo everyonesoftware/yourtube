@@ -48,6 +48,8 @@ internal sealed partial class MainWindow : Window
     private PlaybackMedia? descriptionCatalog;
     private CancellationTokenSource? descriptionRequest;
     private SessionController? controller;
+    private YouTubeAccount? avatarAccount;
+    private CancellationTokenSource? avatarRequest;
     private IReadOnlyList<HistoryVideo>? displayedVideos;
     private IReadOnlyList<SubscribedChannel>? displayedChannels;
     private BrowseView lastBrowseView = BrowseView.Home;
@@ -155,6 +157,7 @@ internal sealed partial class MainWindow : Window
         Closed += (_, _) =>
         {
             closed = true;
+            RenderAccountAvatar(null);
             CancelWatchRequest();
             playerClock?.Stop();
             playerTapFade?.Stop();
@@ -366,6 +369,7 @@ internal sealed partial class MainWindow : Window
             var label = string.IsNullOrWhiteSpace(accountName) ? (signedIn && controller.Accounts.Count > 0 ? "Choose account" : "Account") : accountName;
             C<TextBlock>("AccountLabel").Text = label;
             C<TextBlock>("AccountInitial").Text = string.IsNullOrWhiteSpace(accountName) ? "?" : System.Globalization.StringInfo.GetNextTextElement(accountName.Trim()).ToUpperInvariant();
+            RenderAccountAvatar(signedIn ? controller.SelectedAccount : null);
             AutomationProperties.SetName(accountButton, $"YouTube account: {label}");
             accountButton.Visibility = ToVisibility(signedIn || controller.Phase == SessionPhase.SignedOut);
             if (accountButton.Visibility == Visibility.Collapsed) accountButton.Flyout.Hide();
@@ -391,6 +395,45 @@ internal sealed partial class MainWindow : Window
             }
         }
         RenderPlayback();
+    }
+
+    private void RenderAccountAvatar(YouTubeAccount? account)
+    {
+        if (ReferenceEquals(account, avatarAccount)) return;
+        avatarAccount = account;
+        avatarRequest?.Cancel();
+        avatarRequest = null;
+        var avatar = C<Ellipse>("AccountAvatar");
+        avatar.Visibility = Visibility.Collapsed;
+        avatar.Fill = null;
+        C<TextBlock>("AccountInitial").Visibility = Visibility.Visible;
+        if (account?.AvatarUri is not { } uri) return;
+
+        var request = new CancellationTokenSource();
+        avatarRequest = request;
+        _ = LoadAccountAvatarAsync(uri, request);
+    }
+
+    private async Task LoadAccountAvatarAsync(Uri uri, CancellationTokenSource request)
+    {
+        try
+        {
+            var bytes = await libraryThumbnails.LoadAvatarAsync(uri, request.Token);
+            if (closed || !ReferenceEquals(avatarRequest, request) || bytes is null) return;
+            var bitmap = await DecodeImageAsync(bytes, 104);
+            if (closed || !ReferenceEquals(avatarRequest, request)) return;
+            var avatar = C<Ellipse>("AccountAvatar");
+            avatar.Fill = new ImageBrush { ImageSource = bitmap, Stretch = Stretch.UniformToFill };
+            avatar.Visibility = Visibility.Visible;
+            C<TextBlock>("AccountInitial").Visibility = Visibility.Collapsed;
+        }
+        catch (OperationCanceledException) { }
+        catch (System.Runtime.InteropServices.COMException) { } // Leave the initial if the image cannot be decoded.
+        finally
+        {
+            if (ReferenceEquals(avatarRequest, request)) avatarRequest = null;
+            request.Dispose();
+        }
     }
 
     private static Visibility ToVisibility(bool value) => value ? Visibility.Visible : Visibility.Collapsed;

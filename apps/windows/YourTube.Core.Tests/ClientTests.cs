@@ -139,6 +139,25 @@ public sealed class ClientTests
         Assert.Null(transport.Requests[2].Auth);
     }
     [Fact]
+    public async Task AccountPhotosBelongToTheirOwnIdentity()
+    {
+        const string accounts = """
+        {"contents":[
+          {"accountItem":{"accountName":{"simpleText":"Owner"},"accountPhoto":{"thumbnails":[{"url":17},{"url":"https://lh3.googleusercontent.com/fixture-owner"}]}}},
+          {"accountItem":{"accountName":{"simpleText":"Brand"},"accountPhoto":{"thumbnails":[{"url":"//yt3.ggpht.com/fixture-brand"}]}}},
+          {"accountItem":{"accountName":{"simpleText":"No photo"},"decoy":{"accountPhoto":{"thumbnails":[{"url":"https://lh3.googleusercontent.com/decoy"}]}}}}
+        ]}
+        """;
+        using var transport = new Transport(Html, Script, accounts);
+        using var http = new HttpClient(transport);
+        var clock = new Clock();
+        var result = await clock.Client(http).GetAccountsAsync(new("test-access", "test-refresh", clock.Now.AddHours(1)));
+        Assert.Equal(new Uri("https://lh3.googleusercontent.com/fixture-owner"), result[0].AvatarUri);
+        Assert.Equal(new Uri("https://yt3.ggpht.com/fixture-brand"), result[1].AvatarUri);
+        Assert.Null(result[2].AvatarUri);
+        Assert.DoesNotContain("fixture-owner", result[0].ToString());
+    }
+    [Fact]
     public async Task AccountsReadsOwnerAndBrandIdentitiesWithBearerOnlyOnPrivateRequest()
     {
         // Synthetic values; field paths follow pinned upstream AccountInt.java, not live account data.

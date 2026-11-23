@@ -32,7 +32,7 @@
   </Grid.Resources>
   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
   <Border x:Name="TitleBar" Grid.Row="0" Height="40" Background="Transparent" Padding="16,0,150,0">
-    <StackPanel x:Name="AppBrand" Orientation="Horizontal" Spacing="9" HorizontalAlignment="Right" VerticalAlignment="Center">
+    <StackPanel x:Name="AppBrand" Orientation="Horizontal" Spacing="9" HorizontalAlignment="Left" VerticalAlignment="Center">
       <Border Width="27" Height="26" CornerRadius="6" Background="#c0d7ae">
         <FontIcon Glyph="&#xE768;" FontSize="12" Foreground="#172019" AutomationProperties.AccessibilityView="Raw"/>
       </Border>
@@ -200,7 +200,10 @@
       <Grid ColumnSpacing="7">
         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
         <Border Width="26" Height="26" CornerRadius="13" Background="#c0d7ae" AutomationProperties.AccessibilityView="Raw">
-          <TextBlock x:Name="AccountInitial" Text="?" Foreground="#172019" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          <Grid>
+            <TextBlock x:Name="AccountInitial" Text="?" Foreground="#172019" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            <Ellipse x:Name="AccountAvatar" Width="26" Height="26" Visibility="Collapsed" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
+          </Grid>
         </Border>
         <TextBlock x:Name="AccountLabel" Grid.Column="1" MaxWidth="110" Text="Account" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
         <FontIcon Grid.Column="2" Glyph="&#xE70E;" FontSize="10" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw"/>

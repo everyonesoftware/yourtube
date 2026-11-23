@@ -262,14 +262,7 @@ internal sealed partial class MainWindow
         {
             var bytes = await libraryThumbnails.LoadAsync(videoId, request.Token);
             if (closed || request.IsCancellationRequested || bytes is null) return;
-            using var stream = new InMemoryRandomAccessStream();
-            using var writer = new DataWriter(stream);
-            writer.WriteBytes(bytes);
-            await writer.StoreAsync();
-            writer.DetachStream();
-            stream.Seek(0);
-            var bitmap = new BitmapImage { DecodePixelWidth = 480 };
-            await bitmap.SetSourceAsync(stream);
+            var bitmap = await DecodeImageAsync(bytes, 480);
             if (!closed && !request.IsCancellationRequested && libraryImages.TryGetValue(container, out var current) && ReferenceEquals(request, current.Request))
                 image.Source = bitmap;
         }
@@ -280,6 +273,19 @@ internal sealed partial class MainWindow
             if (libraryImages.TryGetValue(container, out var current) && ReferenceEquals(request, current.Request)) libraryImages.Remove(container);
             request.Dispose();
         }
+    }
+
+    private static async Task<BitmapImage> DecodeImageAsync(byte[] bytes, int width)
+    {
+        using var stream = new InMemoryRandomAccessStream();
+        using var writer = new DataWriter(stream);
+        writer.WriteBytes(bytes);
+        await writer.StoreAsync();
+        writer.DetachStream();
+        stream.Seek(0);
+        var bitmap = new BitmapImage { DecodePixelWidth = width };
+        await bitmap.SetSourceAsync(stream);
+        return bitmap;
     }
 
     private void CancelLibraryImages(GridView? feed = null)

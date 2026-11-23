@@ -38,16 +38,31 @@ internal sealed class LibraryThumbnails : IDisposable
         if (videoId is not { Length: 11 } ||
             !videoId.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-')) return Task.FromResult<byte[]?>(null);
 
+        return LoadImageAsync(new Uri($"https://i.ytimg.com/vi/{videoId}/mqdefault.jpg"), false, cancellationToken);
+    }
+
+    public Task<byte[]?> LoadAvatarAsync(Uri uri, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested) return Task.FromCanceled<byte[]?>(cancellationToken);
+        if (!uri.IsAbsoluteUri || uri.Scheme != Uri.UriSchemeHttps || !uri.IsDefaultPort ||
+            uri.UserInfo.Length != 0 || uri.Fragment.Length != 0 ||
+            uri.IdnHost is not ("lh3.googleusercontent.com" or "yt3.ggpht.com" or "yt3.googleusercontent.com"))
+            return Task.FromResult<byte[]?>(null);
+        return LoadImageAsync(uri, true, cancellationToken);
+    }
+
+    private Task<byte[]?> LoadImageAsync(Uri uri, bool avatar, CancellationToken cancellationToken)
+    {
         CancellationTokenSource operation;
         lock (sync)
         {
             if (disposed) return Task.FromResult<byte[]?>(null);
             operation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lifetime.Token);
         }
-        return RunAsync(videoId, cancellationToken, operation);
+        return RunAsync(uri, avatar, cancellationToken, operation);
     }
 
-    private async Task<byte[]?> RunAsync(string videoId, CancellationToken caller, CancellationTokenSource operation)
+    private async Task<byte[]?> RunAsync(Uri uri, bool avatar, CancellationToken caller, CancellationTokenSource operation)
     {
         using var scope = operation;
         operation.CancelAfter(timeout);
@@ -58,7 +73,7 @@ internal sealed class LibraryThumbnails : IDisposable
             try
             {
                 token.ThrowIfCancellationRequested();
-                var image = await FetchAsync(videoId, token).ConfigureAwait(false);
+                var image = await FetchAsync(uri, avatar, token).ConfigureAwait(false);
                 token.ThrowIfCancellationRequested();
                 return image;
             }
@@ -72,14 +87,14 @@ internal sealed class LibraryThumbnails : IDisposable
         }
     }
 
-    private async Task<byte[]?> FetchAsync(string videoId, CancellationToken token)
+    private async Task<byte[]?> FetchAsync(Uri uri, bool avatar, CancellationToken token)
     {
-        using var response = await http.GetAsync($"https://i.ytimg.com/vi/{videoId}/mqdefault.jpg",
-            HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
+        using var response = await http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
         var content = response.Content;
         var length = content.Headers.ContentLength;
+        var mediaType = content.Headers.ContentType?.MediaType?.ToLowerInvariant();
         if (response.StatusCode != HttpStatusCode.OK || length is 0 or > MaxBytes ||
-            !string.Equals(content.Headers.ContentType?.MediaType, "image/jpeg", StringComparison.OrdinalIgnoreCase))
+            (mediaType != "image/jpeg" && !(avatar && mediaType is "image/png" or "image/webp")))
             return null;
 
         var body = await content.ReadAsStreamAsync(token).ConfigureAwait(false);

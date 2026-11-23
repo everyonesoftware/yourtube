@@ -216,10 +216,29 @@ public sealed partial class YouTubeClient
                     .Select(token => token.GetProperty("pageId"))
                     .FirstOrDefault();
             }
-            accounts.Add(new(name, handle.Length == 0 ? null : handle, pageId.ValueKind == JsonValueKind.String ? pageId.GetString() : null));
+            accounts.Add(new(name, handle.Length == 0 ? null : handle, pageId.ValueKind == JsonValueKind.String ? pageId.GetString() : null)
+            {
+                AvatarUri = ReadAccountAvatar(item)
+            });
         }
         return accounts;
     }, cancellationToken);
+    private static Uri? ReadAccountAvatar(JsonElement item)
+    {
+        var thumbnails = At(item, "accountPhoto", "thumbnails");
+        if (thumbnails.ValueKind != JsonValueKind.Array) return null;
+        foreach (var thumbnail in thumbnails.EnumerateArray())
+        {
+            var url = At(thumbnail, "url");
+            if (url.ValueKind != JsonValueKind.String) continue;
+            var candidate = url.GetString()!;
+            if (candidate.StartsWith("//", StringComparison.Ordinal)) candidate = "https:" + candidate;
+            if (Uri.TryCreate(candidate, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps)
+                return uri;
+        }
+        return null;
+    }
+
     private static JsonElement At(JsonElement value, params string[] path)
     {
         foreach (var key in path)
