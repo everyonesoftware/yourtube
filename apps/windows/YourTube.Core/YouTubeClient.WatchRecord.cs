@@ -10,6 +10,10 @@ public sealed record WatchLookupComparison(WatchLookupResult Baseline, WatchLook
 
 public sealed partial class YouTubeClient
 {
+    // Nonsecret TV_DOWNGRADED profile from the pinned MediaServiceCore reference.
+    private const string TvFallbackVersion = "5.20260901";
+    private const string TvFallbackAgent = "Mozilla/5.0 (DirectFB; Linux x86_64) Cobalt/4.13031-qa (unlike Gecko) Starboard/1";
+
     public async Task<WatchLookupComparison> CompareWatchLookupsAsync(YouTubeSession session, YouTubeAccount account, string videoId, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -21,10 +25,10 @@ public sealed partial class YouTubeClient
         var candidate = await InspectAsync(true);
         return new(baseline, candidate);
 
-        async Task<WatchLookupResult> InspectAsync(bool tvPlayerHeaders)
+        async Task<WatchLookupResult> InspectAsync(bool tvFallback)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var player = await LookupWatchPlayerAsync(session, account, videoId, nonce, cancellationToken, tvPlayerHeaders);
+            var player = await LookupWatchPlayerAsync(session, account, videoId, nonce, cancellationToken, tvFallback);
             cancellationToken.ThrowIfCancellationRequested();
             var status = await ReadWatchStatusAsync(player, cancellationToken);
             if (status != "OK")
@@ -69,9 +73,17 @@ public sealed partial class YouTubeClient
     private Task PrepareWatchLookupAsync(CancellationToken ct) =>
         WatchStageAsync("watch_discovery_failed", async () => { await BootstrapAsync(ct); return true; }, ct);
 
-    private Task<JsonElement> LookupWatchPlayerAsync(YouTubeSession session, YouTubeAccount account, string videoId, string nonce, CancellationToken ct, bool tvPlayerHeaders = false) =>
-        WatchStageAsync("watch_lookup_failed", () => PostAsync("youtubei/v1/player", new { context = Context(account.PageId), videoId, cpn = nonce },
-            ct, session: session, pageId: account.PageId, tvPlayerHeaders: tvPlayerHeaders), ct);
+    private Task<JsonElement> LookupWatchPlayerAsync(YouTubeSession session, YouTubeAccount account, string videoId, string nonce, CancellationToken ct, bool tvFallback = false) =>
+        WatchStageAsync("watch_lookup_failed", () => PostAsync("youtubei/v1/player", new
+        {
+            context = tvFallback ? TvFallbackContext(account.PageId) : Context(account.PageId), videoId, cpn = nonce
+        }, ct, session: session, pageId: account.PageId, tvFallback: tvFallback), ct);
+
+    private object TvFallbackContext(string? pageId) => new
+    {
+        client = new { clientName = "TVHTML5", clientVersion = TvFallbackVersion, clientScreen = "WATCH", userAgent = TvFallbackAgent, acceptLanguage = "en", acceptRegion = "US", utcOffsetMinutes = "0", visitorData },
+        user = TvUser(pageId)
+    };
 
     private static Task<string> ReadWatchStatusAsync(JsonElement player, CancellationToken ct) =>
         WatchStageAsync("watch_lookup_failed", () => Task.FromResult(Required(player.GetProperty("playabilityStatus"), "status")), ct);

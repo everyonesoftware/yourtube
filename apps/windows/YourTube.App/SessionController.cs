@@ -188,7 +188,7 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
         RunWatchOperationAsync(account, async (fresh, ct) =>
         {
             var result = await api.CompareWatchLookupsAsync(fresh, account, videoId, ct);
-            return $"Baseline: {Describe(result.Baseline)}. TV headers: {Describe(result.Candidate)}.";
+            return $"Baseline: {Describe(result.Baseline)}. TV fallback: {Describe(result.Candidate)}.";
         }, playbackToken);
 
     private static string Describe(WatchLookupResult result) => $"{result.Status}, tracking {(result.TrackingUsable ? "usable" : "not usable")}";

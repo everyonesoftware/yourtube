@@ -9,7 +9,7 @@ public sealed class WatchRecordTests
     [Theory]
     [InlineData(null)]
     [InlineData("brand-page")]
-    public async Task ComparisonUsesSameIdentityAndNeverSendsTrackingRequests(string? page)
+    public async Task ComparisonUsesPinnedTvFallbackWithSameIdentityAndNeverSendsTrackingRequests(string? page)
     {
         const string denied = "{\"playabilityStatus\":{\"status\":\"LOGIN_REQUIRED\",\"reason\":\"private-marker\"}}";
         using var transport = new ClientTests.Transport(ClientTests.Html, ClientTests.Script, denied,
@@ -22,6 +22,10 @@ public sealed class WatchRecordTests
         Assert.Equal("OK", result.Candidate.Status);
         Assert.True(result.Candidate.TrackingUsable);
         Assert.Equal(4, transport.Requests.Count);
+        const string fallbackAgent = "Mozilla/5.0 (DirectFB; Linux x86_64) Cobalt/4.13031-qa (unlike Gecko) Starboard/1";
+        using var baselineBody = JsonDocument.Parse(transport.Requests[2].Body);
+        var nonce = baselineBody.RootElement.GetProperty("cpn").GetString();
+        Assert.Matches("^[A-Za-z0-9_-]{16}$", nonce!);
         for (int i = 2; i <= 3; i++)
         {
             var request = transport.Requests[i];
@@ -29,12 +33,26 @@ public sealed class WatchRecordTests
             Assert.Equal("Bearer access", request.Auth);
             Assert.Equal(page, request.Page);
             using var body = JsonDocument.Parse(request.Body);
+            Assert.Equal(Video, body.RootElement.GetProperty("videoId").GetString());
+            Assert.Equal(nonce, body.RootElement.GetProperty("cpn").GetString());
+            var client = body.RootElement.GetProperty("context").GetProperty("client");
+            Assert.Equal("TVHTML5", client.GetProperty("clientName").GetString());
+            Assert.Equal(i == 2 ? "7.test" : "5.20260901", client.GetProperty("clientVersion").GetString());
+            if (i == 3)
+            {
+                Assert.Equal(fallbackAgent, client.GetProperty("userAgent").GetString());
+                Assert.Equal(fallbackAgent, request.Agent);
+                Assert.Equal("https://www.youtube.com/tv", request.Referer);
+                Assert.False(client.TryGetProperty("tvAppInfo", out _));
+                Assert.False(client.TryGetProperty("browserVersion", out _));
+                Assert.False(body.RootElement.TryGetProperty("playbackContext", out _));
+            }
             var user = body.RootElement.GetProperty("context").GetProperty("user");
             Assert.Equal(page, user.TryGetProperty("onBehalfOfUser", out var identity) ? identity.GetString() : null);
         }
         Assert.Null(transport.RequestHeaders[2].GetValueOrDefault("X-Youtube-Client-Name"));
         Assert.Equal("7", transport.RequestHeaders[3]["X-Youtube-Client-Name"]);
-        Assert.Equal("7.test", transport.RequestHeaders[3]["X-Youtube-Client-Version"]);
+        Assert.Equal("5.20260901", transport.RequestHeaders[3]["X-Youtube-Client-Version"]);
         Assert.Equal("visitor", transport.RequestHeaders[3]["X-Goog-Visitor-Id"]);
         Assert.DoesNotContain("private-marker", result.ToString());
     }
@@ -60,6 +78,7 @@ public sealed class WatchRecordTests
         var player = transport.Requests[2];
         var record = transport.Requests[3];
         Assert.Equal("https://www.youtube.com/youtubei/v1/player", player.Url);
+        Assert.Null(transport.RequestHeaders[2].GetValueOrDefault("X-Youtube-Client-Version"));
         var body = JsonDocument.Parse(player.Body).RootElement;
         Assert.Equal(Video, body.GetProperty("videoId").GetString());
         var user = body.GetProperty("context").GetProperty("user");

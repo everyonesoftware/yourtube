@@ -72,15 +72,16 @@ public sealed partial class YouTubeClient
         if (version.Length > 0) clientVersion = version;
         visitorData = Match(html, "\"visitorData\":\"([^\"]+)\"");
     }
-    private async Task<JsonElement> PostAsync(string path, object payload, CancellationToken ct, bool polling = false, YouTubeSession? session = null, string? pageId = null, bool tvPlayerHeaders = false)
+    private async Task<JsonElement> PostAsync(string path, object payload, CancellationToken ct, bool polling = false, YouTubeSession? session = null, string? pageId = null, bool tvFallback = false)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "https://www.youtube.com/" + path) { Content = JsonContent.Create(payload) };
-        request.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
-        if (path == "youtubei/v1/browse") request.Headers.Referrer = new Uri("https://www.youtube.com/tv");
-        if (path == "youtubei/v1/player" && tvPlayerHeaders)
+        var useFallback = path == "youtubei/v1/player" && tvFallback;
+        request.Headers.TryAddWithoutValidation("User-Agent", useFallback ? TvFallbackAgent : UserAgent);
+        if (path == "youtubei/v1/browse" || useFallback) request.Headers.Referrer = new Uri("https://www.youtube.com/tv");
+        if (useFallback)
         {
             request.Headers.Add("X-Youtube-Client-Name", "7"); // TVHTML5 in the pinned MediaServiceCore client map.
-            request.Headers.Add("X-Youtube-Client-Version", clientVersion);
+            request.Headers.Add("X-Youtube-Client-Version", TvFallbackVersion);
             if (!string.IsNullOrWhiteSpace(visitorData)) request.Headers.Add("X-Goog-Visitor-Id", visitorData);
         }
         if (session is not null) request.Headers.Authorization = new("Bearer", session.AccessToken);

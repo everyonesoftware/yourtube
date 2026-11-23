@@ -102,7 +102,7 @@ internal static class StateTests
         await controller.SelectAccountAsync(TestApi.B);
         Verify(await controller.TryRecordWatchStartAsync(TestApi.A, "abcdefghijk", length, position) is null && api.WatchCalls == 0, "watch writes cannot choose another identity");
         Verify(await controller.TryCompareWatchLookupsAsync(TestApi.A, "abcdefghijk") is null && api.CompareCalls == 0, "lookup comparison cannot choose another identity");
-        Verify(await controller.TryCompareWatchLookupsAsync(TestApi.B, "abcdefghijk") == "Baseline: LOGIN_REQUIRED, tracking not usable. TV headers: OK, tracking usable." && api.CompareCalls == 1 && api.WatchCalls == 0, "diagnostic compares without recording a start");
+        Verify(await controller.TryCompareWatchLookupsAsync(TestApi.B, "abcdefghijk") == "Baseline: LOGIN_REQUIRED, tracking not usable. TV fallback: OK, tracking usable." && api.CompareCalls == 1 && api.WatchCalls == 0, "diagnostic compares without recording a start");
         api.Watch = (account, id, duration, start, _) =>
         {
             Verify(ReferenceEquals(account, TestApi.B) && id == "abcdefghijk" && duration == length && start == position, "watch data belongs to selected playback and identity");
