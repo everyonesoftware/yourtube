@@ -7,7 +7,7 @@ A personal YouTube client. The first native Windows proof of concept implements 
 <!-- current-downloads:start -->
 | Platform | Version | Download | Status |
 | --- | --- | --- | --- |
-| Windows x64 | 0.1.27 | [Installer](https://github.com/everyonesoftware/yourtube/releases/download/v0.1.27/YourTubeWindows-win-x64-Setup.exe) · [SHA-256](https://github.com/everyonesoftware/yourtube/releases/download/v0.1.27/YourTubeWindows-win-x64-Setup.exe.sha256) | Proof of concept; authenticated account acceptance pending |
+| Windows x64 | 0.1.29 | [Installer](https://github.com/everyonesoftware/yourtube/releases/download/v0.1.29/YourTubeWindows-win-x64-Setup.exe) · [SHA-256](https://github.com/everyonesoftware/yourtube/releases/download/v0.1.29/YourTubeWindows-win-x64-Setup.exe.sha256) | Proof of concept; authenticated account acceptance pending |
 <!-- current-downloads:end -->
 
 ## Windows history proof of concept
