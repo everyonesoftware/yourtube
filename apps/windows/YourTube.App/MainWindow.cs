@@ -855,6 +855,7 @@ internal sealed partial class MainWindow : Window
             "watch_sent" => "Playback start sent. Check YouTube History to confirm it was saved.",
             "watch_account_failed" or "auth_required" => "Account preparation failed. No history write was sent.",
             "watch_discovery_failed" => "YouTube TV client setup failed. No history write was sent.",
+            "watch_context_unavailable" => "YouTube player context could not be found. No history write was sent.",
             "watch_lookup_failed" => "YouTube player lookup failed. No history write was sent.",
             "watch_lookup_not_playable" => "The YouTube player lookup did not return a playable video. No history write was sent.",
             "watch_tracking_unusable" => "The YouTube player response did not contain usable tracking data. No history write was sent.",

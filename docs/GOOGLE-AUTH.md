@@ -56,6 +56,14 @@ dotnet run --project apps/windows/YourTube.Probe -c Release -- --signin
 
 This requires a local, non-redirected input/error terminal. Only this opt-in mode prints the user activation code to local stderr and opens the allowlisted activation page. It never prints the device code, credentials or tokens. After approval, stdout contains only authorization status, account count, page/card counts and request count. It reads up to ten pages per account, stopping on absent/repeated continuation tokens. It does not persist tokens/history; Ctrl+C cancels. Do not paste the activation code or console capture into chat. For full visual history use the native app.
 
+### Read-only test-account lookup batch
+
+Use a separate Google account with a single YouTube identity. In a local, interactive PowerShell terminal run `dotnet run --project apps/windows/YourTube.Probe -c Release -- --watch-lookups jNQXAC9IVRw` (or `YourTube.Probe.exe --watch-lookups jNQXAC9IVRw` from a standalone publish). Supply one to eight public video IDs in one batch. Approve the device authorization yourself in Google’s browser page. Do not share the code or a capture of the terminal.
+
+This mode authorizes once per batch and uses the signed-in baseline and TV fallback player lookups without opening videos, fetching History, or sending watch events. It accepts exactly one returned YouTube identity; credentials stay in process memory and are discarded when it exits. Share only the `case=` or `probe_error=` lines, not the activation text. This does not grant a remote agent access to the session. To end authorization at Google, revoke the device authorization from the test account.
+
+The standalone `--watch-context` mode adds a third lookup, `tv_with_context`. It reads a signature timestamp from the public watch page’s same-origin player script without authentication and adds a SmartTube-style playback context to the TV control request. If the timestamp cannot be found, the third lookup is skipped rather than guessed. This tests the context block, not byte-for-byte parity with SmartTube: it omits ad, reload and feed click-tracking fields. Like `--watch-lookups`, it does not play the video or write History.
+
 ## Verification evidence
 
 Verified on November 20, 2026, in WSL with SDK `10.0.404`:
