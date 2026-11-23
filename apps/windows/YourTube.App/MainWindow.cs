@@ -38,6 +38,11 @@ internal sealed partial class MainWindow : Window
     private CancellationTokenSource? watchRequest;
     private DispatcherQueueTimer? playerClock;
     private Storyboard? playerTapFade;
+    private bool playerRunning;
+    private Windows.Foundation.Point? playerMousePosition;
+    private long? lastPlayerMouseActivity;
+    private readonly ScalarTransition playerFadeIn = new() { Duration = TimeSpan.FromMilliseconds(110) };
+    private readonly ScalarTransition playerFadeOut = new() { Duration = TimeSpan.FromMilliseconds(220) };
     private bool updatingTransport;
     private uint? seekPointer;
     private NativePlaybackSession? seekOwner;
@@ -94,12 +99,8 @@ internal sealed partial class MainWindow : Window
             PlaybackTiming.StartIfEnabled);
         playback.Changed += RenderPlayback;
         WirePlayerOverlay();
-        C<Button>("PlayerBackButton").Click += (_, _) =>
-        {
-            var origin = libraryOrigin;
-            playback.Back();
-            RestoreLibraryFocus(origin);
-        };
+        C<Button>("PlayerBackButton").Click += (_, _) => CloseVideo();
+        C<Button>("PlayerCloseButton").Click += (_, _) => CloseVideo();
         C<Button>("PlayerRetryButton").Click += async (_, _) => { SyncPlaybackContext(); await playback.RetryAsync(); };
         C<Button>("PlayerOpenYouTubeButton").Click += async (_, _) =>
         {
@@ -478,6 +479,14 @@ internal sealed partial class MainWindow : Window
         await playback.SelectAsync(video);
     }
 
+    private void CloseVideo()
+    {
+        if (closed || playback.Selected is null) return;
+        var origin = libraryOrigin;
+        playback.Back();
+        RestoreLibraryFocus(origin);
+    }
+
     private void RenderPlayback()
     {
         if (closed) return;
@@ -575,9 +584,19 @@ internal sealed partial class MainWindow : Window
     {
         var stage = C<Grid>("PlayerStage");
         var seek = C<Slider>("PlayerSeek");
+        stage.PointerEntered += (_, args) => TrackPlayerMouse(stage, args);
+        stage.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler((_, args) => TrackPlayerMouse(stage, args)), handledEventsToo: true);
+        stage.PointerExited += (_, args) =>
+        {
+            if (args.Pointer.PointerDeviceType != Microsoft.UI.Input.PointerDeviceType.Mouse) return;
+            playerMousePosition = null;
+            lastPlayerMouseActivity = null;
+            UpdatePlayerControlsVisibility();
+        };
+        C<StackPanel>("PlayerOverlay").GotFocus += (_, _) => UpdatePlayerControlsVisibility();
         PlayerMenu.Opening += (_, _) => PopulatePlayerMenu();
-        PlayerMenu.Opened += (_, _) => playerMenuOpen = true;
-        PlayerMenu.Closed += (_, _) => playerMenuOpen = false;
+        PlayerMenu.Opened += (_, _) => { playerMenuOpen = true; UpdatePlayerControlsVisibility(); };
+        PlayerMenu.Closed += (_, _) => { playerMenuOpen = false; UpdatePlayerControlsVisibility(); };
         C<Grid>("PlayerStageSlot").SizeChanged += (_, args) =>
         {
             if (!fullscreen && args.NewSize.Width > 0) ResizePlayerStage(args.NewSize.Width);
@@ -648,6 +667,43 @@ internal sealed partial class MainWindow : Window
         playerClock = root.DispatcherQueue.CreateTimer();
         playerClock.Interval = TimeSpan.FromMilliseconds(150);
         playerClock.Tick += (_, _) => UpdatePlayerOverlay();
+    }
+
+    private void TrackPlayerMouse(Grid stage, PointerRoutedEventArgs args)
+    {
+        if (args.Pointer.PointerDeviceType != Microsoft.UI.Input.PointerDeviceType.Mouse) return;
+        var point = args.GetCurrentPoint(stage).Position;
+        // Captured moves can still reach the stage after the mouse leaves its bounds.
+        Windows.Foundation.Point? position = point.X >= 0 && point.X < stage.ActualWidth &&
+            point.Y >= 0 && point.Y < stage.ActualHeight ? point : null;
+        if (Nullable.Equals(position, playerMousePosition)) return;
+        playerMousePosition = position;
+        lastPlayerMouseActivity = position is not null ? Environment.TickCount64 : null;
+        UpdatePlayerControlsVisibility();
+    }
+
+    private void UpdatePlayerControlsVisibility()
+    {
+        if (closed) return;
+        var overlay = C<StackPanel>("PlayerOverlay");
+        if (overlay.Visibility != Visibility.Visible) return;
+        bool interacting = playerMenuOpen || seekPointer is not null;
+        if (!interacting && root.XamlRoot is { } xamlRoot &&
+            FocusManager.GetFocusedElement(xamlRoot) is Control { FocusState: FocusState.Keyboard } focused)
+        {
+            for (DependencyObject? element = focused; element is not null; element = VisualTreeHelper.GetParent(element))
+            {
+                if (element != overlay) continue;
+                interacting = true;
+                break;
+            }
+        }
+        bool show = PlayerControlsVisibility.ShouldShow(playerRunning, lastPlayerMouseActivity, Environment.TickCount64, interacting);
+        if (overlay.IsHitTestVisible == show) return;
+        overlay.OpacityTransition = show ? playerFadeIn : playerFadeOut;
+        overlay.Opacity = show ? 1 : 0;
+        // A faded control must not intercept a click meant for the video surface.
+        overlay.IsHitTestVisible = show;
     }
 
     private void TogglePlayerPlayback(bool showFeedback = false)
@@ -831,7 +887,21 @@ internal sealed partial class MainWindow : Window
         bool ready = !settingsVisible && session is { IsOpened: true, HasFailed: false };
         var overlay = C<StackPanel>("PlayerOverlay");
         overlay.Visibility = ToVisibility(ready);
-        if (!ready) { lastWatchPosition = null; playerClock?.Stop(); return; }
+        if (!ready)
+        {
+            lastWatchPosition = null;
+            playerRunning = false;
+            if (playback.Selected is null)
+            {
+                lastPlayerMouseActivity = null;
+                playerMousePosition = null;
+            }
+            overlay.OpacityTransition = null;
+            overlay.Opacity = 0;
+            overlay.IsHitTestVisible = false;
+            playerClock?.Stop();
+            return;
+        }
         if (playerClock is { IsRunning: false }) playerClock.Start();
         bool enabled = InteractivePlayer is not null;
         C<Button>("PlayerPlay").IsEnabled = enabled;
@@ -861,6 +931,9 @@ internal sealed partial class MainWindow : Window
                     if (time.Text != label) time.Text = label;
                 }
                 var playing = IsPlaying(view.PlaybackState);
+                if (playing && !playerRunning && playerMousePosition is not null)
+                    lastPlayerMouseActivity = Environment.TickCount64;
+                playerRunning = playing;
                 SetIconAction(C<Button>("PlayerPlay"), playing ? PauseGlyph : PlayGlyph, playing ? "Pause" : "Play");
                 var muted = player.IsMuted || player.Volume == 0;
                 SetIconAction(C<Button>("PlayerMute"), muted ? "\uE74F" : "\uE767", muted ? "Unmute" : "Mute");
@@ -868,6 +941,7 @@ internal sealed partial class MainWindow : Window
             });
         }
         finally { updatingTransport = false; }
+        UpdatePlayerControlsVisibility();
     }
 
     private void ObserveWatchProgress(MediaPlaybackSession view)

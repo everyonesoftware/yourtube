@@ -18,6 +18,19 @@ internal static class WiringTests
         var overlay = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "PlayerOverlay");
         StateTests.Verify(overlay is not null && player.Parent == overlay.Parent && (string?)player.Attribute("AreTransportControlsEnabled") == "False",
             "one custom native transport overlay shares the video stage instead of a below-video strip");
+        var close = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "PlayerCloseButton");
+        StateTests.Verify(close?.Name.LocalName == "Button" && close.Parent == player.Parent && close.ElementsBeforeSelf().Contains(overlay!) &&
+            (string?)close.Attribute("HorizontalAlignment") == "Right" && (string?)close.Attribute("VerticalAlignment") == "Top" &&
+            (string?)close.Attribute("AutomationProperties.Name") == "Close video",
+            "the top-right close action is on the stage and remains reachable independently of the transport");
+        StateTests.Verify(code.Contains("C<Button>(\"PlayerCloseButton\").Click += (_, _) => CloseVideo();") &&
+            code.Contains("C<Button>(\"PlayerBackButton\").Click += (_, _) => CloseVideo();") &&
+            Regex.IsMatch(code, @"void CloseVideo\(\)\s*\{[^}]*playback\.Back\(\);\s*RestoreLibraryFocus\(origin\);"),
+            "close and Back share the existing feed return and restore focus to the original card");
+        StateTests.Verify(code.Contains("stage.PointerEntered +=") && code.Contains("UIElement.PointerMovedEvent") &&
+            code.Contains("stage.PointerExited +=") && code.Contains("overlay.OpacityTransition") &&
+            code.Contains("overlay.IsHitTestVisible = show;"),
+            "routed activity drives the transport fade without leaving an invisible mouse hit target");
         var videoHitArea = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "PlayerVideoHitArea");
         StateTests.Verify(videoHitArea is not null && videoHitArea.Parent == player.Parent &&
             (string?)videoHitArea.Attribute("Background") == "Transparent" && videoHitArea.ElementsBeforeSelf().Contains(player) &&

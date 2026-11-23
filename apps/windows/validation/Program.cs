@@ -31,6 +31,13 @@ await StateTests.Run();
 await FailureTests.Run();
 await SubscriptionStateTests.Run();
 await HomeStateTests.Run();
+Check(PlayerControlsVisibility.ShouldShow(playing: false, null, 10_000, interacting: false), "paused controls stay visible outside the video");
+Check(!PlayerControlsVisibility.ShouldShow(playing: true, null, 10_000, interacting: false), "playing controls hide when the mouse leaves");
+Check(PlayerControlsVisibility.ShouldShow(playing: true, 7_000, 9_999, interacting: false), "playing controls stay visible before three seconds of inactivity");
+Check(!PlayerControlsVisibility.ShouldShow(playing: true, 7_000, 10_000, interacting: false), "playing controls hide at three seconds of inactivity");
+Check(PlayerControlsVisibility.ShouldShow(playing: true, 10_001, 10_001, interacting: false), "fresh movement reveals idle controls immediately");
+Check(PlayerControlsVisibility.ShouldShow(playing: true, null, 10_000, interacting: true), "keyboard, menu and scrub interactions keep controls visible");
+Console.WriteLine("PASS: transport visibility follows playback, pointer activity and active control interaction.");
 WiringTests.Run(args.Length > 0 ? args[0] : Directory.GetCurrentDirectory());
 if (args.Length > 1) PeTests.Run(args[1], args.Length > 2 ? args[2] : "0.1.1");
 
