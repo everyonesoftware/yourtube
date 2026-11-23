@@ -452,4 +452,64 @@ public sealed class ClientTests
         Assert.Equal("abcdefghijk", Assert.Single(page.Videos).VideoId);
         Assert.Equal("correct", page.Continuation);
     }
+
+    [Theory]
+    [InlineData("onResponseReceivedActions", "")]
+    [InlineData("onResponseReceivedEndpoints", "\"continuationContents\":{},")]
+    public async Task HistoryReadsReloadBodyAndSkipsHeaderReload(string envelope, string extra)
+    {
+        var response = """
+        { EXTRA "ENVELOPE": [
+          {"reloadContinuationItemsCommand": {"slot": "RELOAD_CONTINUATION_SLOT_HEADER", "continuationItems": [
+            {"videoRenderer": {"videoId": "ABCDEFGHIJK"}},
+            {"continuationItemRenderer": {"continuationEndpoint": {"continuationCommand": {"token": "header-token"}}}}
+          ]}},
+          {"reloadContinuationItemsCommand": {"slot": "RELOAD_CONTINUATION_SLOT_BODY", "continuationItems": [
+            {"itemSectionRenderer": {"contents": [{"videoRenderer": {"videoId": "abcdefghijk", "title": {"simpleText": "Older video"},
+              "thumbnailOverlays": [{"thumbnailOverlayResumePlaybackRenderer": {"percentDurationWatched": 42}}]}}]}},
+            {"continuationItemRenderer": {"continuationEndpoint": {"continuationCommand": {"token": "next-history-page"}}}}
+          ]}}
+        ]}
+        """;
+        using var transport = new Transport(Html, Script, response.Replace("EXTRA", extra).Replace("ENVELOPE", envelope));
+        using var http = new HttpClient(transport);
+        var clock = new Clock();
+        var page = await clock.Client(http).GetHistoryAsync(new("access", "refresh", clock.Now.AddHours(1)), new("Owner", null, null), "history-page");
+        var video = Assert.Single(page.Videos);
+        Assert.Equal("abcdefghijk", video.VideoId);
+        Assert.Equal(42, video.PercentWatched);
+        Assert.Equal("next-history-page", page.Continuation);
+    }
+
+    [Fact]
+    public async Task HistoryDoesNotAcceptHeaderOnlyReloadAsEndOfFeed()
+    {
+        const string response = """
+        {"continuationContents":{},"onResponseReceivedActions":[
+          {"reloadContinuationItemsCommand":{"slot":"RELOAD_CONTINUATION_SLOT_HEADER","continuationItems":[],"targetId":"private-fixture-marker"}}
+        ]}
+        """;
+        using var transport = new Transport(Html, Script, response);
+        using var http = new HttpClient(transport);
+        var clock = new Clock();
+        var error = await Assert.ThrowsAsync<YouTubeException>(() => clock.Client(http).GetHistoryAsync(
+            new("access", "refresh", clock.Now.AddHours(1)), new("Owner", null, null), "history-page"));
+        Assert.Equal("invalid_response", error.Code);
+        Assert.DoesNotContain("private-fixture-marker", error.Message);
+    }
+
+    [Fact]
+    public async Task HistoryAcceptsEmptyContinuationWithUnrelatedActions()
+    {
+        const string response = """
+        {"continuationContents":{},"onResponseReceivedActions":[{"unrelatedAction":{}}]}
+        """;
+        using var transport = new Transport(Html, Script, response);
+        using var http = new HttpClient(transport);
+        var clock = new Clock();
+        var page = await clock.Client(http).GetHistoryAsync(
+            new("access", "refresh", clock.Now.AddHours(1)), new("Owner", null, null), "history-page");
+        Assert.Empty(page.Videos);
+        Assert.Null(page.Continuation);
+    }
 }

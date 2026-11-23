@@ -20,6 +20,8 @@ Pinned source inspected locally: `yuliskov/MediaServiceCore` at `c1d202fc21bd97d
 
 8. `GetSubscriptionsAsync` uses the same bearer/session/selected page ID and TV browse envelope with `browseId=FEsubscriptions`. It reads the first TV secondary-navigation section's channel tabs and the aggregate subscription tab's content, never unselected channel videos or response headers. Video continuation requests omit `browseId`; only the opaque cursor is sent. The pinned three-item-row heuristic excludes long Most relevant/Shorts shelves when chronological rows exist. No upload timestamps, chronological completeness, guide fallback, or subscription mutation API is invented. Details and outstanding acceptance: `SUBSCRIPTIONS.md`.
 
+Browse continuation parsing also recognizes body-slot reload commands in action/endpoint arrays. It skips header reloads and keeps the cards and next cursor in the selected body. Public upstream evidence for this command form comes from a channel-sorting fixture, not a signed-in History response; the History replay test uses synthetic cards.
+
 These are video cards, **not timestamped watch events**. Duplicates/order reflect the provider response; the core does not invent timestamps or deduplicate watch events. Unknown top-level schemas fail rather than silently claiming empty history; known empty envelopes use a generic message, not raw provider text.
 
 ## Secret handling and caller requirements

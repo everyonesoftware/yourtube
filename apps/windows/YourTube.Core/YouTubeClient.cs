@@ -250,26 +250,34 @@ public sealed partial class YouTubeClient
     private static JsonElement HistoryContainer(JsonElement response)
     {
         if (response.TryGetProperty("contents", out var content)) return ActiveHistoryContent(content);
-        if (response.TryGetProperty("continuationContents", out var continuation))
+        var continuation = At(response, "continuationContents");
+        if (continuation.ValueKind == JsonValueKind.Object)
         {
             // WatchNextHelper.kt selects these continuation containers, never the response envelope.
             foreach (var key in new[] { "horizontalListContinuation", "gridContinuation", "playlistVideoListContinuation", "sectionListContinuation" })
-                if (continuation.TryGetProperty(key, out var list)) return list;
+                if (At(continuation, key) is { ValueKind: JsonValueKind.Object } list) return list;
             if (continuation.TryGetProperty("tvSurfaceContentContinuation", out var surface))
                 return ActiveHistoryContent(At(surface, "content"));
-            if (continuation.ValueKind == JsonValueKind.Object && !continuation.EnumerateObject().Any()) return continuation;
-            throw Invalid();
         }
+        var hasPagingCommand = false;
         foreach (var key in new[] { "onResponseReceivedActions", "onResponseReceivedEndpoints" })
         {
             var actions = At(response, key);
             if (actions.ValueKind != JsonValueKind.Array) continue;
             foreach (var action in actions.EnumerateArray())
             {
-                var items = At(action, "appendContinuationItemsAction", "continuationItems");
+                var append = At(action, "appendContinuationItemsAction");
+                var items = At(append, "continuationItems");
                 if (items.ValueKind == JsonValueKind.Array) return items;
+                // As in BrowseHelper, do not take cards or cursors from the header reload.
+                var reload = At(action, "reloadContinuationItemsCommand");
+                hasPagingCommand |= append.ValueKind != JsonValueKind.Undefined || reload.ValueKind != JsonValueKind.Undefined;
+                if (At(reload, "slot") is { ValueKind: JsonValueKind.String } slot &&
+                    slot.GetString() == "RELOAD_CONTINUATION_SLOT_BODY" &&
+                    At(reload, "continuationItems") is { ValueKind: JsonValueKind.Array } body) return body;
             }
         }
+        if (!hasPagingCommand && continuation.ValueKind == JsonValueKind.Object && !continuation.EnumerateObject().Any()) return continuation;
         throw Invalid();
     }
     private static JsonElement ActiveHistoryContent(JsonElement content)
