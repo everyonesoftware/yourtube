@@ -20,16 +20,18 @@ internal sealed class CoreApi(YouTubeClient client) : IYouTubeApi
 internal sealed class VaultTokenStore : ITokenStore
 {
     private const string Resource = "EveryoneSoftware.YourTube.RefreshToken";
+    private const string SelectionResource = "EveryoneSoftware.YourTube.AccountSelection";
     private const string UserName = "device-session";
     private readonly PasswordVault vault = new();
-    private PasswordCredential? Find()
+    private PasswordCredential? Find(string resource)
     {
-        try { return vault.Retrieve(Resource, UserName); }
+        try { return vault.Retrieve(resource, UserName); }
         catch (COMException error) when (error.HResult == unchecked((int)0x80070490)) { return null; }
     }
-    public string? Load()
+    public string? Load() => LoadCredential(Resource);
+    private string? LoadCredential(string resource)
     {
-        var credential = Find();
+        var credential = Find(resource);
         if (credential is null) return null;
         credential.RetrievePassword();
         return credential.Password;
@@ -41,9 +43,26 @@ internal sealed class VaultTokenStore : ITokenStore
         // an interrupted replacement must not intentionally discard a good login.
         vault.Add(new PasswordCredential(Resource, UserName, refreshToken));
     }
+    // The optional choice must not block sign-in or switching if its storage is unavailable.
+    public string? LoadAccountSelection()
+    {
+        try { return LoadCredential(SelectionResource); }
+        catch (Exception error) when (error is COMException or UnauthorizedAccessException) { return null; }
+    }
+    public void SaveAccountSelection(string selection)
+    {
+        try { vault.Add(new PasswordCredential(SelectionResource, UserName, selection)); }
+        catch (Exception error) when (error is COMException or UnauthorizedAccessException or ArgumentException) { }
+    }
     public void Clear()
     {
-        var credential = Find();
+        // Try to remove the login even if removing the selection needs a retry.
+        try { Remove(SelectionResource); }
+        finally { Remove(Resource); }
+    }
+    private void Remove(string resource)
+    {
+        var credential = Find(resource);
         if (credential is not null) vault.Remove(credential);
     }
 }

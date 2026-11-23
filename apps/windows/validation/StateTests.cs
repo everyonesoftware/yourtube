@@ -91,6 +91,84 @@ internal static class StateTests
         Verify(expiry.Phase == SessionPhase.SignedOut && !expiry.Busy, "interrupted startup is retryable, not a stranded authorization view");
         Console.WriteLine("PASS: retry restoration and interrupted startup clear private state.");
         await WatchRecordAsync();
+        await RememberAccountAsync();
+        await RememberedAccountIsBoundToLoginAsync();
+    }
+
+    private static async Task RememberedAccountIsBoundToLoginAsync()
+    {
+        var store = new TestStore();
+        var oldApi = new TestApi();
+        var oldWindow = new SessionController(oldApi, store, "fixture-device");
+        await oldWindow.SignInAsync();
+
+        var anotherOwner = new YouTubeAccount("Another owner", null, null);
+        var anotherLogin = new YouTubeSession("new-access", "new-refresh", DateTimeOffset.UtcNow.AddHours(1));
+        var newApi = new TestApi
+        {
+            Complete = () => Task.FromResult(anotherLogin),
+            Refresh = () => Task.FromResult(anotherLogin),
+            Accounts = () => Task.FromResult<IReadOnlyList<YouTubeAccount>>([anotherOwner]),
+            Home = (_, _) => throw new InvalidOperationException("Unexpected Home request for the replacement login")
+        };
+        var newWindow = new SessionController(newApi, store, "fixture-device");
+        await newWindow.SignInAsync();
+        await oldWindow.SelectAccountAsync(TestApi.A);
+        var reopened = new SessionController(newApi, store, "fixture-device");
+        await reopened.InitializeAsync();
+        Verify(reopened.Phase == SessionPhase.SignedIn && reopened.SelectedAccount is null, "a stale window cannot select the default owner of a replacement login");
+    }
+
+    private static async Task RememberAccountAsync()
+    {
+        var store = new TestStore();
+        var api = new TestApi();
+        var first = new SessionController(api, store, "fixture-device");
+        await first.SignInAsync();
+        await first.SelectAccountAsync(TestApi.A);
+        await first.SelectAccountAsync(TestApi.B);
+        first.Close();
+
+        var renamed = TestApi.B with { Name = "Renamed", Handle = "@renamed" };
+        api.Accounts = () => Task.FromResult<IReadOnlyList<YouTubeAccount>>([renamed, TestApi.A]);
+        api.Refresh = () => Task.FromResult(new YouTubeSession("rotated-access", "rotated-refresh", DateTimeOffset.UtcNow.AddHours(1)));
+        var home = new TaskCompletionSource<HomePage>();
+        var requests = new List<YouTubeAccount>();
+        api.Home = (account, _) => { requests.Add(account); return home.Task; };
+        var reopened = new SessionController(api, store, "fixture-device");
+        var startup = reopened.InitializeAsync();
+        Verify(ReferenceEquals(reopened.SelectedAccount, renamed), "reopening selects the latest identity by page ID, not account order or display text");
+        Verify(reopened.Busy && requests.SequenceEqual([renamed]), "reopening immediately loads Home for the restored identity only");
+        home.SetResult(new HomePage([new("Recommended", [new("bbbbbbbbbbb", "Restored", "Channel", "3:00", null)])], null, null));
+        await startup;
+        Verify(!reopened.Busy && reopened.Videos.Single().VideoId == "bbbbbbbbbbb", "the restored identity's feed is displayed");
+
+        api.Accounts = () => Task.FromResult<IReadOnlyList<YouTubeAccount>>([TestApi.A]);
+        requests.Clear();
+        var missing = new SessionController(api, store, "fixture-device");
+        await missing.InitializeAsync();
+        Verify(missing.Phase == SessionPhase.SignedIn && missing.SelectedAccount is null && requests.Count == 0, "a missing identity falls back to the account chooser without browsing as another user");
+        await missing.SelectAccountAsync(TestApi.A);
+        missing.Close();
+
+        var owner = new SessionController(api, store, "fixture-device");
+        await owner.InitializeAsync();
+        Verify(ReferenceEquals(owner.SelectedAccount, TestApi.A), "the default owner without a page ID is also remembered");
+        owner.SignOut();
+        Verify(store.Value is null && store.AccountSelection is null, "sign-out clears saved identity and token");
+        await owner.SignInAsync();
+        Verify(owner.SelectedAccount is null, "a new login still requires an explicit account choice");
+        await owner.SelectAccountAsync(TestApi.A);
+        var accounts = new TaskCompletionSource<IReadOnlyList<YouTubeAccount>>();
+        api.Accounts = () => accounts.Task;
+        var interrupted = new SessionController(api, store, "fixture-device");
+        var restoring = interrupted.InitializeAsync();
+        interrupted.SignOut();
+        requests.Clear();
+        accounts.SetResult([TestApi.A]);
+        await restoring;
+        Verify(interrupted.SelectedAccount is null && requests.Count == 0 && store.AccountSelection is null, "sign-out during account lookup prevents auto-selection and Home loading");
+        Console.WriteLine("PASS: last identity is restored safely across launches.");
     }
 
     private static async Task WatchRecordAsync()
@@ -154,10 +232,13 @@ internal static class StateTests
 internal sealed class TestStore : ITokenStore
 {
     public string? Value;
+    public string? AccountSelection;
     public int Saves;
     public string? Load() => Value;
     public void Save(string value) { Value = value; Saves++; }
-    public void Clear() => Value = null;
+    public string? LoadAccountSelection() => AccountSelection;
+    public void SaveAccountSelection(string value) => AccountSelection = value;
+    public void Clear() { Value = null; AccountSelection = null; }
 }
 
 internal sealed class TestApi : IYouTubeApi
@@ -183,7 +264,8 @@ internal sealed class TestApi : IYouTubeApi
     public Func<Task<YouTubeSession>> Complete = () => Task.FromResult(Fresh);
     public Task<YouTubeSession> CompleteSignInAsync(DeviceAuthorization auth, CancellationToken token) => Complete();
     public Task<YouTubeSession> RefreshSessionAsync(string refresh, CancellationToken token) { RefreshCalls++; return Refresh(); }
-    public Task<IReadOnlyList<YouTubeAccount>> GetAccountsAsync(YouTubeSession session, CancellationToken token) => Task.FromResult<IReadOnlyList<YouTubeAccount>>([A, B]);
+    public Func<Task<IReadOnlyList<YouTubeAccount>>> Accounts = () => Task.FromResult<IReadOnlyList<YouTubeAccount>>([A, B]);
+    public Task<IReadOnlyList<YouTubeAccount>> GetAccountsAsync(YouTubeSession session, CancellationToken token) => Accounts();
     public Func<YouTubeAccount, string?, Task<SubscriptionsPage>> Subscriptions = (_, _) => Task.FromResult(new SubscriptionsPage([], [], null, null));
     public Task<SubscriptionsPage> GetSubscriptionsAsync(YouTubeSession session, YouTubeAccount account, string? continuation, CancellationToken token) => Subscriptions(account, continuation);
     public Func<YouTubeAccount, string?, Task<HomePage>> Home = (_, _) => Task.FromResult(new HomePage([], null, null));
