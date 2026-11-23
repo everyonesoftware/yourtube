@@ -176,7 +176,7 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
         catch (Exception error) { Fail(op.Id, error); }
         finally { Finish(op.Id); }
     }
-    public async Task<bool?> TryRecordWatchStartAsync(YouTubeAccount account, string videoId, TimeSpan duration, TimeSpan position, CancellationToken playbackToken = default)
+    public async Task<string?> TryRecordWatchStartAsync(YouTubeAccount account, string videoId, TimeSpan duration, TimeSpan position, CancellationToken playbackToken = default)
     {
         bool IsCurrent() => Phase == SessionPhase.SignedIn && !Busy && View != BrowseView.Settings && ReferenceEquals(account, SelectedAccount);
         if (!IsCurrent() || playbackToken.IsCancellationRequested) return null;
@@ -184,6 +184,7 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(op.Token, playbackToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(15));
         bool entered = false;
+        bool preparingAccount = false;
         bool Retired() => op.Token.IsCancellationRequested || playbackToken.IsCancellationRequested;
         try
         {
@@ -191,13 +192,19 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
             entered = true;
             deadline.Token.ThrowIfCancellationRequested();
             if (!IsCurrent() || session is not { } current) return null;
+            preparingAccount = true;
             var fresh = await EnsureFreshAsync(current, (op.Id, deadline.Token));
             deadline.Token.ThrowIfCancellationRequested();
             if (fresh is null || !IsCurrent()) return null;
+            preparingAccount = false;
             await api.RecordWatchStartAsync(fresh, account, videoId, duration, position, deadline.Token);
-            return Retired() ? null : !deadline.IsCancellationRequested;
+            return Retired() ? null : deadline.IsCancellationRequested ? "watch_timed_out" : "watch_sent";
         }
-        catch (Exception) { return Retired() ? null : false; }
+        catch (Exception) when (Retired()) { return null; }
+        catch (Exception) when (preparingAccount) { return "watch_account_failed"; }
+        catch (YouTubeException error) { return error.Code; }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested) { return "watch_timed_out"; }
+        catch (Exception) { return "watch_failed"; }
         finally { if (entered) watchGate.Release(); }
     }
 

@@ -808,7 +808,7 @@ internal sealed partial class MainWindow : Window
 
     private async Task SendWatchStartAsync(SessionController current, YouTubeAccount account, HistoryVideo video, TimeSpan duration, TimeSpan position, long generation, CancellationTokenSource request)
     {
-        bool? result;
+        string? result;
         try { result = await current.TryRecordWatchStartAsync(account, video.VideoId, duration, position, request.Token); }
         finally
         {
@@ -818,9 +818,17 @@ internal sealed partial class MainWindow : Window
         if (closed || generation != watchStatusGeneration || !ReferenceEquals(account, current.SelectedAccount)) return;
         C<TextBlock>("WatchHistoryStatus").Text = result switch
         {
-            true => "Playback start sent. Check YouTube History to confirm.",
-            false => "Couldn’t confirm the playback start was sent. Check YouTube History.",
-            null => "No result for the last playback start. Check YouTube History."
+            "watch_sent" => "Playback start sent. Check YouTube History to confirm it was saved.",
+            "watch_account_failed" or "auth_required" => "Account preparation failed. No history write was sent.",
+            "watch_discovery_failed" => "YouTube TV client setup failed. No history write was sent.",
+            "watch_lookup_failed" => "YouTube player lookup failed. No history write was sent.",
+            "watch_lookup_not_playable" => "The YouTube player lookup did not return a playable video. No history write was sent.",
+            "watch_tracking_unusable" => "The YouTube player response did not contain usable tracking data. No history write was sent.",
+            "watch_record_rejected" => "YouTube returned an unsuccessful response to the history write.",
+            "watch_record_unconfirmed" => "The history write could not be confirmed. Check YouTube History.",
+            "watch_timed_out" => "Reporting the playback start timed out. Check YouTube History.",
+            null => "Reporting was interrupted. Check YouTube History.",
+            _ => "Reporting the playback start failed. Check YouTube History."
         };
     }
 

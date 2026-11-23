@@ -50,7 +50,33 @@ public sealed class WatchRecordTests
         var clock = new ClientTests.Clock();
         var error = await Assert.ThrowsAsync<YouTubeException>(() => clock.Client(http).RecordWatchStartAsync(
             new("access", "refresh", clock.Now.AddHours(1)), new("Identity", null, null), Video, TimeSpan.FromSeconds(180), TimeSpan.Zero));
-        Assert.Equal("invalid_response", error.Code);
+        Assert.Equal("watch_tracking_unusable", error.Code);
         Assert.Equal(3, transport.Requests.Count);
+    }
+
+    [Theory]
+    [InlineData("discovery", "watch_discovery_failed", 2)]
+    [InlineData("lookup", "watch_lookup_failed", 3)]
+    [InlineData("not_playable", "watch_lookup_not_playable", 3)]
+    [InlineData("write", "watch_record_rejected", 4)]
+    public async Task DistinguishesRequestStagesWithoutExposingResponse(string scenario, string code, int count)
+    {
+        const string marker = "PRIVATE_MARKER";
+        using var transport = new ClientTests.Transport(ClientTests.Html, scenario == "discovery" ? marker : ClientTests.Script);
+        transport.Responses.Enqueue(scenario switch
+        {
+            "lookup" => (System.Net.HttpStatusCode.Forbidden, marker),
+            "not_playable" => (System.Net.HttpStatusCode.OK, "{\"playabilityStatus\":{\"status\":\"LOGIN_REQUIRED\",\"reason\":\"PRIVATE_MARKER\"}}"),
+            _ => (System.Net.HttpStatusCode.OK, Player("https://s.youtube.com/api/stats/watchtime?ei=event&vm=monitor&of=opaque"))
+        });
+        transport.Responses.Enqueue((System.Net.HttpStatusCode.BadRequest, marker));
+        using var http = new HttpClient(transport);
+        var clock = new ClientTests.Clock();
+        var error = await Assert.ThrowsAsync<YouTubeException>(() => clock.Client(http).RecordWatchStartAsync(
+            new("access", "refresh", clock.Now.AddHours(1)), new("Identity", null, null), Video, TimeSpan.FromSeconds(180), TimeSpan.Zero));
+        Assert.Equal(code, error.Code);
+        Assert.Equal(count, transport.Requests.Count);
+        Assert.DoesNotContain(marker, error.ToString());
+        Assert.Null(error.InnerException);
     }
 }

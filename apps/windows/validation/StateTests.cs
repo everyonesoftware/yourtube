@@ -106,12 +106,15 @@ internal static class StateTests
             Verify(ReferenceEquals(account, TestApi.B) && id == "abcdefghijk" && duration == length && start == position, "watch data belongs to selected playback and identity");
             return Task.CompletedTask;
         };
-        Verify(await controller.TryRecordWatchStartAsync(TestApi.B, "abcdefghijk", length, position) == true && api.WatchCalls == 1, "watch write uses selected identity");
-        api.Watch = (_, _, _, _, _) => Task.FromException(new YouTubeException("auth_required", "fixture"));
-        Verify(await controller.TryRecordWatchStartAsync(TestApi.B, "abcdefghijk", length, position) == false && controller.Phase == SessionPhase.SignedIn && vault.Value is not null,
-            "experimental watch error does not sign out or mutate the browse session");
+        Verify(await controller.TryRecordWatchStartAsync(TestApi.B, "abcdefghijk", length, position) == "watch_sent" && api.WatchCalls == 1, "watch write uses selected identity");
+        api.Watch = (_, _, _, _, _) => Task.FromException(new YouTubeException("watch_lookup_failed", "fixture"));
+        Verify(await controller.TryRecordWatchStartAsync(TestApi.B, "abcdefghijk", length, position) == "watch_lookup_failed" && controller.Phase == SessionPhase.SignedIn && vault.Value is not null,
+            "experimental watch lookup error preserves its stage and does not sign out or mutate the browse session");
         var delayed = new TaskCompletionSource<YouTubeSession>();
         controller.UtcNow = () => DateTimeOffset.UtcNow.AddHours(2);
+        api.Refresh = () => Task.FromException<YouTubeSession>(new YouTubeException("auth_required", "fixture"));
+        Verify(await controller.TryRecordWatchStartAsync(TestApi.B, "abcdefghijk", length, position) == "watch_account_failed" && api.WatchCalls == 2 && controller.Phase == SessionPhase.SignedIn,
+            "account preparation failure is distinct and cannot send a watch request");
         api.Refresh = () => delayed.Task;
         var pending = controller.TryRecordWatchStartAsync(TestApi.B, "abcdefghijk", length, position);
         controller.SignOut();
@@ -134,7 +137,7 @@ internal static class StateTests
         var nextStart = controller.TryRecordWatchStartAsync(TestApi.B, "zzzzzzzzzzz", length, position);
         Verify(dispatchedToken.IsCancellationRequested && !nextStart.IsCompleted && api.WatchCalls == 3, "replacing playback cancels its transport and the new start waits for the old call to drain");
         drain.SetResult();
-        Verify(await oldStart is null && await nextStart == true && api.WatchCalls == 4, "replacement reports after the retired request drains");
+        Verify(await oldStart is null && await nextStart == "watch_sent" && api.WatchCalls == 4, "replacement reports after the retired request drains");
         Console.WriteLine("PASS: watch reporting binds the selected identity and does not disrupt browsing on failure.");
     }
 
