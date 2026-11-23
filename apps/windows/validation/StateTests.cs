@@ -30,6 +30,7 @@ internal static class StateTests
         Console.WriteLine("PASS: sign-out/cancel invalidate delayed restore and device sign-in.");
         await controller.SignInAsync();
         var oldHistory = new TaskCompletionSource<HistoryPage>();
+        await controller.NavigateAsync(BrowseView.History);
         api.History = (account, continuation) => account == TestApi.A ? oldHistory.Task : Task.FromResult(new HistoryPage([new("bbbbbbbbbbb", "B result", "Channel", "3:00", 25)], "page2", null));
         var oldLoad = controller.SelectAccountAsync(TestApi.A);
         Verify(controller.Busy, "account history request enters busy state");
@@ -48,6 +49,7 @@ internal static class StateTests
         await controller.SignInAsync();
         controller.UtcNow = () => DateTimeOffset.UtcNow.AddHours(2);
         api.Refresh = () => Task.FromResult(TestApi.Fresh);
+        await controller.NavigateAsync(BrowseView.History);
         api.History = (_, _) => Task.FromResult(new HistoryPage([], null, "Empty from provider"));
         var before = api.RefreshCalls;
         await controller.SelectAccountAsync(TestApi.A);
@@ -184,6 +186,8 @@ internal sealed class TestApi : IYouTubeApi
     public Task<IReadOnlyList<YouTubeAccount>> GetAccountsAsync(YouTubeSession session, CancellationToken token) => Task.FromResult<IReadOnlyList<YouTubeAccount>>([A, B]);
     public Func<YouTubeAccount, string?, Task<SubscriptionsPage>> Subscriptions = (_, _) => Task.FromResult(new SubscriptionsPage([], [], null, null));
     public Task<SubscriptionsPage> GetSubscriptionsAsync(YouTubeSession session, YouTubeAccount account, string? continuation, CancellationToken token) => Subscriptions(account, continuation);
+    public Func<YouTubeAccount, string?, Task<HomePage>> Home = (_, _) => Task.FromResult(new HomePage([], null, null));
+    public Task<HomePage> GetHomeAsync(YouTubeSession session, YouTubeAccount account, string? continuation, CancellationToken token) => Home(account, continuation);
     public Func<YouTubeAccount, string?, Task<HistoryPage>> History = (_, _) => Task.FromResult(new HistoryPage([], null, null));
     public Task<HistoryPage> GetHistoryAsync(YouTubeSession session, YouTubeAccount account, string? continuation, CancellationToken token) => History(account, continuation);
 }

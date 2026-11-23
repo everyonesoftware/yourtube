@@ -1,11 +1,15 @@
+using System.Collections.ObjectModel;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Storage.Streams;
+using Windows.System;
 using YourTube.Core;
 
 namespace YourTube.App;
@@ -13,8 +17,11 @@ namespace YourTube.App;
 internal sealed partial class MainWindow
 {
     private readonly LibraryThumbnails libraryThumbnails = new();
-    private readonly Dictionary<Microsoft.UI.Xaml.Controls.Primitives.SelectorItem, CancellationTokenSource> libraryImages = new();
+    private readonly Dictionary<SelectorItem, (GridView Feed, CancellationTokenSource Request)> libraryImages = new();
+    private readonly ObservableCollection<HomeShelf> homeShelves = new();
+    private PointerEventHandler? homeShelfWheelHandler;
     private HistoryVideo? libraryOrigin;
+    private HomeShelf? homeOrigin;
     private bool? compactLibrary;
 
     private void WireLibrary()
@@ -24,6 +31,9 @@ internal sealed partial class MainWindow
         feed.SizeChanged += (_, _) => SizeLibraryCards(feed);
         feed.Loaded += (_, _) => SizeLibraryCards(feed);
         feed.ContainerContentChanging += (_, args) => RenderLibraryCard(feed, args);
+        var shelves = C<ListView>("HomeShelvesList");
+        shelves.ItemsSource = homeShelves;
+        shelves.ContainerContentChanging += (_, args) => RenderHomeShelf(args);
     }
 
     private void ArrangeLibraryNavigation(double width)
@@ -33,12 +43,15 @@ internal sealed partial class MainWindow
         if (compactLibrary == compact) return;
         compactLibrary = compact;
         var rail = C<Border>("NavigationRail");
+        var railScroll = C<ScrollViewer>("NavigationRailScroll");
         var nav = C<StackPanel>("LibraryNavigation");
         var content = C<Grid>("WorkspaceContent");
         rail.Width = compact ? double.NaN : 166;
         rail.Padding = compact ? new Thickness(6, 6, 6, 6) : new Thickness(11, 16, 11, 16);
         rail.BorderThickness = compact ? new Thickness(0, 0, 0, 1) : new Thickness(0, 0, 1, 0);
         nav.Orientation = compact ? Orientation.Horizontal : Orientation.Vertical;
+        railScroll.HorizontalScrollMode = compact ? ScrollMode.Enabled : ScrollMode.Disabled;
+        railScroll.HorizontalScrollBarVisibility = compact ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled;
         Grid.SetRow(rail, compact ? 0 : 1);
         Grid.SetColumnSpan(rail, compact ? 2 : 1);
         Grid.SetColumn(content, compact ? 0 : 1);
@@ -70,6 +83,11 @@ internal sealed partial class MainWindow
         DispatcherQueue.TryEnqueue(() =>
         {
             if (closed || settingsVisible || playback.Selected is not null || controller is not { Phase: SessionPhase.SignedIn, Busy: false }) return;
+            if (controller.View == BrowseView.Home)
+            {
+                RestoreHomeFocus(origin);
+                return;
+            }
             var feed = C<GridView>("HistoryList");
             if (origin is not null && controller.Videos.Any(video => ReferenceEquals(video, origin)))
             {
@@ -82,16 +100,116 @@ internal sealed partial class MainWindow
         });
     }
 
-    private void RenderLibraryCard(GridView feed, ContainerContentChangingEventArgs args)
+    private void RenderHomeShelves(IReadOnlyList<HomeShelf> shelves)
+    {
+        // Continuations append new shelf objects to the existing snapshot, so don't reset its scroller.
+        var keepsPrefix = homeShelves.Count <= shelves.Count && homeShelves.Select((shelf, i) => ReferenceEquals(shelf, shelves[i])).All(same => same);
+        if (!keepsPrefix)
+        {
+            libraryOrigin = null;
+            homeOrigin = null;
+            CancelLibraryImages();
+            homeShelves.Clear();
+        }
+        for (var i = homeShelves.Count; i < shelves.Count; i++) homeShelves.Add(shelves[i]);
+    }
+
+    private void RenderHomeShelf(ContainerContentChangingEventArgs args)
+    {
+        if (args.ItemContainer.ContentTemplateRoot is not Grid host ||
+            host.Children[0] is not TextBlock header || host.Children[1] is not GridView feed) return;
+        var shelf = !closed && !args.InRecycleQueue ? args.Item as HomeShelf : null;
+        if (ReferenceEquals(feed.Tag, shelf)) return;
+
+        homeShelfWheelHandler ??= ForwardHomeShelfWheel;
+        if (feed.Tag is HomeShelf) feed.RemoveHandler(UIElement.PointerWheelChangedEvent, homeShelfWheelHandler);
+        feed.Tag = null;
+        feed.ItemsSource = null;
+        CancelLibraryImages(feed);
+        feed.ContainerContentChanging -= RenderShelfCard;
+        feed.ItemClick -= OpenHomeVideoAsync;
+        header.Text = "";
+        AutomationProperties.SetName(feed, "");
+        if (shelf is null) return;
+
+        header.Text = shelf.Title;
+        AutomationProperties.SetName(feed, shelf.Title);
+        feed.Tag = shelf;
+        feed.ContainerContentChanging += RenderShelfCard;
+        feed.ItemClick += OpenHomeVideoAsync;
+        // A shelf GridView can handle the wheel before the outer ListView sees it.
+        feed.AddHandler(UIElement.PointerWheelChangedEvent, homeShelfWheelHandler, handledEventsToo: true);
+        feed.ItemsSource = shelf.Videos;
+        args.Handled = true;
+    }
+
+    private void ForwardHomeShelfWheel(object sender, PointerRoutedEventArgs args)
+    {
+        if (closed || sender is not GridView { Tag: HomeShelf } feed) return;
+        var wheel = args.GetCurrentPoint(feed).Properties;
+        if (wheel.IsHorizontalMouseWheel || args.KeyModifiers != VirtualKeyModifiers.None) return;
+        if (wheel.MouseWheelDelta == 0) return;
+
+        var shelves = C<ListView>("HomeShelvesList");
+        ScrollViewer? outer = null;
+        var ancestor = VisualTreeHelper.GetParent(feed);
+        while (ancestor is not null && !ReferenceEquals(ancestor, shelves))
+        {
+            if (ancestor is ScrollViewer scroller) outer = scroller;
+            ancestor = VisualTreeHelper.GetParent(ancestor);
+        }
+        if (ancestor is null || outer is null) return;
+
+        const double dipPerNotch = 48;
+        const double wheelDeltaPerNotch = 120;
+        var offset = Math.Clamp(outer.VerticalOffset - wheel.MouseWheelDelta / wheelDeltaPerNotch * dipPerNotch, 0, outer.ScrollableHeight);
+        args.Handled = true;
+        if (offset != outer.VerticalOffset) outer.ChangeView(null, offset, null, disableAnimation: true);
+    }
+
+    private void RenderShelfCard(ListViewBase sender, ContainerContentChangingEventArgs args) => RenderLibraryCard((GridView)sender, args, resize: false);
+
+    private async void OpenHomeVideoAsync(object sender, ItemClickEventArgs args)
+    {
+        if (closed || settingsVisible || playback.Selected is not null ||
+            controller is not { Busy: false, Phase: SessionPhase.SignedIn, View: BrowseView.Home } current ||
+            sender is not GridView { Tag: HomeShelf shelf } || args.ClickedItem is not HistoryVideo video ||
+            !current.HomeShelves.Any(candidate => ReferenceEquals(candidate, shelf)) ||
+            !shelf.Videos.Any(candidate => ReferenceEquals(candidate, video))) return;
+        libraryOrigin = video;
+        homeOrigin = shelf;
+        await OpenVideoAsync(video);
+    }
+
+    private void RestoreHomeFocus(HistoryVideo? origin)
+    {
+        var shelves = C<ListView>("HomeShelvesList");
+        if (homeOrigin is { } shelf && origin is not null && homeShelves.Any(candidate => ReferenceEquals(candidate, shelf)) &&
+            shelf.Videos.Any(candidate => ReferenceEquals(candidate, origin)))
+        {
+            shelves.ScrollIntoView(shelf);
+            shelves.UpdateLayout();
+            if (shelves.ContainerFromItem(shelf) is ListViewItem { ContentTemplateRoot: Grid host } &&
+                host.Children[1] is GridView feed && ReferenceEquals(feed.Tag, shelf))
+            {
+                feed.ScrollIntoView(origin);
+                feed.UpdateLayout();
+                if (feed.ContainerFromItem(origin) is Control item && item.Focus(FocusState.Programmatic)) return;
+            }
+        }
+        C<Button>("HomeButton").Focus(FocusState.Programmatic);
+    }
+
+    private void RenderLibraryCard(GridView feed, ContainerContentChangingEventArgs args, bool resize = true)
     {
         var container = args.ItemContainer;
-        if (libraryImages.Remove(container, out var previous)) previous.Cancel();
+        if (libraryImages.Remove(container, out var previous)) previous.Request.Cancel();
         AutomationProperties.SetName(container, "");
         if (container.ContentTemplateRoot is not Grid host) return;
         host.Children.Clear();
         host.RowDefinitions.Clear();
         if (closed || args.InRecycleQueue || args.Item is not HistoryVideo video) return;
-        SizeLibraryCards(feed);
+        if (resize) SizeLibraryCards(feed);
 
         var sage = new SolidColorBrush(ColorHelper.FromArgb(255, 192, 215, 174));
         var muted = new SolidColorBrush(ColorHelper.FromArgb(255, 172, 184, 174));
@@ -134,11 +252,11 @@ internal sealed partial class MainWindow
         args.Handled = true;
 
         var request = new CancellationTokenSource();
-        libraryImages.Add(container, request);
+        libraryImages.Add(container, (feed, request));
         _ = LoadLibraryImageAsync(container, image, video.VideoId, request);
     }
 
-    private async Task LoadLibraryImageAsync(Microsoft.UI.Xaml.Controls.Primitives.SelectorItem container, Image image, string videoId, CancellationTokenSource request)
+    private async Task LoadLibraryImageAsync(SelectorItem container, Image image, string videoId, CancellationTokenSource request)
     {
         try
         {
@@ -152,23 +270,25 @@ internal sealed partial class MainWindow
             stream.Seek(0);
             var bitmap = new BitmapImage { DecodePixelWidth = 480 };
             await bitmap.SetSourceAsync(stream);
-            if (!closed && !request.IsCancellationRequested && libraryImages.TryGetValue(container, out var current) && ReferenceEquals(request, current))
+            if (!closed && !request.IsCancellationRequested && libraryImages.TryGetValue(container, out var current) && ReferenceEquals(request, current.Request))
                 image.Source = bitmap;
         }
         catch (OperationCanceledException) { }
         catch (System.Runtime.InteropServices.COMException) { } // An unavailable or undecodable image leaves the placeholder.
         finally
         {
-            if (libraryImages.TryGetValue(container, out var current) && ReferenceEquals(request, current)) libraryImages.Remove(container);
+            if (libraryImages.TryGetValue(container, out var current) && ReferenceEquals(request, current.Request)) libraryImages.Remove(container);
             request.Dispose();
         }
     }
 
-    private void CancelLibraryImages()
+    private void CancelLibraryImages(GridView? feed = null)
     {
-        var requests = libraryImages.Values.ToArray();
-        libraryImages.Clear();
-        foreach (var request in requests) request.Cancel();
+        foreach (var (container, entry) in libraryImages.Where(pair => feed is null || ReferenceEquals(pair.Value.Feed, feed)).ToArray())
+        {
+            libraryImages.Remove(container);
+            entry.Request.Cancel();
+        }
     }
 
     private void DisposeLibrary()

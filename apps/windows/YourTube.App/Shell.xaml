@@ -16,6 +16,19 @@
     </Style>
     <DataTemplate x:Key="HistoryRowTemplate"><Grid Padding="14,10" MinHeight="76"/></DataTemplate>
     <DataTemplate x:Key="LibraryCardTemplate"><Grid Padding="6"/></DataTemplate>
+    <Style x:Key="LibraryCardContainer" TargetType="GridViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="VerticalContentAlignment" Value="Stretch"/><Setter Property="Margin" Value="0"/></Style>
+    <DataTemplate x:Key="HomeShelfTemplate">
+      <Grid RowSpacing="4" Margin="0,0,0,14">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <TextBlock Margin="6,0,0,0" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" AutomationProperties.HeadingLevel="Level2"/>
+        <GridView Grid.Row="1" Height="218" Padding="0,0,0,8" SelectionMode="None" IsItemClickEnabled="True"
+                  ItemTemplate="{StaticResource LibraryCardTemplate}" ItemContainerStyle="{StaticResource LibraryCardContainer}"
+                  ScrollViewer.HorizontalScrollMode="Enabled" ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                  ScrollViewer.VerticalScrollMode="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled">
+          <GridView.ItemsPanel><ItemsPanelTemplate><ItemsWrapGrid Orientation="Vertical" MaximumRowsOrColumns="1" ItemWidth="240" ItemHeight="205"/></ItemsPanelTemplate></GridView.ItemsPanel>
+        </GridView>
+      </Grid>
+    </DataTemplate>
   </Grid.Resources>
   <Grid.RowDefinitions><RowDefinition Height="40"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
   <Border x:Name="TitleBar" Grid.Row="0" Background="#242c28" Padding="16,0,150,0">
@@ -45,7 +58,10 @@
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
     <Border x:Name="NavigationRail" Grid.Row="1" Width="166" Padding="11,16" BorderBrush="#36413a" BorderThickness="0,0,1,0">
+      <ScrollViewer x:Name="NavigationRailScroll" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled" IsTabStop="False">
       <StackPanel x:Name="LibraryNavigation" Spacing="4">
+        <Button x:Name="HomeButton" Style="{StaticResource RailButton}" IsEnabled="False"><StackPanel Orientation="Horizontal" Spacing="9"><FontIcon Glyph="&#xE80F;" FontSize="15"/><TextBlock Text="Home" Style="{StaticResource RailLabel}"/></StackPanel></Button>
         <Button x:Name="SubscriptionsButton" Style="{StaticResource RailButton}" IsEnabled="False"><StackPanel Orientation="Horizontal" Spacing="9"><FontIcon Glyph="&#xE714;" FontSize="15"/><TextBlock Text="Subscriptions" Style="{StaticResource RailLabel}"/></StackPanel></Button>
         <Button x:Name="HistoryButton" Style="{StaticResource RailButton}" IsEnabled="False"><StackPanel Orientation="Horizontal" Spacing="9"><FontIcon Glyph="&#xE81C;" FontSize="15"/><TextBlock Text="History" Style="{StaticResource RailLabel}"/></StackPanel></Button>
         <Button x:Name="SettingsButton" Style="{StaticResource RailButton}" AutomationProperties.Name="Settings">
@@ -58,6 +74,7 @@
           </StackPanel>
         </Button>
       </StackPanel>
+      </ScrollViewer>
     </Border>
     <Grid x:Name="WorkspaceContent" Grid.Row="1" Grid.Column="1" Margin="19,21,19,0">
     <Grid x:Name="HistoryPanel" Visibility="Collapsed">
@@ -82,11 +99,16 @@
           <TextBlock x:Name="FeedStatusText" Grid.Column="1" Foreground="{StaticResource Muted}" TextWrapping="Wrap" VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite"/>
           <Button x:Name="FeedCancelButton" Grid.Column="2" Content="Cancel" Visibility="Collapsed" AutomationProperties.Name="Cancel and clear session"/>
         </Grid>
-        <GridView x:Name="HistoryList" Grid.Row="3" Padding="0,0,8,0" ItemTemplate="{StaticResource LibraryCardTemplate}" IsItemClickEnabled="True" SelectionMode="None" ScrollViewer.HorizontalScrollMode="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Watch history">
+        <GridView x:Name="HistoryList" Grid.Row="3" Padding="0,0,8,0" ItemTemplate="{StaticResource LibraryCardTemplate}" ItemContainerStyle="{StaticResource LibraryCardContainer}" IsItemClickEnabled="True" SelectionMode="None" ScrollViewer.HorizontalScrollMode="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Watch history">
           <GridView.ItemsPanel><ItemsPanelTemplate><ItemsWrapGrid Orientation="Horizontal" ItemWidth="230" ItemHeight="212"/></ItemsPanelTemplate></GridView.ItemsPanel>
-          <GridView.ItemContainerStyle><Style TargetType="GridViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="VerticalContentAlignment" Value="Stretch"/><Setter Property="Margin" Value="0"/></Style></GridView.ItemContainerStyle>
           <GridView.Footer><Button x:Name="LoadMoreButton" Content="Load more" Margin="0,0,0,16" HorizontalAlignment="Center" Visibility="Collapsed"/></GridView.Footer>
         </GridView>
+        <ListView x:Name="HomeShelvesList" Grid.Row="3" Padding="0,0,8,0" SelectionMode="None" Visibility="Collapsed"
+                  ItemTemplate="{StaticResource HomeShelfTemplate}"
+                  ScrollViewer.HorizontalScrollMode="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Home shelves">
+          <ListView.ItemContainerStyle><Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="0"/><Setter Property="IsTabStop" Value="False"/></Style></ListView.ItemContainerStyle>
+          <ListView.Footer><Button x:Name="HomeLoadMoreButton" Content="Load more" Margin="0,0,0,16" HorizontalAlignment="Center" Visibility="Collapsed"/></ListView.Footer>
+        </ListView>
       </Grid>
     </Grid>
     <ScrollViewer x:Name="SignInPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">

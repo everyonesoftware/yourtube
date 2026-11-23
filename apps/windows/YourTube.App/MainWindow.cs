@@ -50,7 +50,7 @@ internal sealed partial class MainWindow : Window
     private SessionController? controller;
     private IReadOnlyList<HistoryVideo>? displayedVideos;
     private IReadOnlyList<SubscribedChannel>? displayedChannels;
-    private BrowseView lastBrowseView = BrowseView.History;
+    private BrowseView lastBrowseView = BrowseView.Home;
     private string? browserNotice;
     private bool settingsVisible;
     private bool initialized;
@@ -110,6 +110,7 @@ internal sealed partial class MainWindow : Window
 
         C<Button>("SettingsButton").Click += async (_, _) => await NavigateAsync(settingsVisible ? lastBrowseView : BrowseView.Settings);
         C<Button>("PlayerSettingsPageButton").Click += async (_, _) => await NavigateAsync(BrowseView.Settings);
+        C<Button>("HomeButton").Click += async (_, _) => await NavigateAsync(BrowseView.Home);
         C<Button>("HistoryButton").Click += async (_, _) => await NavigateAsync(BrowseView.History);
         C<Button>("SubscriptionsButton").Click += async (_, _) => await NavigateAsync(BrowseView.Subscriptions);
         C<Button>("SignInButton").Click += async (_, _) => { if (controller is { Busy: false }) await controller.SignInAsync(); };
@@ -118,7 +119,16 @@ internal sealed partial class MainWindow : Window
         C<Button>("CancelButton").Click += (_, _) => { playback.Back(); controller?.Cancel(); };
         C<Button>("FeedCancelButton").Click += (_, _) => { playback.Back(); controller?.Cancel(); };
         C<Button>("RefreshButton").Click += async (_, _) => { if (controller is not null) await controller.LoadHistoryAsync(); };
-        C<Button>("LoadMoreButton").Click += async (_, _) => { if (controller is not null) await controller.LoadHistoryAsync(append: true); };
+        C<Button>("LoadMoreButton").Click += async (_, _) =>
+        {
+            if (!settingsVisible && playback.Selected is null && controller is { View: BrowseView.History or BrowseView.Subscriptions } current)
+                await current.LoadHistoryAsync(append: true);
+        };
+        C<Button>("HomeLoadMoreButton").Click += async (_, _) =>
+        {
+            if (!settingsVisible && playback.Selected is null && controller is { View: BrowseView.Home } current)
+                await current.LoadHistoryAsync(append: true);
+        };
         var accountMenu = (MenuFlyout)C<Button>("AccountButton").Flyout;
         accountMenu.Opening += (_, _) => PopulateAccountMenu(accountMenu);
         accountMenu.Closed += (_, _) => accountMenu.Items.Clear();
@@ -126,7 +136,7 @@ internal sealed partial class MainWindow : Window
         WireLibrary();
         C<GridView>("HistoryList").ItemClick += async (_, args) =>
         {
-            if (closed || settingsVisible || playback.Selected is not null || controller is not { Busy: false, Phase: SessionPhase.SignedIn } || controller.View == BrowseView.Settings || args.ClickedItem is not HistoryVideo video ||
+            if (closed || settingsVisible || playback.Selected is not null || controller is not { Busy: false, Phase: SessionPhase.SignedIn, View: BrowseView.History or BrowseView.Subscriptions } || args.ClickedItem is not HistoryVideo video ||
                 !controller.Videos.Any(v => ReferenceEquals(v, video))) return;
             libraryOrigin = video;
             await OpenVideoAsync(video);
@@ -312,15 +322,21 @@ internal sealed partial class MainWindow : Window
         }
         {
             var signedIn = controller.Phase == SessionPhase.SignedIn;
+            var home = controller.View == BrowseView.Home;
             var subscriptions = controller.View == BrowseView.Subscriptions;
-            SetLibraryDestination(C<Button>("HistoryButton"), "History", signedIn, !settingsVisible && !subscriptions);
+            SetLibraryDestination(C<Button>("HomeButton"), "Home", signedIn, !settingsVisible && home);
+            SetLibraryDestination(C<Button>("HistoryButton"), "History", signedIn, !settingsVisible && controller.View == BrowseView.History);
             SetLibraryDestination(C<Button>("SubscriptionsButton"), "Subscriptions", signedIn, !settingsVisible && subscriptions);
-            C<TextBlock>("ViewHeading").Text = subscriptions ? "Subscriptions" : "History";
+            C<TextBlock>("ViewHeading").Text = home ? "Home" : subscriptions ? "Subscriptions" : "History";
             C<Border>("ChannelsDisclosure").Visibility = ToVisibility(subscriptions);
             if (!subscriptions || controller.Channels.Count == 0) C<Expander>("ChannelsPanel").IsExpanded = false;
             C<TextBlock>("ChannelsStatusText").Text = controller.Channels.Count > 0 ? $"Subscribed channels ({controller.Channels.Count})" : controller.Busy ? "Loading subscribed channels…" : "No subscribed channels loaded.";
-            C<TextBlock>("VideosStatusText").Text = subscriptions ? "Latest videos from your channels" : "Videos you’ve watched";
+            var videosStatus = C<TextBlock>("VideosStatusText");
+            videosStatus.Text = home ? "" : subscriptions ? "Latest videos from your channels" : "Videos you’ve watched";
+            videosStatus.Visibility = ToVisibility(!home);
             AutomationProperties.SetName(C<GridView>("HistoryList"), subscriptions ? "Latest subscription videos" : "Watch history");
+            C<ListView>("HomeShelvesList").Visibility = ToVisibility(home);
+            C<GridView>("HistoryList").Visibility = ToVisibility(!home);
             C<Grid>("HistoryPanel").Visibility = ToVisibility(!settingsVisible && signedIn && playback.Selected is null);
             C<ScrollViewer>("SignInPanel").Visibility = ToVisibility(!settingsVisible && controller.Phase == SessionPhase.SignedOut);
             C<StackPanel>("DevicePanel").Visibility = ToVisibility(!settingsVisible && controller.Phase == SessionPhase.Authorizing);
@@ -329,9 +345,11 @@ internal sealed partial class MainWindow : Window
             C<Button>("RestoreButton").IsEnabled = !controller.Busy;
 
             C<Button>("RefreshButton").IsEnabled = signedIn && !controller.Busy && controller.SelectedAccount is not null;
-            C<Button>("LoadMoreButton").Visibility = ToVisibility(controller.Continuation is not null);
-            C<Button>("LoadMoreButton").IsEnabled = signedIn && !controller.Busy;
-            C<GridView>("HistoryList").IsItemClickEnabled = signedIn && !controller.Busy;
+            C<Button>("LoadMoreButton").Visibility = ToVisibility(!home && controller.Continuation is not null);
+            C<Button>("LoadMoreButton").IsEnabled = signedIn && !home && !controller.Busy;
+            C<Button>("HomeLoadMoreButton").Visibility = ToVisibility(home && controller.Continuation is not null);
+            C<Button>("HomeLoadMoreButton").IsEnabled = signedIn && home && !controller.Busy;
+            C<GridView>("HistoryList").IsItemClickEnabled = signedIn && !home && !controller.Busy;
             var accountButton = C<Button>("AccountButton");
             var accountName = controller.SelectedAccount?.Name;
             var label = string.IsNullOrWhiteSpace(accountName) ? (signedIn && controller.Accounts.Count > 0 ? "Choose account" : "Account") : accountName;
@@ -350,12 +368,15 @@ internal sealed partial class MainWindow : Window
                 displayedChannels = controller.Channels;
                 C<ListView>("ChannelsList").ItemsSource = controller.Channels;
             }
-            if (!ReferenceEquals(displayedVideos, controller.Videos))
+            RenderHomeShelves(signedIn && home ? controller.HomeShelves : []);
+            var flatVideos = signedIn && !home ? controller.Videos : null;
+            if (!ReferenceEquals(displayedVideos, flatVideos))
             {
                 libraryOrigin = null;
-                CancelLibraryImages();
-                displayedVideos = controller.Videos;
-                C<GridView>("HistoryList").ItemsSource = controller.Videos;
+                var feed = C<GridView>("HistoryList");
+                CancelLibraryImages(feed);
+                displayedVideos = flatVideos;
+                feed.ItemsSource = flatVideos;
             }
         }
         RenderPlayback();
@@ -386,7 +407,7 @@ internal sealed partial class MainWindow : Window
         var row = new StackPanel { Spacing = 5 };
         row.Children.Add(new TextBlock { Text = video.Title, FontSize = 17, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
         row.Children.Add(new TextBlock { Text = $"{video.Channel}  ·  {video.Duration}", Foreground = new SolidColorBrush(ColorHelper.FromArgb(255, 172, 184, 174)), TextTrimming = TextTrimming.CharacterEllipsis });
-        if (video.PercentWatched is int percent)
+        if (controller?.View == BrowseView.History && video.PercentWatched is int percent)
             row.Children.Add(new TextBlock { Text = $"{Math.Clamp(percent, 0, 100)}% watched", FontSize = 12 });
         host.Children.Add(row);
         AutomationProperties.SetName(args.ItemContainer, $"{video.Title}, {video.Channel}, {video.Duration}. Play natively.");
@@ -461,7 +482,12 @@ internal sealed partial class MainWindow : Window
         C<Button>("PlayerOpenYouTubeButton").IsEnabled = selected is not null;
         C<ProgressRing>("PlayerBusyRing").IsActive = playback.Busy;
         C<ProgressRing>("PlayerBusyRing").Visibility = ToVisibility(playback.Busy);
-        var label = controller?.View == BrowseView.Subscriptions ? "subscriptions" : "history";
+        var label = controller?.View switch
+        {
+            BrowseView.Home => "Home feed",
+            BrowseView.Subscriptions => "subscriptions",
+            _ => "history"
+        };
         C<TextBlock>("PlayerFeedLabel").Text = $"{label} / Now playing";
         C<TextBlock>("PlayerQueueLabel").Text = playback.Queue.Count == 0 ? $"No other videos loaded in {label}" : $"Up next · from your loaded {label}";
         C<ListView>("PlayerQueue").ItemsSource = playback.Queue;

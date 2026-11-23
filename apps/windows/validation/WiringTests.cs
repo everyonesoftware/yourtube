@@ -81,7 +81,51 @@ internal static class WiringTests
         foreach (Match lookup in Regex.Matches(code + libraryCode, "C<(?<type>\\w+)>\\(\"(?<name>[^\"]+)\"\\)"))
             StateTests.Verify(names.TryGetValue(lookup.Groups["name"].Value, out var type) && type == lookup.Groups["type"].Value, "typed native control lookup matches XML: " + lookup.Groups["name"].Value);
         var library = Named("HistoryList");
-        StateTests.Verify(Named("SettingsButton").Ancestors().Contains(Named("LibraryNavigation")), "Settings belongs to the same rail as the two feeds");
+        var homeButton = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "HomeButton");
+        StateTests.Verify(homeButton?.Name.LocalName == "Button" && homeButton.Parent == Named("LibraryNavigation") &&
+            code.Contains("C<Button>(\"HomeButton\").Click += async (_, _) => await NavigateAsync(BrowseView.Home)"),
+            "native Home is reachable through the shared browse navigation");
+        StateTests.Verify(Named("LibraryNavigation").Parent is { } railScroll && railScroll.Name.LocalName == "ScrollViewer" &&
+            libraryCode.Contains("railScroll.HorizontalScrollMode = compact ? ScrollMode.Enabled : ScrollMode.Disabled") &&
+            libraryCode.Contains("railScroll.HorizontalScrollBarVisibility = compact ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled"),
+            "the narrow navigation rail keeps all four destinations reachable instead of clipping trailing buttons");
+        var home = Named("HomeShelvesList");
+        StateTests.Verify(home.Name.LocalName == "ListView" && home.Parent == library.Parent &&
+            (string?)home.Attribute("Grid.Row") == (string?)library.Attribute("Grid.Row") &&
+            (string?)home.Attribute("Visibility") == "Collapsed" &&
+            code.Contains("C<ListView>(\"HomeShelvesList\").Visibility = ToVisibility(home)") &&
+            code.Contains("C<GridView>(\"HistoryList\").Visibility = ToVisibility(!home)"),
+            "Home and the flat feed are mutually exclusive in the same finite viewport below shared feed status");
+        StateTests.Verify(Named("HomeLoadMoreButton").Ancestors().Any(e => e.Parent == home && e.Name.LocalName == "ListView.Footer") &&
+            code.Contains("C<Button>(\"HomeLoadMoreButton\").Click +=") && code.Contains("LoadHistoryAsync(append: true)"),
+            "Home pagination is explicit and follows the shelves in their scroller");
+        var shelfTemplate = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Key") == "HomeShelfTemplate");
+        var shelfCards = shelfTemplate?.Descendants().SingleOrDefault(e => e.Name.LocalName == "GridView");
+        StateTests.Verify(shelfCards is not null && (string?)home.Attribute("ItemTemplate") == "{StaticResource HomeShelfTemplate}" &&
+            (string?)shelfCards.Attribute("ItemTemplate") == (string?)library.Attribute("ItemTemplate") &&
+            (string?)shelfCards.Attribute("IsItemClickEnabled") == "True" && (string?)shelfCards.Attribute("ScrollViewer.HorizontalScrollMode") == "Enabled" &&
+            (string?)shelfCards.Attribute("ScrollViewer.VerticalScrollMode") == "Disabled" && shelfCards.Descendants().Any(e =>
+                e.Name.LocalName == "ItemsWrapGrid" && (string?)e.Attribute("Orientation") == "Vertical" && (string?)e.Attribute("MaximumRowsOrColumns") == "1"),
+            "each Home shelf renders shared native cards in a single horizontal scroll row");
+        var bindShelf = Regex.Match(libraryCode, @"private void RenderHomeShelf\([^\r\n]*\)[\s\S]*?\r?\n    \}").Value;
+        StateTests.Verify(Regex.IsMatch(bindShelf,
+            @"feed\.RemoveHandler\(UIElement\.PointerWheelChangedEvent, homeShelfWheelHandler\);[\s\S]*?if \(shelf is null\) return;[\s\S]*?feed\.AddHandler\(UIElement\.PointerWheelChangedEvent, homeShelfWheelHandler, handledEventsToo: true\);"),
+            "recycled Home shelf grids forward wheel input even when the inner grid has handled it, without accumulating handlers");
+        var shelfWheel = Regex.Match(libraryCode, @"private void ForwardHomeShelfWheel\([^\r\n]*\)[\s\S]*?\r?\n    \}").Value;
+        StateTests.Verify(bindShelf.Contains("homeShelfWheelHandler ??= ForwardHomeShelfWheel;") &&
+            Regex.IsMatch(shelfWheel, @"if \([^\r\n]*IsHorizontalMouseWheel[^\r\n]*KeyModifiers != VirtualKeyModifiers\.None\) return;") &&
+            shelfWheel.Contains("C<ListView>(\"HomeShelvesList\")") && shelfWheel.Contains("VisualTreeHelper.GetParent") &&
+            Regex.IsMatch(shelfWheel, @"\.ChangeView\(null, [^,]+, null, disableAnimation: true\)") && shelfWheel.Contains("args.Handled = true;"),
+            "an ordinary wheel turn over a Home card scrolls only the outer list vertically, leaving horizontal and modified gestures to WinUI");
+        StateTests.Verify(code.Contains("RenderHomeShelves(signedIn && home ? controller.HomeShelves : [])") &&
+            libraryCode.Contains("header.Text = shelf.Title") && libraryCode.Contains("feed.ItemsSource = shelf.Videos") &&
+            libraryCode.Contains("homeShelves.Add(shelves[i])") && Regex.IsMatch(libraryCode, @"if \(!keepsPrefix\)\s*\{[^}]*homeShelves\.Clear\(\)"),
+            "Home displays the ordered controller shelves and preserves existing rows on append");
+        StateTests.Verify(libraryCode.Contains("current.HomeShelves.Any(candidate => ReferenceEquals(candidate, shelf))") &&
+            libraryCode.Contains("shelf.Videos.Any(candidate => ReferenceEquals(candidate, video))") &&
+            libraryCode.Contains("await OpenVideoAsync(video)") && libraryCode.Contains("RestoreHomeFocus(origin)"),
+            "only current shelf cards open the native player, and Back targets the originating shelf");
+        StateTests.Verify(Named("SettingsButton").Ancestors().Contains(Named("LibraryNavigation")), "Settings belongs to the same rail as the browse feeds");
         StateTests.Verify(libraryCode.Contains("else button.ClearValue(Control.ForegroundProperty);") && !libraryCode.Contains("button.Foreground = active ?"),
             "inactive navigation destinations restore the theme foreground instead of overriding it with a null brush");
         StateTests.Verify(Named("AppBrand").Ancestors().Contains(Named("ShellHeader")) && Named("AccountButton").Ancestors().Contains(Named("ShellHeader")) && !names.ContainsKey("AccountChooser"), "a compact account menu balances the brand header rather than exposing an account picker");

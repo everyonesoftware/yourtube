@@ -43,6 +43,14 @@ This checks real C#/WinUI references only. **Do not distribute this output:** it
 
 ## Publication and verification
 
+### Home acceptance (first Windows implementation)
+
+After sign-in, select a YouTube identity to load **Home**. Compare the Recommended and Shorts shelves with that identity’s YouTube TV Home feed when they’re available. Subsequent rows come from the same YouTube response and **Load more** requests the next set of shelves, using SmartTube’s TV browse flow as the reference. If YouTube does not supply Shorts, YourTube does not make up a shelf or fetch a separate Shorts feed. The page shows video cards, not channel or playlist tiles.
+
+In an installed Windows build, scroll both axes with mouse and keyboard, load more at the bottom, open a card and check that Back returns focus to it. Verify that Refresh replaces the rows and that switching account, opening Settings, or signing out during a request does not restore rows from the old view. A fixture or compile check is not proof of live personalized results or native scrolling and focus.
+
+### Windows publication
+
 One `ci.yml` workflow: validation/selection, one Windows test/build/package/native-smoke job, and serialized publication/table refresh. Only native/transitive-input changes since the most recent verified Windows publication rebuild Windows. Native code is not rebuilt for mockup/docs/control-plane-only changes. Unknown inputs fail closed and select Windows.
 
 Draft release assets are downloaded and byte-checked before publication. Source/version/package/channel identities are enforced. Setup, full nupkg, feed and checksums remain at their original version-specific URLs. README and release Current downloads tables are generated from one independently verified Windows inventory. The README writer uses the Contents blob-SHA precondition; release body updates are GET/PATCH and cannot be atomic with simultaneous human edits.

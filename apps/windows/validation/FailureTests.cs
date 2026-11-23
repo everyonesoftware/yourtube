@@ -19,12 +19,14 @@ internal static class FailureTests
 
         api.Complete = () => Task.FromResult(TestApi.Fresh);
         await controller.SignInAsync();
+        await controller.NavigateAsync(BrowseView.History);
         api.History = (_, _) => Task.FromException<HistoryPage>(new YouTubeException("auth_required", "Sign in again."));
         await controller.SelectAccountAsync(TestApi.A);
         Verify(controller.Phase == SessionPhase.SignedOut && controller.Status == "Sign in again." && vault.Value is null, "structured authentication errors revoke private state and vault");
 
         await controller.SignInAsync();
         api.History = (_, _) => Task.FromResult(new HistoryPage([new("ddddddddddd", "Fixture", "Channel", "1:00", null)], "retry-page", null));
+        await controller.NavigateAsync(BrowseView.History);
         await controller.SelectAccountAsync(TestApi.A);
         api.History = (_, _) => Task.FromException<HistoryPage>(new HttpRequestException("RAW-TRANSPORT-MARKER"));
         await controller.LoadHistoryAsync(true);

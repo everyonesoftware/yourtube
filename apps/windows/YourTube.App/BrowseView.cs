@@ -1,3 +1,3 @@
 namespace YourTube.App;
 
-internal enum BrowseView { History, Subscriptions, Settings }
+internal enum BrowseView { History, Subscriptions, Settings, Home }

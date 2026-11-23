@@ -310,15 +310,26 @@ public sealed partial class YouTubeClient
         var items = At(container, "items");
         if (items.ValueKind == JsonValueKind.Undefined) items = At(container, "contents");
         if (items.ValueKind == JsonValueKind.Undefined) items = container; // append arrays and legacy direct-card fixtures
+        var videos = ParseVideoCards(Cards(items));
+        var next = Find(At(container, "continuations"), "nextContinuationData").Select(n => Required(n, "continuation")).FirstOrDefault();
+        next ??= Find(items, "nextContinuationData").Select(n => Required(n, "continuation")).FirstOrDefault();
+        next ??= Find(items, "continuationItemRenderer").SelectMany(n => Find(n, "continuationCommand")).Select(n => Required(n, "token")).FirstOrDefault();
+        return new HistoryPage(videos, next, videos.Count == 0 ? "No history videos were returned. History may be empty or paused." : null);
+    }
+
+    private static List<HistoryVideo> ParseVideoCards(IEnumerable<(string Kind, JsonElement Value)> cards, bool includeShortTiles = false)
+    {
         var videos = new List<HistoryVideo>();
-        foreach (var (kind, card) in Cards(items))
+        foreach (var (kind, card) in cards)
         {
             var tile = kind == "tileRenderer";
             var lockup = kind == "lockupViewModel";
             var shorts = kind == "shortsLockupViewModel";
-            if (tile && TextAt(card, "contentType") != "TILE_CONTENT_TYPE_VIDEO") continue;
+            var shortTile = tile && includeShortTiles && TextAt(card, "contentType") == "TILE_CONTENT_TYPE_SHORTS";
+            if (tile && !shortTile && TextAt(card, "contentType") != "TILE_CONTENT_TYPE_VIDEO") continue;
             if (lockup && TextAt(card, "contentType") != "LOCKUP_CONTENT_TYPE_VIDEO") continue;
-            var id = tile ? card.TryGetProperty("onSelectCommand", out var select) ? Find(select, "videoId").FirstOrDefault() : default
+            var id = shortTile ? At(card, "onSelectCommand", "reelWatchEndpoint", "videoId")
+                : tile ? card.TryGetProperty("onSelectCommand", out var select) ? Find(select, "videoId").FirstOrDefault() : default
                 : shorts ? Find(card, "videoId").FirstOrDefault()
                 : card.TryGetProperty(lockup ? "contentId" : "videoId", out var directId) ? directId : default;
             if (id.ValueKind != JsonValueKind.String || !Regex.IsMatch(id.GetString()!, "^[A-Za-z0-9_-]{11}$", RegexOptions.None, TimeSpan.FromSeconds(2))) continue;
@@ -335,9 +346,6 @@ public sealed partial class YouTubeClient
             if (lockup) duration = Find(card, "thumbnailBadgeViewModel").Select(n => TextAt(n, "text")).FirstOrDefault() ?? "";
             videos.Add(new(id.GetString()!, title, channel, duration, percent.ValueKind == JsonValueKind.Number && percent.TryGetInt32(out var watched) ? Math.Clamp(watched, 0, 100) : null));
         }
-        var next = Find(At(container, "continuations"), "nextContinuationData").Select(n => Required(n, "continuation")).FirstOrDefault();
-        next ??= Find(items, "nextContinuationData").Select(n => Required(n, "continuation")).FirstOrDefault();
-        next ??= Find(items, "continuationItemRenderer").SelectMany(n => Find(n, "continuationCommand")).Select(n => Required(n, "token")).FirstOrDefault();
-        return new HistoryPage(videos, next, videos.Count == 0 ? "No history videos were returned. History may be empty or paused." : null);
+        return videos;
     }
 }
