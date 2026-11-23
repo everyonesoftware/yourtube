@@ -6,7 +6,8 @@ namespace YourTube.App;
 
 internal sealed class CoreApi(YouTubeClient client) : IYouTubeApi
 {
-    public Task RecordWatchStartAsync(YouTubeSession session, YouTubeAccount account, string videoId, TimeSpan duration, TimeSpan position, CancellationToken cancellationToken) => client.RecordWatchStartAsync(session, account, videoId, duration, position, cancellationToken);
+    public Task<YouTubeClient.WatchRecord> RecordWatchStartAsync(YouTubeSession session, YouTubeAccount account, string videoId, TimeSpan duration, TimeSpan position, CancellationToken cancellationToken) => client.RecordWatchStartAsync(session, account, videoId, duration, position, cancellationToken);
+    public Task RecordWatchProgressAsync(YouTubeSession session, YouTubeAccount account, YouTubeClient.WatchRecord record, TimeSpan start, TimeSpan end, CancellationToken cancellationToken) => client.RecordWatchProgressAsync(session, account, record, start, end, cancellationToken);
     public Task<WatchLookupComparison> CompareWatchLookupsAsync(YouTubeSession session, YouTubeAccount account, string videoId, CancellationToken cancellationToken) => client.CompareWatchLookupsAsync(session, account, videoId, cancellationToken);
     public Task<DeviceAuthorization> BeginSignInAsync(string deviceId, CancellationToken cancellationToken) => client.BeginSignInAsync(deviceId, cancellationToken);
     public Task<YouTubeSession> CompleteSignInAsync(DeviceAuthorization authorization, CancellationToken cancellationToken) => client.CompleteSignInAsync(authorization, cancellationToken);

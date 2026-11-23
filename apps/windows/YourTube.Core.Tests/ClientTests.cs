@@ -21,7 +21,7 @@ public sealed class ClientTests
     }
     internal sealed class Transport : HttpMessageHandler
     {
-        public List<(string Url, string Body, string? Auth, string? Page, string Agent, string? Referer)> Requests { get; } = [];
+        public List<(string Url, string Body, string? Auth, string? Page, string Agent, string? Referer, string Method)> Requests { get; } = [];
         public Queue<(HttpStatusCode Status, string Body)> Responses { get; } = new();
         public List<Dictionary<string, string>> RequestHeaders { get; } = [];
         public Transport(params string[] responses) { foreach (var body in responses) Responses.Enqueue((HttpStatusCode.OK, body)); }
@@ -29,7 +29,7 @@ public sealed class ClientTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             RequestHeaders.Add(request.Headers.ToDictionary(h => h.Key, h => string.Join(",", h.Value), StringComparer.OrdinalIgnoreCase));
-            Requests.Add((request.RequestUri!.AbsoluteUri, request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken), request.Headers.Authorization?.ToString(), request.Headers.TryGetValues("X-Goog-PageId", out var p) ? p.Single() : null, request.Headers.UserAgent.ToString(), request.Headers.Referrer?.AbsoluteUri));
+            Requests.Add((request.RequestUri!.AbsoluteUri, request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken), request.Headers.Authorization?.ToString(), request.Headers.TryGetValues("X-Goog-PageId", out var p) ? p.Single() : null, request.Headers.UserAgent.ToString(), request.Headers.Referrer?.AbsoluteUri, request.Method.Method));
             var next = Responses.Dequeue();
             return new HttpResponseMessage(next.Status) { Content = new StringContent(next.Body, Encoding.UTF8, "application/json") };
         }

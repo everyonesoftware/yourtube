@@ -57,11 +57,51 @@ public sealed partial class YouTubeClient
         catch (YouTubeException error) when (error.Code == "watch_tracking_unusable") { return result; }
     }
 
-    public async Task RecordWatchStartAsync(YouTubeSession session, YouTubeAccount account, string videoId, TimeSpan duration, TimeSpan position, CancellationToken cancellationToken = default)
+    public sealed class WatchRecord
+    {
+        internal WatchRecord(YouTubeClient owner, YouTubeAccount account, TimeSpan duration, string videoId, string nonce, (string Ei, string Vm, string Of) tracking)
+        {
+            Owner = owner;
+            Account = account;
+            Duration = duration;
+            VideoId = videoId;
+            Nonce = nonce;
+            Tracking = tracking;
+        }
+
+        internal YouTubeClient Owner { get; }
+        internal YouTubeAccount Account { get; }
+        internal TimeSpan Duration { get; }
+        internal string VideoId { get; }
+        internal string Nonce { get; }
+        internal (string Ei, string Vm, string Of) Tracking { get; }
+        public override string ToString() => "YourTubeClient.WatchRecord [redacted]";
+    }
+
+    public async Task RecordWatchProgressAsync(YouTubeSession session, YouTubeAccount account, WatchRecord record, TimeSpan start, TimeSpan end, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ValidateSession(session);
-        if (!IsWatchVideoId(videoId) || duration <= TimeSpan.Zero || position < TimeSpan.Zero || position > duration)
+        // The caller owns the sign-in lifetime. A refreshed (even rotated) session must use the
+        // same selected account instance; page IDs alone do not identify the owner across logins.
+        if (record is null || !ReferenceEquals(this, record.Owner) || !ReferenceEquals(account, record.Account) ||
+            start < TimeSpan.Zero || end <= start || end > record.Duration)
+            throw InvalidArgument();
+        var startSeconds = WatchSeconds(start);
+        var endSeconds = WatchSeconds(end);
+        if (startSeconds == endSeconds) throw InvalidArgument();
+
+        var target = $"https://www.youtube.com/api/stats/watchtime?ns=yt&ver=2&docid={record.VideoId}&len={WatchSeconds(record.Duration)}" +
+            $"&st={startSeconds}&et={endSeconds}&cmt={endSeconds}" + WatchTrackingQuery(record);
+        var accepted = await SendWatchTrackingAsync(session, account, target, "watch_progress_unconfirmed", cancellationToken);
+        if (!accepted) throw new YouTubeException("watch_progress_rejected", "YouTube returned an unsuccessful status for the watch-progress request.");
+    }
+
+    public async Task<WatchRecord> RecordWatchStartAsync(YouTubeSession session, YouTubeAccount account, string videoId, TimeSpan duration, TimeSpan position, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ValidateSession(session);
+        if (account is null || !IsWatchVideoId(videoId) || duration <= TimeSpan.Zero || position < TimeSpan.Zero || position > duration)
             throw InvalidArgument();
         await PrepareWatchLookupAsync(cancellationToken);
         var timestamp = await PlayerContextDiscovery.DiscoverAsync(http, videoId, cancellationToken);
@@ -72,8 +112,16 @@ public sealed partial class YouTubeClient
         var player = await LookupWatchPlayerAsync(session, account, videoId, nonce, cancellationToken, tvFallback: true, signatureTimestamp: timestamp);
         var status = await ReadWatchStatusAsync(player, cancellationToken);
         if (status != "OK") throw new YouTubeException("watch_lookup_not_playable", "The YouTube player lookup did not return a playable video.");
-        var target = await WatchStageAsync("watch_tracking_unusable", () => Task.FromResult(WatchTarget(player, videoId, duration, position, nonce)), cancellationToken);
-        var accepted = await WatchStageAsync("watch_record_unconfirmed", async () =>
+        var tracking = await WatchStageAsync("watch_tracking_unusable", () => Task.FromResult(WatchTrackingValues(player, videoId)), cancellationToken);
+        var record = new WatchRecord(this, account, duration, videoId, nonce, tracking);
+        var target = $"https://www.youtube.com/api/stats/playback?ns=yt&ver=2&docid={videoId}&len={WatchSeconds(duration)}&cmt={WatchSeconds(position)}" + WatchTrackingQuery(record);
+        var accepted = await SendWatchTrackingAsync(session, account, target, "watch_record_unconfirmed", cancellationToken);
+        if (!accepted) throw new YouTubeException("watch_record_rejected", "YouTube returned an unsuccessful status for the watch-history request.");
+        return record;
+    }
+
+    private Task<bool> SendWatchTrackingAsync(YouTubeSession session, YouTubeAccount account, string target, string unconfirmedCode, CancellationToken cancellationToken) =>
+        WatchStageAsync(unconfirmedCode, async () =>
         {
             cancellationToken.ThrowIfCancellationRequested();
             using var request = new HttpRequestMessage(HttpMethod.Get, target);
@@ -82,10 +130,9 @@ public sealed partial class YouTubeClient
             request.Headers.Referrer = new Uri("https://www.youtube.com/tv");
             if (account.PageId is not null) request.Headers.Add("X-Goog-PageId", account.PageId);
             using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             return response.IsSuccessStatusCode;
         }, cancellationToken);
-        if (!accepted) throw new YouTubeException("watch_record_rejected", "YouTube returned an unsuccessful status for the watch-history request.");
-    }
 
     private static bool HasTrackingField(JsonElement player, string name) =>
         player.TryGetProperty("playbackTracking", out var tracking) && tracking.ValueKind == JsonValueKind.Object &&
@@ -130,15 +177,12 @@ public sealed partial class YouTubeClient
         catch (YouTubeException) { throw new YouTubeException(code, "The experimental watch-history request did not complete this step."); }
     }
 
-    private static string WatchTarget(JsonElement player, string videoId, TimeSpan duration, TimeSpan position, string nonce)
-    {
-        var values = WatchTrackingValues(player, videoId);
-        string Seconds(TimeSpan value) => value.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture);
-        return $"https://www.youtube.com/api/stats/playback?ns=yt&ver=2&docid={videoId}&len={Seconds(duration)}&cmt={Seconds(position)}&cpn={nonce}" +
-            $"&ei={Uri.EscapeDataString(values["ei"])}&vm={Uri.EscapeDataString(values["vm"])}&of={Uri.EscapeDataString(values["of"])}";
-    }
+    private static string WatchSeconds(TimeSpan value) => value.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture);
 
-    private static Dictionary<string, string> WatchTrackingValues(JsonElement player, string videoId)
+    private static string WatchTrackingQuery(WatchRecord record) => $"&cpn={record.Nonce}" +
+        $"&ei={Uri.EscapeDataString(record.Tracking.Ei)}&vm={Uri.EscapeDataString(record.Tracking.Vm)}&of={Uri.EscapeDataString(record.Tracking.Of)}";
+
+    private static (string Ei, string Vm, string Of) WatchTrackingValues(JsonElement player, string videoId)
     {
         if (Required(player.GetProperty("videoDetails"), "videoId") != videoId)
             throw Invalid();
@@ -157,6 +201,6 @@ public sealed partial class YouTubeClient
             if (split.Length != 2 || !values.TryAdd(name, Uri.UnescapeDataString(split[1].Replace('+', ' ')))) throw Invalid();
         }
         if (values.Count != 3 || values.Values.Any(value => string.IsNullOrWhiteSpace(value) || value.Any(char.IsControl))) throw Invalid();
-        return values;
+        return (values["ei"], values["vm"], values["of"]);
     }
 }

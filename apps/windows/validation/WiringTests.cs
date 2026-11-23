@@ -91,6 +91,22 @@ internal static class WiringTests
             "Update YouTube History starts on in Playback settings");
         StateTests.Verify(code.Contains("!C<ToggleSwitch>(\"WatchHistorySync\").IsOn") && services.Contains("=> client.RecordWatchStartAsync("),
             "the switch still controls authenticated watch reporting");
+        StateTests.Verify(code.Contains("watchProgress.Observe(") && code.Contains("TryRecordWatchProgressAsync(") &&
+            services.Contains("=> client.RecordWatchProgressAsync("),
+            "advancing native clock reports watch progress through the authenticated account client");
+        var userSeek = Regex.Match(code, @"private void SetUserPlaybackPosition\([^\r\n]*\)[\s\S]*?\r?\n    \}").Value;
+        StateTests.Verify(code.Contains("SetUserPlaybackPosition(active, view, TimeSpan.Zero);") &&
+            code.Contains("SetUserPlaybackPosition(active, view, TimeSpan.FromSeconds(") &&
+            Regex.Matches(code, @"\bview\.Position\s*=(?!=)").Count == 1 &&
+            Regex.IsMatch(userSeek, @"view\.SeekCompleted \+= SeekCompleted;[\s\S]*?watchProgress\.BeginSeek\(\);\s+view\.Position = target;") &&
+            userSeek.Contains("ReferenceEquals(playback.Active, active)) watchProgress.CompleteSeek(active);") &&
+            code.Contains("BindWatchSeekSource(source);") && code.Contains("BindWatchSeekSource(null);"),
+            "scrub, keyboard seek and replay gate watch samples before setting Position and accept completion only from the current source");
+        var closeDrain = Regex.Match(code, @"private async Task FinishWindowCloseAsync\([^\r\n]*\)[\s\S]*?\r?\n    \}").Value;
+        StateTests.Verify(code.Contains("new CancellationTokenSource(TimeSpan.FromMilliseconds(1500))") &&
+            Regex.IsMatch(closeDrain, @"pending\.WaitAsync\(budget\.Token\)[\s\S]*?SendPendingWatchProgress\(final: true\)[\s\S]*?remaining\.WaitAsync\(budget\.Token\)") &&
+            code.Contains("watchProgress.DrainAsync(final,"),
+            "close waits for an in-flight checkpoint and a final multi-range drain under the same 1.5 second budget");
         StateTests.Verify(Regex.IsMatch(code, @"if \(compareWatchLookups\)\s*\{[^}]*\.IsOn = false;[^}]*Compare YouTube History lookups \(diagnostic\)"),
             "the diagnostic replacement still starts off");
         StateTests.Verify(code.Contains("root.KeyboardAcceleratorPlacementMode = KeyboardAcceleratorPlacementMode.Hidden;") &&

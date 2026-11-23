@@ -120,7 +120,7 @@
           <TextBlock Text="Preferred starting quality for Auto. Playback can still adjust to your connection." Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
           <TextBlock x:Name="StartupQualityStatus" Visibility="Collapsed" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
           <ToggleSwitch x:Name="WatchHistorySync" Header="Update YouTube History" IsOn="True"/>
-          <TextBlock x:Name="WatchHistoryHelp" Text="On each time the app opens. Sends a playback start to the selected YouTube account, but does not sync your resume position." Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
+          <TextBlock x:Name="WatchHistoryHelp" Text="On each time the app opens. Reports playback starts and watched progress to the selected YouTube account. YouTube decides what appears in History." Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
           <TextBlock x:Name="WatchHistoryStatus" Foreground="{StaticResource Muted}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
         </StackPanel>
         <ContentControl x:Name="SettingsHost" HorizontalContentAlignment="Stretch"/>

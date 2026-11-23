@@ -30,8 +30,14 @@ internal sealed partial class MainWindow : Window
     private readonly bool compareWatchLookups = Environment.GetEnvironmentVariable("YOURTUBE_WATCH_LOOKUP_COMPARE") == "1";
     private int startupQuality;
     private NativePlaybackSession? boundSession;
+    private Action? unbindWatchSeek;
     private HistoryVideo? watchSelection;
-    private TimeSpan? lastWatchPosition;
+    private readonly WatchProgress watchProgress = new();
+    private YouTubeClient.WatchRecord? watchRecord;
+    private Task? watchProgressWrite;
+    private bool drainingWindowWatch;
+    private CancellationToken windowWatchDeadline;
+    private bool allowWindowClose;
     private bool watchAttempted;
     private YouTubeAccount? watchStatusIdentity;
     private long watchStatusGeneration;
@@ -155,11 +161,13 @@ internal sealed partial class MainWindow : Window
             C<Border>("ShellStatus").Visibility = Visibility.Visible;
             await InitializeServicesAsync();
         };
+        AppWindow.Closing += OnWindowClosing;
         Closed += (_, _) =>
         {
             closed = true;
             RenderAccountAvatar(null);
             CancelWatchRequest();
+            BindWatchSeekSource(null);
             playerClock?.Stop();
             playerTapFade?.Stop();
             CancelScrub();
@@ -496,7 +504,6 @@ internal sealed partial class MainWindow : Window
             CancelWatchRequest();
             watchSelection = selected;
             watchAttempted = false;
-            lastWatchPosition = null;
         }
         C<Grid>("BrowseAndSettings").Visibility = ToVisibility(!fullscreen && (selected is null || settingsVisible));
         C<ScrollViewer>("TheaterPanel").Visibility = ToVisibility(selected is not null && !settingsVisible);
@@ -505,7 +512,7 @@ internal sealed partial class MainWindow : Window
         if (!ReferenceEquals(source, boundSession))
         {
             boundSession = source;
-            lastWatchPosition = null;
+            BindWatchSeekSource(source);
             playerTapFade?.Stop();
             PlayerMenu.Hide();
             CancelScrub();
@@ -720,7 +727,7 @@ internal sealed partial class MainWindow : Window
                 else
                 {
                     if (view.CanSeek && view.NaturalDuration > TimeSpan.Zero && view.Position >= view.NaturalDuration)
-                        view.Position = TimeSpan.Zero;
+                        SetUserPlaybackPosition(active, view, TimeSpan.Zero);
                     active.Play();
                 }
             });
@@ -857,11 +864,36 @@ internal sealed partial class MainWindow : Window
 
     private void Seek(NativePlaybackSession active, double seconds) => NativePlaybackSource.Attempt(() =>
     {
-        lastWatchPosition = null;
         var view = active.Player.PlaybackSession;
         if (view.CanSeek && view.NaturalDuration > TimeSpan.Zero)
-            view.Position = TimeSpan.FromSeconds(Math.Clamp(seconds, 0, view.NaturalDuration.TotalSeconds));
+            SetUserPlaybackPosition(active, view, TimeSpan.FromSeconds(Math.Clamp(seconds, 0, view.NaturalDuration.TotalSeconds)));
     });
+
+    private void BindWatchSeekSource(NativePlaybackSession? source)
+    {
+        unbindWatchSeek?.Invoke();
+        unbindWatchSeek = null;
+        watchProgress.SourceChanged(source);
+    }
+
+    private void SetUserPlaybackPosition(NativePlaybackSession active, MediaPlaybackSession view, TimeSpan target)
+    {
+        if (!watchProgress.IsSeeking && view.Position == target) return;
+        if (unbindWatchSeek is null)
+        {
+            var dispatcher = DispatcherQueue;
+            void SeekCompleted(MediaPlaybackSession sender, object args) => dispatcher.TryEnqueue(() =>
+            {
+                if (!closed && ReferenceEquals(playback.Active, active)) watchProgress.CompleteSeek(active);
+            });
+            view.SeekCompleted += SeekCompleted;
+            unbindWatchSeek = () => NativePlaybackSource.Attempt(() => view.SeekCompleted -= SeekCompleted);
+        }
+        // Never infer completion from clock advancement. If events are lost or coalesced,
+        // only reporting is suppressed; subsequent native transport commands still go through.
+        watchProgress.BeginSeek();
+        view.Position = target;
+    }
 
     private static bool IsPlaying(MediaPlaybackState state) => state is MediaPlaybackState.Playing or MediaPlaybackState.Buffering;
 
@@ -889,7 +921,7 @@ internal sealed partial class MainWindow : Window
         overlay.Visibility = ToVisibility(ready);
         if (!ready)
         {
-            lastWatchPosition = null;
+            watchProgress.BreakSegment();
             playerRunning = false;
             if (playback.Selected is null)
             {
@@ -946,28 +978,41 @@ internal sealed partial class MainWindow : Window
 
     private void ObserveWatchProgress(MediaPlaybackSession view)
     {
-        if (watchAttempted || !C<ToggleSwitch>("WatchHistorySync").IsOn || playback.Busy || playback.QualityBusy || seekPointer is not null ||
-            view.PlaybackState != MediaPlaybackState.Playing || watchSelection is not { } video ||
+        if (drainingWindowWatch || !C<ToggleSwitch>("WatchHistorySync").IsOn || playback.Busy || playback.QualityBusy || seekPointer is not null ||
+            watchSelection is not { } video ||
             controller is not { Busy: false, SelectedAccount: { } account } current)
         {
-            lastWatchPosition = null;
+            watchProgress.BreakSegment();
             return;
         }
-        var prior = lastWatchPosition;
-        var position = view.Position;
+        if (view.PlaybackState != MediaPlaybackState.Playing)
+        {
+            watchProgress.BreakSegment();
+            if (view.PlaybackState == MediaPlaybackState.Paused)
+                SendPendingWatchProgress(final: true);
+            return;
+        }
         var duration = view.NaturalDuration;
-        lastWatchPosition = position;
-        if (prior is null || prior.Value < TimeSpan.Zero || position <= prior || position > duration) return;
+        if (watchProgress.Observe(view.Position, duration, Environment.TickCount64, view.PlaybackRate) is not { } prior) return;
+        if (watchAttempted)
+        {
+            SendPendingWatchProgress(final: false);
+            return;
+        }
         watchAttempted = true;
         var request = watchRequest = new CancellationTokenSource();
-        _ = SendWatchStartAsync(current, account, video, duration, prior.Value, ++watchStatusGeneration, request);
+        _ = SendWatchStartAsync(current, account, video, duration, prior, ++watchStatusGeneration, request.Token);
     }
 
     private void CancelWatchRequest()
     {
         var request = watchRequest;
         watchRequest = null;
+        watchRecord = null;
+        watchProgressWrite = null;
+        watchProgress.Reset();
         request?.Cancel();
+        request?.Dispose();
     }
 
     private void ResetWatchStatus()
@@ -977,21 +1022,80 @@ internal sealed partial class MainWindow : Window
         C<TextBlock>("WatchHistoryStatus").Text = "";
     }
 
-    private async Task SendWatchStartAsync(SessionController current, YouTubeAccount account, HistoryVideo video, TimeSpan duration, TimeSpan position, long generation, CancellationTokenSource request)
+    private void SendPendingWatchProgress(bool final)
     {
-        string? result;
+        if (compareWatchLookups || !C<ToggleSwitch>("WatchHistorySync").IsOn ||
+            watchRecord is not { } record || watchRequest is not { } request || controller is not { Busy: false, SelectedAccount: { } account } current ||
+            windowWatchDeadline.IsCancellationRequested || !watchProgress.CanTake(final)) return;
+        if (watchProgressWrite is { IsCompleted: false })
+        {
+            if (final) watchProgress.FlushAfterCurrentWrite();
+            return;
+        }
+        var generation = watchStatusGeneration;
+        var token = request.Token;
+        watchProgressWrite = watchProgress.DrainAsync(final,
+            range => SendWatchProgressAsync(current, account, record, range, generation, token), token);
+    }
+
+    private async Task<bool> SendWatchProgressAsync(SessionController current, YouTubeAccount account, YouTubeClient.WatchRecord record,
+        (TimeSpan Start, TimeSpan End) range, long generation, CancellationToken token)
+    {
+        if (windowWatchDeadline.IsCancellationRequested) return false;
+        using var deadline = drainingWindowWatch ? CancellationTokenSource.CreateLinkedTokenSource(token, windowWatchDeadline) : null;
+        var result = await current.TryRecordWatchProgressAsync(account, record, range.Start, range.End, deadline?.Token ?? token);
+        if (closed || token.IsCancellationRequested || windowWatchDeadline.IsCancellationRequested || generation != watchStatusGeneration ||
+            !ReferenceEquals(account, current.SelectedAccount) || result is null) return false;
+        C<TextBlock>("WatchHistoryStatus").Text = result == "watch_progress_sent"
+            ? "Playback progress sent. Check YouTube History to confirm it was saved."
+            : "Playback progress could not be confirmed. Playback is unaffected.";
+        return true;
+    }
+
+    private void OnWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
+    {
+        if (allowWindowClose) return;
+        if (drainingWindowWatch) { args.Cancel = true; return; }
+        if (watchRecord is null || (watchProgressWrite is not { IsCompleted: false } && !watchProgress.CanTake(final: true))) return;
+        // Cancel synchronously and finish outside the native Closing callback.
+        var budget = new CancellationTokenSource(TimeSpan.FromMilliseconds(1500));
+        if (!DispatcherQueue.TryEnqueue(async () => await FinishWindowCloseAsync(budget)))
+        {
+            budget.Dispose();
+            return;
+        }
+        windowWatchDeadline = budget.Token;
+        args.Cancel = drainingWindowWatch = true;
+    }
+
+    private async Task FinishWindowCloseAsync(CancellationTokenSource closeBudget)
+    {
+        using var budget = closeBudget;
         try
         {
-            result = compareWatchLookups
-                ? await current.TryCompareWatchLookupsAsync(account, video.VideoId, request.Token)
-                : await current.TryRecordWatchStartAsync(account, video.VideoId, duration, position, request.Token);
+            if (watchProgressWrite is { IsCompleted: false } pending) await pending.WaitAsync(budget.Token);
+            if (!closed)
+            {
+                SendPendingWatchProgress(final: true);
+                if (watchProgressWrite is { IsCompleted: false } remaining) await remaining.WaitAsync(budget.Token);
+            }
         }
+        catch (OperationCanceledException) { }
         finally
         {
-            if (ReferenceEquals(watchRequest, request)) watchRequest = null;
-            request.Dispose();
+            allowWindowClose = true;
+            if (!closed) Close();
         }
-        if (closed || generation != watchStatusGeneration || !ReferenceEquals(account, current.SelectedAccount)) return;
+    }
+
+    private async Task SendWatchStartAsync(SessionController current, YouTubeAccount account, HistoryVideo video, TimeSpan duration, TimeSpan position, long generation, CancellationToken token)
+    {
+        YouTubeClient.WatchRecord? record = null;
+        var result = compareWatchLookups
+            ? await current.TryCompareWatchLookupsAsync(account, video.VideoId, token)
+            : await current.TryRecordWatchStartAsync(account, video.VideoId, duration, position, token, started => record = started);
+        if (closed || token.IsCancellationRequested || generation != watchStatusGeneration || !ReferenceEquals(account, current.SelectedAccount)) return;
+        watchRecord = record;
         if (compareWatchLookups)
         {
             C<TextBlock>("WatchHistoryStatus").Text = (result switch

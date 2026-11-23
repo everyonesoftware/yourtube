@@ -38,6 +38,7 @@ Check(!PlayerControlsVisibility.ShouldShow(playing: true, 7_000, 10_000, interac
 Check(PlayerControlsVisibility.ShouldShow(playing: true, 10_001, 10_001, interacting: false), "fresh movement reveals idle controls immediately");
 Check(PlayerControlsVisibility.ShouldShow(playing: true, null, 10_000, interacting: true), "keyboard, menu and scrub interactions keep controls visible");
 Console.WriteLine("PASS: transport visibility follows playback, pointer activity and active control interaction.");
+WatchProgressTests.Run();
 WiringTests.Run(args.Length > 0 ? args[0] : Directory.GetCurrentDirectory());
 if (args.Length > 1) PeTests.Run(args[1], args.Length > 2 ? args[2] : "0.1.1");
 

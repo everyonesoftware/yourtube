@@ -220,6 +220,22 @@ internal static class StateTests
         Verify(dispatchedToken.IsCancellationRequested && !nextStart.IsCompleted && api.WatchCalls == 3, "replacing playback cancels its transport and the new start waits for the old call to drain");
         drain.SetResult();
         Verify(await oldStart is null && await nextStart == "watch_sent" && api.WatchCalls == 4, "replacement reports after the retired request drains");
+        // The HTTP fixtures test the opaque record; this fake tests account/lifetime admission.
+        var end = TimeSpan.FromSeconds(15);
+        api.Progress = (account, start, finish) =>
+            Verify(ReferenceEquals(account, TestApi.B) && start == position && finish == end, "progress retains the selected identity and sampled range");
+        Verify(await controller.TryRecordWatchProgressAsync(TestApi.A, null!, position, end, default) is null && api.ProgressCalls == 0,
+            "an unselected account cannot send progress");
+        Verify(await controller.TryRecordWatchProgressAsync(TestApi.B, null!, position, end, default) == "watch_progress_sent" && api.ProgressCalls == 1,
+            "confirmed progress is surfaced separately from a watch start");
+        delayed = new TaskCompletionSource<YouTubeSession>();
+        controller.UtcNow = () => DateTimeOffset.UtcNow.AddHours(2);
+        api.Refresh = () => delayed.Task;
+        var retiredProgress = controller.TryRecordWatchProgressAsync(TestApi.B, null!, position, end, default);
+        controller.SignOut();
+        delayed.SetResult(TestApi.Fresh);
+        Verify(await retiredProgress is null && api.ProgressCalls == 1 && vault.Value is null,
+            "sign-out during a progress refresh blocks the write and stale credentials");
         Console.WriteLine("PASS: watch reporting binds the selected identity and does not disrupt browsing on failure.");
     }
 
@@ -253,8 +269,12 @@ internal sealed class TestApi : IYouTubeApi
 
     public int WatchCalls;
     public Func<YouTubeAccount, string, TimeSpan, TimeSpan, CancellationToken, Task> Watch = (_, _, _, _, _) => Task.CompletedTask;
-    public Task RecordWatchStartAsync(YouTubeSession session, YouTubeAccount account, string videoId, TimeSpan duration, TimeSpan position, CancellationToken cancellationToken)
-    { WatchCalls++; return Watch(account, videoId, duration, position, cancellationToken); }
+    public async Task<YouTubeClient.WatchRecord> RecordWatchStartAsync(YouTubeSession session, YouTubeAccount account, string videoId, TimeSpan duration, TimeSpan position, CancellationToken cancellationToken)
+    { WatchCalls++; await Watch(account, videoId, duration, position, cancellationToken); return null!; }
+    public int ProgressCalls;
+    public Action<YouTubeAccount, TimeSpan, TimeSpan>? Progress;
+    public Task RecordWatchProgressAsync(YouTubeSession session, YouTubeAccount account, YouTubeClient.WatchRecord record, TimeSpan start, TimeSpan end, CancellationToken cancellationToken)
+    { ProgressCalls++; Progress?.Invoke(account, start, end); return Task.CompletedTask; }
     internal static readonly YouTubeAccount A = new("Account A", "@a", null);
     internal static readonly YouTubeAccount B = new("Account B", "@b", "page-b");
     internal static YouTubeSession Fresh => new("fixture-access", "fixture-rotation", DateTimeOffset.UtcNow.AddHours(1));

@@ -22,7 +22,8 @@ internal interface IYouTubeApi
     Task<HistoryPage> GetHistoryAsync(YouTubeSession session, YouTubeAccount account, string? continuation, CancellationToken cancellationToken);
     Task<SubscriptionsPage> GetSubscriptionsAsync(YouTubeSession session, YouTubeAccount account, string? continuation, CancellationToken cancellationToken);
     Task<HomePage> GetHomeAsync(YouTubeSession session, YouTubeAccount account, string? continuation, CancellationToken cancellationToken);
-    Task RecordWatchStartAsync(YouTubeSession session, YouTubeAccount account, string videoId, TimeSpan duration, TimeSpan position, CancellationToken cancellationToken);
+    Task<YouTubeClient.WatchRecord> RecordWatchStartAsync(YouTubeSession session, YouTubeAccount account, string videoId, TimeSpan duration, TimeSpan position, CancellationToken cancellationToken);
+    Task RecordWatchProgressAsync(YouTubeSession session, YouTubeAccount account, YouTubeClient.WatchRecord record, TimeSpan start, TimeSpan end, CancellationToken cancellationToken);
     Task<WatchLookupComparison> CompareWatchLookupsAsync(YouTubeSession session, YouTubeAccount account, string videoId, CancellationToken cancellationToken);
 }
 
@@ -250,11 +251,24 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
         catch (Exception error) { Fail(op.Id, error); }
         finally { if (restoring is null) Finish(op.Id); }
     }
-    public Task<string?> TryRecordWatchStartAsync(YouTubeAccount account, string videoId, TimeSpan duration, TimeSpan position, CancellationToken playbackToken = default) =>
+    public async Task<string?> TryRecordWatchStartAsync(YouTubeAccount account, string videoId, TimeSpan duration, TimeSpan position, CancellationToken playbackToken = default, Action<YouTubeClient.WatchRecord>? onStarted = null)
+    {
+        YouTubeClient.WatchRecord? record = null;
+        var result = await RunWatchOperationAsync(account, async (fresh, ct) =>
+        {
+            record = await api.RecordWatchStartAsync(fresh, account, videoId, duration, position, ct);
+            return "watch_sent";
+        }, playbackToken);
+        if (result == "watch_sent" && record is not null && !playbackToken.IsCancellationRequested && ReferenceEquals(account, SelectedAccount))
+            onStarted?.Invoke(record);
+        return result;
+    }
+
+    public Task<string?> TryRecordWatchProgressAsync(YouTubeAccount account, YouTubeClient.WatchRecord record, TimeSpan start, TimeSpan end, CancellationToken playbackToken) =>
         RunWatchOperationAsync(account, async (fresh, ct) =>
         {
-            await api.RecordWatchStartAsync(fresh, account, videoId, duration, position, ct);
-            return "watch_sent";
+            await api.RecordWatchProgressAsync(fresh, account, record, start, end, ct);
+            return "watch_progress_sent";
         }, playbackToken);
 
     public Task<string?> TryCompareWatchLookupsAsync(YouTubeAccount account, string videoId, CancellationToken playbackToken = default) =>
