@@ -529,4 +529,50 @@ public sealed class ClientTests
         Assert.Null(error.InnerException);
         Assert.Equal(3, transport.Requests.Count);
     }
+
+    [Theory]
+    [InlineData("{\"unrecognizedRenderer\":{}}")]
+    [InlineData("{\"gridRenderer\":{\"items\":[{\"videoRenderer\":{\"videoId\":\"ABCDEFGHIJK\"}},{\"continuationItemRenderer\":{\"continuationEndpoint\":{\"continuationCommand\":{\"token\":\"wrong-cursor\"}}}}]}}")]
+    public async Task HistoryPagingPrefersContinuationGridOverFullBrowseContents(string browseContent)
+    {
+        const string fixture = """
+        {"contents":{"tvBrowseRenderer":{"content":BROWSE_CONTENT}},
+         "continuationContents":{"gridContinuation":{
+           "items":[{"videoRenderer":{"videoId":"abcdefghijk","thumbnailOverlays":[{"thumbnailOverlayResumePlaybackRenderer":{"percentDurationWatched":42}}]}}],
+           "continuations":[{"nextContinuationData":{"continuation":"older-history"}}]
+         }}}
+        """;
+        using var transport = new Transport(Html, Script, fixture.Replace("BROWSE_CONTENT", browseContent), "{\"continuationContents\":{}}");
+        using var http = new HttpClient(transport);
+        var clock = new Clock();
+        var client = clock.Client(http);
+        var session = new YouTubeSession("access", "refresh", clock.Now.AddHours(1));
+        var account = new YouTubeAccount("Brand", null, "fixture-brand");
+        var page = await client.GetHistoryAsync(session, account, "fixture-cursor");
+        var video = Assert.Single(page.Videos);
+        Assert.Equal("abcdefghijk", video.VideoId);
+        Assert.Equal(42, video.PercentWatched);
+        Assert.Equal("older-history", page.Continuation);
+        var end = await client.GetHistoryAsync(session, account, page.Continuation);
+        Assert.Empty(end.Videos);
+        Assert.Null(end.Continuation);
+        using var request = JsonDocument.Parse(transport.Requests[3].Body);
+        Assert.Equal("older-history", request.RootElement.GetProperty("continuation").GetString());
+        Assert.False(request.RootElement.TryGetProperty("browseId", out _));
+        Assert.Equal("fixture-brand", transport.Requests[3].Page);
+    }
+
+    [Fact]
+    public async Task InitialHistoryStillUsesBrowseContentsWhenContinuationGridAlsoExists()
+    {
+        const string response = """
+        {"contents":{"gridRenderer":{"items":[{"videoRenderer":{"videoId":"abcdefghijk"}}]}},
+         "continuationContents":{"gridContinuation":{"items":[{"videoRenderer":{"videoId":"ABCDEFGHIJK"}}]}}}
+        """;
+        using var transport = new Transport(Html, Script, response);
+        using var http = new HttpClient(transport);
+        var clock = new Clock();
+        var page = await clock.Client(http).GetHistoryAsync(new("access", "refresh", clock.Now.AddHours(1)), new("Owner", null, null));
+        Assert.Equal("abcdefghijk", Assert.Single(page.Videos).VideoId);
+    }
 }

@@ -247,10 +247,13 @@ public sealed partial class YouTubeClient
         }
         return value;
     }
-    private static JsonElement HistoryContainer(JsonElement response)
+    private static JsonElement HistoryContainer(JsonElement response, bool preferGridContinuation = false)
     {
-        if (response.TryGetProperty("contents", out var content)) return ActiveHistoryContent(content);
         var continuation = At(response, "continuationContents");
+        // History continuation replies can also carry a full browse wrapper. Only
+        // the continuation grid supplies the older cards and the next cursor.
+        if (preferGridContinuation && At(continuation, "gridContinuation") is { ValueKind: JsonValueKind.Object } grid) return grid;
+        if (response.TryGetProperty("contents", out var content)) return ActiveHistoryContent(content);
         if (continuation.ValueKind == JsonValueKind.Object)
         {
             // WatchNextHelper.kt selects these continuation containers, never the response envelope.
@@ -334,7 +337,7 @@ public sealed partial class YouTubeClient
         {
             json = await PostAsync("youtubei/v1/browse", payload, cancellationToken, session: session, pageId: account.PageId);
             stage = "C";
-            var container = HistoryContainer(json);
+            var container = HistoryContainer(json, preferGridContinuation: continuation is not null);
             stage = "I";
             return ParseVideoPage(container);
         }
