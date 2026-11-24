@@ -28,6 +28,7 @@ public sealed class LibraryFixtureTests
             scenario switch { "missing_description" or "expired_description" => null, "empty_description" => "", _ => "Fixture description" });
         if (scenario == "malformed_description") streamPlayer = streamPlayer.Replace("Fixture description", "\\uD800", StringComparison.Ordinal);
         var clock = new FixtureClock();
+        var timing = PlaybackTiming.StartForStartup();
         int heads=0, tails=0, redirects=0, decoyRequests=0, watches=0;
         var handler = new Handler(r => {
             var u = r.RequestUri!;
@@ -36,10 +37,17 @@ public sealed class LibraryFixtureTests
                 Assert.Null(r.Headers.Authorization);
                 if (u.AbsolutePath == "/watch") { watches++; if (scenario == "expired_description") clock.Now = DateTimeOffset.MaxValue; return new(HttpStatusCode.OK) { Content = new StringContent("<html><head><meta property=\"og:url\" content=\"https://www.youtube.com/watch?v=jNQXAC9IVRw\"></head><body><div id=\"player\"></div><script>var ytInitialPlayerResponse = " + watchPlayer + ";</script></body></html>") }; }
                 if (u.AbsolutePath == "/sw.js_data") return new(HttpStatusCode.OK) { Content = new StringContent("[[null,null,[[[null,null,null,null,null,null,null,null,null,null,null,null,null,\"fixture-visitor\"]]]]]") };
-                if (u.AbsolutePath == "/youtubei/v1/player") return new(HttpStatusCode.OK) { Content = new StringContent(streamPlayer) };
+                if (u.AbsolutePath == "/youtubei/v1/player")
+                {
+                    Assert.Equal(StreamDiscoveryStep.StreamList, timing.ReadStartup()!.Discovery.Current);
+                    return new(HttpStatusCode.OK) { Content = new StringContent(streamPlayer) };
+                }
                 return new(HttpStatusCode.NotFound);
             }
             Assert.True(PublicTransport.IsCdn(u)); Assert.Null(r.Headers.Authorization); Assert.False(r.Headers.Contains("Cookie"));
+            var live = timing.ReadStartup()!;
+            if (live.Completed == 0) Assert.Equal(StreamDiscoveryStep.Reachability, live.Discovery.Current);
+            else Assert.Null(live.Discovery.Current); // DASH index reads are not discovery.
             if (u.Query.Contains("id=decoy-", StringComparison.Ordinal))
             {
                 decoyRequests++;
@@ -53,21 +61,29 @@ public sealed class LibraryFixtureTests
             return new(HttpStatusCode.OK) { Content = new ByteArrayContent(source[start..(end+1)]) };
         });
         using var resolver = new PlaybackResolver(handler); PlaybackMedia? media = null; string? error = null;
-        var timing = PlaybackTiming.StartForStartup();
         try { media = await resolver.ResolveAsync("jNQXAC9IVRw", CancellationToken.None, timing); } catch (PlaybackException e) { error=e.Code; timing.FailStartup(); }
+        var discovery = Assert.IsType<PlaybackStartupSnapshot>(timing.ReadStartup()).Discovery;
+        Assert.NotNull(discovery.Durations[0]);
         if (scenario == "missing_audio")
         {
             Assert.Null(media); Assert.Equal("unsupported_media", error);
             Assert.True(timing.ReadStartup() is { Completed: 0, Failed: true });
+            Assert.Equal(StreamDiscoveryStep.Compatibility, discovery.Current);
+            Assert.All(discovery.Durations, duration => Assert.NotNull(duration));
             return;
         }
         if (scenario == "wrong_id")
         {
             Assert.Null(media); Assert.Equal("unavailable", error);
             Assert.Equal(0, watches + tails + redirects + heads + decoyRequests);
+            Assert.Equal(StreamDiscoveryStep.StreamList, discovery.Current);
+            Assert.Null(discovery.Durations[1]);
+            Assert.Null(discovery.Durations[2]);
             return;
         }
         Assert.True(media is not null, "Pinned library fixture resolution failed: " + (error ?? "unknown"));
+        Assert.Null(discovery.Current);
+        Assert.All(discovery.Durations, duration => Assert.NotNull(duration));
         Assert.Equal(scenario == "invalid_duration" ? 1 : 0, watches);
         Assert.Equal("Synthetic fixture title", media!.Title); Assert.Equal("Fixture author", media.Author);
         bool missing = scenario is "missing_description" or "malformed_description" or "expired_description";

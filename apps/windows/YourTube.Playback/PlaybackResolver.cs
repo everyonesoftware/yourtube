@@ -46,7 +46,7 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
             CheckDisposed();
             if (!Regex.IsMatch(videoId ?? "", "\\A[A-Za-z0-9_-]{11}\\z", RegexOptions.CultureInvariant)) throw new PlaybackException("invalid_video", "The video identity is invalid.");
             timing?.Mark(PlaybackTimingStage.StreamManifestStarted);
-            var (manifest, metadata) = await transport.DiscoverAsync(videoId!, () =>
+            var (manifest, metadata) = await transport.DiscoverAsync(videoId!, timing, () =>
                 client.Videos.Streams.GetManifestAsync(videoId!, cancellationToken));
             timing?.Mark(PlaybackTimingStage.StreamManifestCompleted);
             var videos = manifest.GetVideoOnlyStreams().Where(s => s.Container.Name == "mp4" && Regex.IsMatch(s.VideoCodec, PlayerStreamFilter.AvcPattern) && s.VideoResolution.Height is > 0 and <= PlayerStreamFilter.MaxHeight && s.VideoResolution.Width <= PlayerStreamFilter.MaxWidth).OrderBy(s => s.VideoResolution.Height).ThenBy(s => s.Bitrate.BitsPerSecond).ToArray();

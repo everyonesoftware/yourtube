@@ -81,6 +81,23 @@ public sealed class PlaybackStartupTests
     }
 
     [Fact]
+    public void DiscoveryKeepsCompletedChecksAndFreezesTheFailedSubtask()
+    {
+        var start = new PlaybackStartup();
+        start.Record(PlaybackTimingStage.StreamManifestStarted, 50);
+        start.Record(PlaybackTimingStage.StreamReachabilityStarted, 350);
+        Assert.Equal(new long?[] { 300, 250, null }, start.Read(600).Discovery.Durations);
+        start.Record(PlaybackTimingStage.StreamReachabilityStarted, 900);
+        start.Fail(1150);
+        start.Record(PlaybackTimingStage.StreamManifestCompleted, 1300);
+        var result = start.Read(5000);
+        Assert.True(result.Failed);
+        Assert.Equal(StreamDiscoveryStep.Reachability, result.Discovery.Current);
+        Assert.Equal(new long?[] { 300, 800, null }, result.Discovery.Durations);
+        Assert.All(new PlaybackStartup().Read(0).Discovery.Durations, duration => Assert.Null(duration));
+    }
+
+    [Fact]
     public void InMemoryTimingAcceptsMilestonesWithoutAFileSink()
     {
         var timing = PlaybackTiming.StartForStartup();

@@ -4,20 +4,26 @@ namespace YourTube.Playback;
 internal sealed class PublicTransport(HttpMessageHandler handler) : HttpMessageHandler
 {
     private readonly HttpMessageInvoker inner = new(handler);
-    private sealed class MetadataCapture(string id)
+    private sealed class DiscoveryCapture(string id, PlaybackTiming? timing)
     {
         internal string Id { get; } = id;
         internal PlayerMetadata? Latest { get; set; }
+        private int probing;
+        internal void MarkReachability()
+        {
+            if (timing is not null && Interlocked.Exchange(ref probing, 1) == 0)
+                timing.Mark(PlaybackTimingStage.StreamReachabilityStarted);
+        }
     }
-    private readonly AsyncLocal<MetadataCapture?> metadataCapture = new();
+    private readonly AsyncLocal<DiscoveryCapture?> discoveryCapture = new();
 
-    internal async Task<(T Result, PlayerMetadata? Metadata)> DiscoverAsync<T>(string videoId, Func<ValueTask<T>> discover)
+    internal async Task<(T Result, PlayerMetadata? Metadata)> DiscoverAsync<T>(string videoId, PlaybackTiming? timing, Func<ValueTask<T>> discover)
     {
-        var previous = metadataCapture.Value;
-        var capture = new MetadataCapture(videoId);
-        metadataCapture.Value = capture;
+        var previous = discoveryCapture.Value;
+        var capture = new DiscoveryCapture(videoId, timing);
+        discoveryCapture.Value = capture;
         try { return (await discover(), capture.Latest); }
-        finally { metadataCapture.Value = previous; }
+        finally { discoveryCapture.Value = previous; }
     }
     internal static bool IsCdn(Uri u) => u.IsAbsoluteUri && u.Scheme == "https" && u.IsDefaultPort && u.UserInfo.Length == 0 && u.Fragment.Length == 0 && u.Host.EndsWith(".googlevideo.com", StringComparison.OrdinalIgnoreCase);
     private static bool IsYouTube(Uri u) => u.IsAbsoluteUri && u.Scheme == "https" && u.IsDefaultPort && u.UserInfo.Length == 0 && u.Fragment.Length == 0 && u.Host is "www.youtube.com" or "youtube.com";
@@ -46,6 +52,8 @@ internal sealed class PublicTransport(HttpMessageHandler handler) : HttpMessageH
                     outgoing.Content = request.Content; // library owns the request body
                 }
                 HttpResponseMessage response;
+                // Only a CDN dispatch during library discovery is a reachability check.
+                if (cdn && redirects == 0) discoveryCapture.Value?.MarkReachability();
                 try { response = await inner.SendAsync(outgoing, cancellationToken); }
                 finally { if (!cdn) outgoing.Content = null; }
                 if ((int)response.StatusCode is 301 or 302 or 303 or 307 or 308)
@@ -75,7 +83,7 @@ internal sealed class PublicTransport(HttpMessageHandler handler) : HttpMessageH
                     bool publicPlayer = !cdn && response.IsSuccessStatusCode && request.Method == HttpMethod.Post && uri.AbsolutePath == "/youtubei/v1/player";
                     // The pinned stream client uses the last successful transport response,
                     // including on a retry. Never carry details forward from an earlier response.
-                    if (publicPlayer && metadataCapture.Value is { } capture)
+                    if (publicPlayer && discoveryCapture.Value is { } capture)
                         capture.Latest = PlayerMetadata.Read(original, capture.Id);
                     var bytes = publicPlayer ? PlayerStreamFilter.Filter(original) : original;
                     var content = new ByteArrayContent(bytes);

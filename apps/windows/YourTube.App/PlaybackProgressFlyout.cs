@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using YourTube.Playback;
 
@@ -21,6 +22,10 @@ internal sealed partial class MainWindow
     private readonly TextBlock progressNote = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap };
     private readonly Button progressRetry = new() { Content = "Retry playback", Visibility = Visibility.Collapsed };
     private readonly List<StartupRow> progressRows = [];
+    private readonly List<StartupRow> discoveryRows = [];
+    private readonly ToggleButton discoveryToggle = new() { Padding = new Thickness(0), BorderThickness = new Thickness(0),
+        HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch };
+    private PlaybackTiming? displayedStartup;
     private DispatcherQueueTimer? progressClock;
     private bool playerProgressOpen;
     private Flyout PlayerProgressFlyout => (Flyout)C<Button>("PlayerProgressButton").Flyout;
@@ -47,11 +52,35 @@ internal sealed partial class MainWindow
         AutomationProperties.SetLiveSetting(progressSummary, AutomationLiveSetting.Polite);
         feed.Children.Add(progressSummary);
         var rows = new StackPanel { Spacing = 2 };
-        foreach (var label in StartupLabels)
+        for (int i = 0; i < StartupLabels.Length; i++)
         {
-            var row = new StartupRow(label);
+            var row = new StartupRow(StartupLabels[i], disclosure: i == 0);
             progressRows.Add(row);
-            rows.Children.Add(row.View);
+            if (i != 0) { rows.Children.Add(row.View); continue; }
+            discoveryToggle.Content = row.View;
+            discoveryToggle.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            AutomationProperties.SetName(discoveryToggle, StartupLabels[i]);
+            AutomationProperties.SetAccessibilityView(row.View, AccessibilityView.Raw);
+            rows.Children.Add(discoveryToggle);
+            var details = new StackPanel();
+            foreach (var label in new[] { "Get stream list from YouTube", "Check that streams are reachable", "Confirm compatible audio and video" })
+            {
+                var child = new StartupRow(label, detail: true);
+                discoveryRows.Add(child);
+                details.Children.Add(child.View);
+            }
+            var branch = new Border { Child = details, Margin = new Thickness(17, 0, 0, 4),
+                Padding = new Thickness(8, 0, 0, 0), BorderThickness = new Thickness(1, 0, 0, 0),
+                BorderBrush = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(100, 144, 144, 144)) };
+            void ShowDiscovery(bool expanded)
+            {
+                branch.Visibility = ToVisibility(expanded);
+                row.SetExpanded(expanded);
+            }
+            discoveryToggle.Checked += (_, _) => ShowDiscovery(true);
+            discoveryToggle.Unchecked += (_, _) => ShowDiscovery(false);
+            ShowDiscovery(false);
+            rows.Children.Add(branch);
         }
         feed.Children.Add(rows);
         feed.Children.Add(progressNote);
@@ -96,7 +125,13 @@ internal sealed partial class MainWindow
 
     private void RenderPlaybackProgress()
     {
-        if (closed || !playerProgressOpen || playback.StartupTiming?.ReadStartup() is not { } state) return;
+        var timing = playback.StartupTiming;
+        if (closed || !playerProgressOpen || timing?.ReadStartup() is not { } state) return;
+        if (!ReferenceEquals(displayedStartup, timing))
+        {
+            displayedStartup = timing;
+            discoveryToggle.IsChecked = false;
+        }
         bool started = state.Completed == PlaybackStartupSnapshot.StepCount;
         SetText(progressSummary, state.Failed ? "Couldn’t start playback" : started ? "Playback started" :
             state.EndedUnconfirmed ? "Video ended" : $"{state.Completed} of {StartupLabels.Length} steps complete");
@@ -110,6 +145,16 @@ internal sealed partial class MainWindow
         progressRetry.Visibility = ToVisibility(canRetry);
         for (int i = 0; i < progressRows.Count; i++)
             progressRows[i].Render(i, state);
+        if (AutomationProperties.GetItemStatus(discoveryToggle) != progressRows[0].AccessibleStatus)
+            AutomationProperties.SetItemStatus(discoveryToggle, progressRows[0].AccessibleStatus);
+        for (int i = 0; i < discoveryRows.Count; i++)
+        {
+            var duration = state.Discovery.Durations[i];
+            bool current = state.Discovery.Current == (StreamDiscoveryStep)i;
+            discoveryRows[i].RenderStatus(current && !state.IsFinal, current && state.Failed,
+                duration.HasValue && !current, state.IsFinal && !state.Failed && current, duration,
+                state.Completed > 0 ? "Not needed" : state.IsFinal ? "Not run" : "Waiting");
+        }
         if (state.IsFinal) progressClock?.Stop();
         else if (progressClock is { IsRunning: false }) progressClock.Start();
     }
@@ -122,15 +167,21 @@ internal sealed partial class MainWindow
         private static readonly SolidColorBrush ActiveBackground = new(Microsoft.UI.ColorHelper.FromArgb(255, 52, 69, 57));
         private static readonly SolidColorBrush FailedBackground = new(Microsoft.UI.ColorHelper.FromArgb(255, 69, 51, 46));
         private readonly string label;
+        private readonly bool detail;
+        private readonly FontIcon? chevron;
         private readonly FontIcon mark = new() { FontSize = 11 };
         private readonly ProgressRing ring = new() { Width = 15, Height = 15, IsActive = false, Visibility = Visibility.Collapsed };
         private readonly TextBlock time = new() { FontSize = 11, VerticalAlignment = VerticalAlignment.Center };
         private string? status;
         public Grid View { get; } = new() { MinHeight = 34, ColumnSpacing = 8, Padding = new Thickness(5, 3, 5, 3), CornerRadius = new CornerRadius(4) };
 
-        public StartupRow(string label)
+        public string AccessibleStatus => status ?? "Waiting";
+
+        public StartupRow(string label, bool disclosure = false, bool detail = false)
         {
             this.label = label;
+            this.detail = detail;
+            if (detail) View.MinHeight = 26;
             View.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(16) });
             View.ColumnDefinitions.Add(new ColumnDefinition());
             View.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -139,20 +190,34 @@ internal sealed partial class MainWindow
             icon.Children.Add(mark);
             icon.Children.Add(ring);
             View.Children.Add(icon);
-            var text = new TextBlock { Text = label, FontSize = 13, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
+            var text = new TextBlock { Text = label, FontSize = detail ? 11 : 13, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
             Grid.SetColumn(text, 1);
             View.Children.Add(text);
-            Grid.SetColumn(time, 2);
+            if (disclosure)
+            {
+                View.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                chevron = new FontIcon { FontSize = 9 };
+                AutomationProperties.SetAccessibilityView(chevron, AccessibilityView.Raw);
+                Grid.SetColumn(chevron, 2);
+                View.Children.Add(chevron);
+            }
+            Grid.SetColumn(time, disclosure ? 3 : 2);
             View.Children.Add(time);
         }
 
+        public void SetExpanded(bool expanded) { if (chevron is not null) chevron.Glyph = expanded ? "\uE70D" : "\uE76C"; }
+
         public void Render(int index, PlaybackStartupSnapshot snapshot)
         {
-            bool active = index == snapshot.Completed && !snapshot.IsFinal;
-            bool failed = index == snapshot.Completed && snapshot.Failed;
-            bool done = index < snapshot.Completed;
+            bool current = index == snapshot.Completed;
+            RenderStatus(current && !snapshot.IsFinal, current && snapshot.Failed, index < snapshot.Completed,
+                current && snapshot.EndedUnconfirmed, snapshot.StepDurations[index]);
+        }
+
+        public void RenderStatus(bool active, bool failed, bool done, bool unconfirmed, long? duration, string waiting = "Waiting")
+        {
             string next = active ? "In progress" : failed ? "Failed" : done ? "Complete" :
-                snapshot.EndedUnconfirmed && index == snapshot.Completed ? "Not confirmed" : "Waiting";
+                unconfirmed ? "Not confirmed" : waiting;
             if (status != next)
             {
                 status = next;
@@ -163,9 +228,9 @@ internal sealed partial class MainWindow
                 ring.Visibility = ToVisibility(active);
                 ring.IsActive = active;
             }
-            long? duration = snapshot.StepDurations[index];
             SetText(time, active && duration is long running ? Seconds(running) + " so far" :
-                failed ? "Failed" : done && duration is long complete ? Seconds(complete) : next);
+                failed ? detail && duration is long stopped ? $"{Seconds(stopped)} · Failed" : "Failed" :
+                done && duration is long complete ? detail && complete < 100 ? "<0.1 s" : Seconds(complete) : next);
         }
     }
 }
