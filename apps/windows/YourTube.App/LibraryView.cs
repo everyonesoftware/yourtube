@@ -344,7 +344,7 @@ internal sealed partial class MainWindow
                 Child = new TextBlock { Text = video.Duration, FontSize = 12 }
             });
         }
-        var progress = controller?.View == BrowseView.History ? video.PercentWatched : null;
+        var progress = controller?.View is BrowseView.History or BrowseView.Subscriptions ? video.PercentWatched : null;
         if (progress is > 0)
         {
             var bar = new ProgressBar { Value = Math.Clamp(progress.Value, 0, 100), Foreground = sage, Height = 4, VerticalAlignment = VerticalAlignment.Bottom };

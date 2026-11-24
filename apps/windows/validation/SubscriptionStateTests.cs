@@ -37,6 +37,102 @@ internal static class SubscriptionStateTests
         await FlatFeedBackgroundPaging(BrowseView.History);
         await NavigationAndFailures();
         await AccountAndRevocation();
+        await WatchState();
+        await StaleWatchState();
+        await ChannelSwitchDuringWatchState();
+    }
+
+    private static async Task WatchState()
+    {
+        var fallback = Video("aaaaaaaaaaa");
+        var supplied = Video("bbbbbbbbbbb") with { PercentWatched = 100 };
+        var unknown = Video("ccccccccccc");
+        var later = Video("ddddddddddd");
+        var explicitZero = Video("eeeeeeeeeee") with { PercentWatched = 0 };
+        var calls = new List<(YouTubeAccount, string?)>();
+        var percent = 42;
+        var api = new TestApi
+        {
+            Subscriptions = (_, cursor) => Task.FromResult(cursor is null
+                ? new SubscriptionsPage([Channel], [fallback, supplied, unknown, explicitZero], "next", null)
+                : new SubscriptionsPage([], [later], null, null)),
+            SubscriptionChannel = (_, _, _) => Task.FromResult(new SubscriptionsPage([], [fallback], null, null)),
+            History = (account, cursor) =>
+            {
+                calls.Add((account, cursor));
+                if (account == TestApi.B) throw new YouTubeException("service_unavailable", "Fixture History failed.");
+                return Task.FromResult(new HistoryPage([
+                    fallback with { PercentWatched = percent, Title = "History title" }, fallback with { PercentWatched = 99 },
+                    supplied with { PercentWatched = 10 }, later with { PercentWatched = 25 }, explicitZero with { PercentWatched = 90 }
+                ], "do-not-page-history", null));
+            }
+        };
+        var controller = new SessionController(api, new TestStore(), "fixture-device");
+        await controller.SignInAsync();
+        await controller.SelectAccountAsync(TestApi.A);
+        await controller.NavigateAsync(BrowseView.Subscriptions);
+        Verify(controller.Videos.SequenceEqual([fallback with { PercentWatched = 42 }, supplied, unknown, explicitZero]),
+            "All Subscriptions fills missing progress by video ID without replacing subscription metadata or known progress");
+        var original = controller.Videos[0];
+        await controller.LoadHistoryAsync(append: true);
+        Verify(controller.Videos[^1].PercentWatched == 25 && ReferenceEquals(controller.Videos[0], original),
+            "paging adds watch state without replacing existing cards");
+        await controller.SelectSubscriptionChannelAsync(Channel);
+        Verify(controller.Videos.Single().PercentWatched == 42 && calls.SequenceEqual([(TestApi.A, (string?)null)]),
+            "channel and append reuse one recent History page under the selected identity");
+        percent = 62;
+        await controller.LoadHistoryAsync();
+        Verify(controller.Videos.Single().PercentWatched == 62 && calls.Count == 2, "Refresh reloads watch state in a channel grid");
+        await controller.SelectAccountAsync(TestApi.B);
+        Verify(controller.Videos.SequenceEqual([fallback, supplied, unknown, explicitZero]) && controller.Status == "" &&
+            controller.Phase == SessionPhase.SignedIn && calls[^1] == (TestApi.B, null),
+            "optional History failure leaves the subscription grid usable without leaking the previous identity's progress");
+        Console.WriteLine("PASS: subscription watch state, precedence, pagination, refresh and identity isolation.");
+    }
+
+    private static async Task StaleWatchState()
+    {
+        var video = Video("aaaaaaaaaaa");
+        var pendingHistory = new TaskCompletionSource<HistoryPage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var api = new TestApi
+        {
+            Subscriptions = (_, _) => Task.FromResult(new SubscriptionsPage([Channel], [video], null, null)),
+            History = (account, _) => account == TestApi.A ? pendingHistory.Task : Task.FromResult(new HistoryPage([], null, null))
+        };
+        var controller = new SessionController(api, new TestStore(), "fixture-device");
+        await controller.SignInAsync();
+        await controller.SelectAccountAsync(TestApi.A);
+        var obsolete = controller.NavigateAsync(BrowseView.Subscriptions);
+        Verify(!obsolete.IsCompleted, "first identity is waiting on an optional History response");
+        await controller.SelectAccountAsync(TestApi.B);
+        try { await obsolete.WaitAsync(TimeSpan.FromSeconds(1)); }
+        finally { pendingHistory.SetResult(new([video with { PercentWatched = 95 }], null, null)); }
+        Verify(ReferenceEquals(controller.SelectedAccount, TestApi.B) && ReferenceEquals(controller.Videos.Single(), video) && !controller.Busy,
+            "switching identity releases the old lookup and never shows its watch state in the current grid");
+    }
+
+    private static async Task ChannelSwitchDuringWatchState()
+    {
+        var video = Video("aaaaaaaaaaa");
+        var historyCalls = 0;
+        var delayed = new TaskCompletionSource<HistoryPage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var api = new TestApi
+        {
+            Subscriptions = (_, _) => Task.FromResult(new SubscriptionsPage([Channel], [video], null, null)),
+            SubscriptionChannel = (_, _, _) => Task.FromResult(new SubscriptionsPage([], [video], null, null)),
+            History = (_, _) => ++historyCalls == 2 ? delayed.Task : Task.FromResult(new HistoryPage([], null, null))
+        };
+        var controller = new SessionController(api, new TestStore(), "fixture-device");
+        await controller.SignInAsync();
+        await controller.SelectAccountAsync(TestApi.A);
+        await controller.NavigateAsync(BrowseView.Subscriptions);
+        var refreshing = controller.LoadHistoryAsync();
+        Verify(!refreshing.IsCompleted && historyCalls == 2, "Refresh dispatched its one optional History request");
+        await controller.SelectSubscriptionChannelAsync(Channel);
+        delayed.SetResult(new([video with { PercentWatched = 95 }], null, null));
+        await refreshing;
+        Verify(historyCalls == 2 && ReferenceEquals(controller.SelectedSubscriptionChannel, Channel) &&
+            ReferenceEquals(controller.Videos.Single(), video), "switching channels cancels the old lookup without starting another until Refresh");
     }
 
     private static async Task ChannelSelection()

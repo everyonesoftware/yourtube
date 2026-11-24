@@ -144,6 +144,9 @@ internal static class WiringTests
         foreach (Match lookup in Regex.Matches(code + libraryCode, "C<(?<type>\\w+)>\\(\"(?<name>[^\"]+)\"\\)"))
             StateTests.Verify(names.TryGetValue(lookup.Groups["name"].Value, out var type) && type == lookup.Groups["type"].Value, "typed native control lookup matches XML: " + lookup.Groups["name"].Value);
         var library = Named("HistoryList");
+        StateTests.Verify(Regex.IsMatch(libraryCode, @"var progress = .*BrowseView\.Subscriptions.*video\.PercentWatched") &&
+            libraryCode.Contains("if (progress is > 0)") && libraryCode.Contains("% watched"),
+            "subscription cards show known positive progress and include the percentage in their accessible name");
         var homeButton = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "HomeButton");
         StateTests.Verify(homeButton?.Name.LocalName == "Button" && homeButton.Parent == Named("LibraryNavigation") &&
             code.Contains("C<Button>(\"HomeButton\").Click += async (_, _) => await NavigateAsync(BrowseView.Home)"),

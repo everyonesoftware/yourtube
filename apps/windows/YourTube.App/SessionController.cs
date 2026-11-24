@@ -61,6 +61,7 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
     private YouTubeSession? session;
     private readonly SemaphoreSlim watchGate = new(1);
     private readonly HashSet<string> consumedCursors = new(StringComparer.Ordinal);
+    private IReadOnlyDictionary<string, int>? subscriptionProgress;
 
     public async Task InitializeAsync()
     {
@@ -129,6 +130,7 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
     }
     private void ClearFeed()
     {
+        subscriptionProgress = null;
         Channels = []; HomeShelves = []; SelectedSubscriptionChannel = null;
         ClearVideoPage();
     }
@@ -209,6 +211,7 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
         YouTubeSession? captured = null;
         string? continuation = null;
         SubscribedChannel? channel = null;
+        IReadOnlyDictionary<string, int>? progress = null;
         var view = View;
         epoch.Commit(op.Id, () =>
         {
@@ -227,6 +230,11 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
             }
             channel = SelectedSubscriptionChannel;
             continuation = append ? Continuation : null;
+            if (view == BrowseView.Subscriptions)
+            {
+                if (!append && !changingSubscription) subscriptionProgress = null;
+                progress = subscriptionProgress;
+            }
             var label = view switch { BrowseView.Home => "Home videos", BrowseView.Subscriptions => "subscriptions", _ => "history" };
             Appending = append;
             Busy = true; Status = append ? $"Loading more {label}…" : $"Loading {label}…"; Changed?.Invoke();
@@ -256,10 +264,22 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
                 var subscriptions = channel is null
                     ? await api.GetSubscriptionsAsync(captured, account, continuation, op.Token)
                     : await api.GetSubscriptionChannelAsync(captured, account, channel, continuation, op.Token);
+                op.Token.ThrowIfCancellationRequested();
+                if (progress is null && subscriptions.Videos.Any(video => video.PercentWatched is null))
+                {
+                    // Reserve this visit's lookup before awaiting; a channel change may cancel it.
+                    if (!epoch.Commit(op.Id, () => subscriptionProgress = new Dictionary<string, int>())) return;
+                    progress = await ReadSubscriptionProgressAsync(captured, account, op.Token);
+                }
                 epoch.Commit(op.Id, () =>
                 {
+                    subscriptionProgress = progress;
                     if (!append && channel is null) Channels = subscriptions.Channels;
-                    var added = UpdateVideos(subscriptions.Videos, append);
+                    var videos = progress is { Count: > 0 }
+                        ? subscriptions.Videos.Select(video => video.PercentWatched is null && progress.TryGetValue(video.VideoId, out var percent)
+                            ? video with { PercentWatched = percent } : video).ToArray()
+                        : subscriptions.Videos;
+                    var added = UpdateVideos(videos, append);
                     var stopped = SetContinuation(continuation, subscriptions.Continuation, added);
                     Status = stopped ? "YouTube repeated a subscription page. Refresh to try again." : subscriptions.Message ?? (Videos.Count == 0 ? "No subscription videos were returned for this account." : "");
                 });
@@ -280,6 +300,26 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
         }
         finally { if (restoring is null) Finish(op.Id); }
     }
+
+    private async Task<IReadOnlyDictionary<string, int>> ReadSubscriptionProgressAsync(
+        YouTubeSession captured, YouTubeAccount account, CancellationToken cancellationToken)
+    {
+        // This optional lookup must not hold the subscription grid behind a full History timeout.
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(TimeSpan.FromSeconds(2));
+        var progress = new Dictionary<string, int>(StringComparer.Ordinal);
+        try
+        {
+            budget.Token.ThrowIfCancellationRequested();
+            var history = await api.GetHistoryAsync(captured, account, null, budget.Token).WaitAsync(budget.Token);
+            foreach (var video in history.Videos)
+                if (video.PercentWatched is int percent) progress.TryAdd(video.VideoId, percent);
+        }
+        catch (YouTubeException) { } // The feed succeeded; missing progress is still unknown.
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { }
+        return progress;
+    }
+
     private bool UpdateVideos(IReadOnlyList<HistoryVideo> page, bool append)
     {
         var updated = (append ? Videos.Concat(page) : page).DistinctBy(v => v.VideoId).ToArray();
