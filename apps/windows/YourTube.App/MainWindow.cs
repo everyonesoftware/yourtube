@@ -141,7 +141,11 @@ internal sealed partial class MainWindow : Window
         {
             if (controller is { Busy: true, Appending: false } current) { playback.Back(); current.Cancel(); }
         };
-        C<Button>("RefreshButton").Click += async (_, _) => { if (controller is not null) await controller.LoadHistoryAsync(); };
+        C<Button>("RefreshButton").Click += async (_, _) =>
+        {
+            if (controller is { View: BrowseView.Home } && search.Active) await SubmitSearchAsync(search.Query);
+            else if (controller is not null) await controller.LoadHistoryAsync();
+        };
         C<Button>("FeedRetryButton").Click += async (_, _) =>
         {
             if (!closed && !settingsVisible && playback.Selected is null && controller is { View: BrowseView.History or BrowseView.Subscriptions, AppendFailed: true } current)
@@ -166,9 +170,10 @@ internal sealed partial class MainWindow : Window
         C<Grid>("LibraryFeeds").SizeChanged += (_, args) =>
             C<Border>("SubscriptionRail").Width = Math.Clamp(args.NewSize.Width * .27, 134, 214);
         WireLibrary();
+        WireSearch();
         C<GridView>("HistoryList").ItemClick += async (_, args) =>
         {
-            if (closed || settingsVisible || playback.Selected is not null || controller is not { CanPlayFeed: true, View: BrowseView.History or BrowseView.Subscriptions } || args.ClickedItem is not HistoryVideo video ||
+            if (closed || settingsVisible || search.Active || playback.Selected is not null || controller is not { CanPlayFeed: true, View: BrowseView.History or BrowseView.Subscriptions } || args.ClickedItem is not HistoryVideo video ||
                 !controller.Videos.Any(v => ReferenceEquals(v, video))) return;
             libraryOrigin = video;
             await OpenVideoAsync(video);
@@ -185,6 +190,8 @@ internal sealed partial class MainWindow : Window
         Closed += (_, _) =>
         {
             closed = true;
+            search.Dispose();
+
             RenderAccountAvatar(null);
             CancelWatchRequest();
             BindWatchSeekSource(null);
@@ -383,6 +390,7 @@ internal sealed partial class MainWindow : Window
     private void Render()
     {
         if (closed) return;
+        BindSearch();
         var watchIdentity = controller is { Phase: SessionPhase.SignedIn } ? controller.SelectedAccount : null;
         if (!ReferenceEquals(watchStatusIdentity, watchIdentity))
         {
@@ -409,8 +417,9 @@ internal sealed partial class MainWindow : Window
             var videosStatus = C<TextBlock>("VideosStatusText");
             videosStatus.Visibility = ToVisibility(!home && !subscriptions);
             AutomationProperties.SetName(C<GridView>("HistoryList"), subscriptions ? $"Videos: {controller.SelectedSubscriptionChannel?.Name ?? "All Subscriptions"}" : "Watch history");
-            C<ListView>("HomeShelvesList").Visibility = ToVisibility(home);
-            C<GridView>("HistoryList").Visibility = ToVisibility(!home);
+            C<ListView>("HomeShelvesList").Visibility = ToVisibility(home && !search.Active);
+            C<GridView>("HistoryList").Visibility = ToVisibility(!home && !search.Active);
+            RenderSearch();
             C<Grid>("HistoryPanel").Visibility = ToVisibility(!settingsVisible && signedIn && playback.Selected is null);
             C<ScrollViewer>("SignInPanel").Visibility = ToVisibility(!settingsVisible && controller.Phase == SessionPhase.SignedOut);
             C<StackPanel>("DevicePanel").Visibility = ToVisibility(!settingsVisible && controller.Phase == SessionPhase.Authorizing);
@@ -539,13 +548,15 @@ internal sealed partial class MainWindow : Window
         args.Handled = true;
     }
 
-    private void SyncPlaybackContext() => playback.SetContext(!closed && !settingsVisible && controller is { CanPlayFeed: true }, controller?.SelectedAccount, controller?.View ?? BrowseView.History, controller?.Videos ?? []);
+    private IReadOnlyList<HistoryVideo> PlaybackFeed => search.Active ? search.Videos : controller?.Videos ?? [];
+
+    private void SyncPlaybackContext() => playback.SetContext(!closed && !settingsVisible && controller is { CanPlayFeed: true }, controller?.SelectedAccount, controller?.View ?? BrowseView.History, PlaybackFeed);
 
     private async Task OpenVideoAsync(HistoryVideo video)
     {
         SyncPlaybackContext();
         if (closed || settingsVisible || controller is not { CanPlayFeed: true } ||
-            !controller.Videos.Any(v => ReferenceEquals(v, video))) return;
+            !PlaybackFeed.Any(v => ReferenceEquals(v, video))) return;
         await playback.SelectAsync(video);
     }
 

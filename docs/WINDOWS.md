@@ -57,6 +57,8 @@ In an installed Windows build, wheel over a video card and verify only the page 
 
 ### Windows publication
 
+On Home, Subscriptions, and History, the search field sits beside the page heading with Refresh at the trailing edge. It wraps under the heading in a narrow window. Submit with Enter or **Search**; use **Clear search** to return to the feed. Home requests public YouTube video results without the signed-in account’s credentials. Subscriptions and History match titles and channel names among videos already loaded in that view; a selected subscription channel limits the scope. Those two queries stay on the device, and searching does not crawl additional pages. Verify scope switching, a search with no matches, clear, and opening and closing Theater from the results. A signed-out installer smoke does not exercise this flow.
+
 One `ci.yml` workflow: validation/selection, one Windows test/build/package/native-smoke job, and serialized publication/table refresh. Only native/transitive-input changes since the most recent verified Windows publication rebuild Windows. Native code is not rebuilt for mockup/docs/control-plane-only changes. Unknown inputs fail closed and select Windows.
 
 Draft release assets are downloaded and byte-checked before publication. Source/version/package/channel identities are enforced. Setup, full nupkg, feed and checksums remain at their original version-specific URLs. README and release Current downloads tables are generated from one independently verified Windows inventory. The README writer uses the Contents blob-SHA precondition; release body updates are GET/PATCH and cannot be atomic with simultaneous human edits.

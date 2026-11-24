@@ -66,10 +66,17 @@
     <Grid x:Name="HistoryPanel" Visibility="Collapsed">
       <Grid x:Name="LibraryContent" RowSpacing="10">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-        <Grid ColumnSpacing="12">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <Grid x:Name="BrowseHeader" ColumnSpacing="12">
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
           <StackPanel Spacing="2"><TextBlock x:Name="ViewHeading" Text="History" FontSize="22" FontWeight="Bold" TextWrapping="Wrap" AutomationProperties.HeadingLevel="Level1"/><TextBlock x:Name="VideosStatusText" Foreground="{StaticResource Muted}" TextWrapping="Wrap"/></StackPanel>
-          <Button x:Name="RefreshButton" Grid.Column="1" VerticalAlignment="Center" IsEnabled="False" Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Refresh" AutomationProperties.Name="Refresh feed"><FontIcon Glyph="&#xE72C;" FontSize="15"/></Button>
+          <Grid x:Name="BrowseSearch" Grid.Column="1" Width="430" HorizontalAlignment="Left" VerticalAlignment="Center" ColumnSpacing="6" Visibility="Collapsed">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBox x:Name="BrowseSearchBox" MaxLength="160" AutomationProperties.Name="Search videos"/>
+            <Button x:Name="BrowseSearchSubmit" Grid.Column="1" Content="Search" VerticalAlignment="Stretch"/>
+            <Button x:Name="BrowseSearchClear" Grid.Column="2" VerticalAlignment="Stretch" Visibility="Collapsed" ToolTipService.ToolTip="Clear search" AutomationProperties.Name="Clear search"><FontIcon Glyph="&#xE711;" FontSize="12"/></Button>
+          </Grid>
+          <Button x:Name="RefreshButton" Grid.Column="2" VerticalAlignment="Center" IsEnabled="False" Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Refresh" AutomationProperties.Name="Refresh feed"><FontIcon Glyph="&#xE72C;" FontSize="15"/></Button>
         </Grid>
         <Grid x:Name="FeedStatus" Grid.Row="1" ColumnSpacing="8" Visibility="Collapsed">
           <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -98,6 +105,13 @@
           <ListView.ItemContainerStyle><Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="0"/><Setter Property="IsTabStop" Value="False"/></Style></ListView.ItemContainerStyle>
           <ListView.Footer><Button x:Name="HomeRetryButton" Content="Retry loading more rows" Margin="0,0,0,16" HorizontalAlignment="Center" Visibility="Collapsed"/></ListView.Footer>
         </ListView>
+        <Grid x:Name="SearchResultsPanel" Grid.Column="1" RowSpacing="8" Visibility="Collapsed">
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+          <TextBlock x:Name="SearchResultsStatus" TextWrapping="Wrap" Foreground="{StaticResource Muted}" AutomationProperties.LiveSetting="Polite"/>
+          <GridView x:Name="SearchResultsList" Grid.Row="1" Padding="0,0,8,0" ItemTemplate="{StaticResource LibraryCardTemplate}" ItemContainerStyle="{StaticResource LibraryCardContainer}" IsItemClickEnabled="True" SelectionMode="None" ScrollViewer.HorizontalScrollMode="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Search results">
+            <GridView.ItemsPanel><ItemsPanelTemplate><ItemsWrapGrid Orientation="Horizontal" ItemWidth="230" ItemHeight="212"/></ItemsPanelTemplate></GridView.ItemsPanel>
+          </GridView>
+        </Grid>
         </Grid>
       </Grid>
     </Grid>

@@ -32,6 +32,7 @@ await StateTests.Run();
 await FailureTests.Run();
 await SubscriptionStateTests.Run();
 await HomeStateTests.Run();
+await SearchStateTests.Run();
 Check(PlayerStageLayout.FitHeight(1440, 480) == 480, "a short wide window fits the player and controls above the fold");
 Check(PlayerStageLayout.FitHeight(640, 900) == 360, "a narrow tall window fits the video to its available width");
 Check(PlayerStageLayout.FitHeight(1920, 1200) == 1080, "a large window is not restricted by the old height cap");

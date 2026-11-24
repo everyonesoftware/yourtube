@@ -13,6 +13,7 @@ internal static class WiringTests
         var names = xml.Root!.DescendantsAndSelf().Where(e => e.Attribute(x + "Name") is not null).ToDictionary(e => e.Attribute(x + "Name")!.Value, e => e.Name.LocalName);
         var code = File.ReadAllText(Path.Combine(app, "MainWindow.cs"));
         var libraryCode = File.ReadAllText(Path.Combine(app, "LibraryView.cs"));
+        var searchCode = File.ReadAllText(Path.Combine(app, "SearchView.cs"));
         StateTests.Verify(names.TryGetValue("TheaterPlayer", out var playerType) && playerType == "MediaPlayerElement", "Theater uses a genuine native MediaPlayerElement");
         XElement Named(string name) => xml.Descendants().Single(e => (string?)e.Attribute(x + "Name") == name);
         var player = Named("TheaterPlayer");
@@ -200,7 +201,7 @@ internal static class WiringTests
             code.Contains("if (!ReferenceEquals(watchStatusIdentity, watchIdentity))") &&
             code.ReplaceLineEndings("\n").Contains("watchStatusIdentity = watchIdentity;\n            ResetWatchStatus();"),
             "watch status resets on account changes or sign-out, not when the same account opens Settings");
-        foreach (Match lookup in Regex.Matches(code + libraryCode, "C<(?<type>\\w+)>\\(\"(?<name>[^\"]+)\"\\)"))
+        foreach (Match lookup in Regex.Matches(code + libraryCode + searchCode, "C<(?<type>\\w+)>\\(\"(?<name>[^\"]+)\"\\)"))
             StateTests.Verify(names.TryGetValue(lookup.Groups["name"].Value, out var type) && type == lookup.Groups["type"].Value, "typed native control lookup matches XML: " + lookup.Groups["name"].Value);
         var library = Named("HistoryList");
         StateTests.Verify(Regex.IsMatch(libraryCode, @"var progress = .*BrowseView\.Subscriptions.*video\.PercentWatched") &&
@@ -218,9 +219,17 @@ internal static class WiringTests
         StateTests.Verify(home.Name.LocalName == "ListView" && home.Parent == library.Parent &&
             (string?)home.Attribute("Grid.Row") == (string?)library.Attribute("Grid.Row") &&
             (string?)home.Attribute("Visibility") == "Collapsed" &&
-            code.Contains("C<ListView>(\"HomeShelvesList\").Visibility = ToVisibility(home)") &&
-            code.Contains("C<GridView>(\"HistoryList\").Visibility = ToVisibility(!home)"),
+            code.Contains("C<ListView>(\"HomeShelvesList\").Visibility = ToVisibility(home && !search.Active)") &&
+            code.Contains("C<GridView>(\"HistoryList\").Visibility = ToVisibility(!home && !search.Active)"),
             "Home and the flat feed are mutually exclusive in the same finite viewport below shared feed status");
+        StateTests.Verify(Named("BrowseSearch").Parent == Named("BrowseHeader") &&
+            Named("ViewHeading").Ancestors().Contains(Named("BrowseHeader")) &&
+            Named("RefreshButton").Parent == Named("BrowseHeader") &&
+            (string?)Named("BrowseSearch").Attribute("Grid.Column") == "1" &&
+            (string?)Named("RefreshButton").Attribute("Grid.Column") == "2" &&
+            Named("SearchResultsPanel").Parent == library.Parent &&
+            (string?)Named("SearchResultsList").Attribute("ItemTemplate") == (string?)library.Attribute("ItemTemplate"),
+            "search is beside the browse title and reuses native cards in the finite feed viewport");
         StateTests.Verify(!names.ContainsKey("HomeLoadMoreButton") &&
             Named("HomeRetryButton").Ancestors().Any(e => e.Parent == home && e.Name.LocalName == "ListView.Footer") &&
             code.Contains("ToVisibility(home && controller.AppendFailed)"),

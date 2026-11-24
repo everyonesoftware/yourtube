@@ -87,7 +87,7 @@ internal sealed partial class MainWindow
         static bool NearEnd(ScrollViewer candidate, bool underfilled) => candidate.ViewportHeight > 0 &&
             (underfilled ? candidate.ScrollableHeight == 0 :
                 candidate.ScrollableHeight - candidate.VerticalOffset <= candidate.ViewportHeight / 2);
-        bool IsActive(BrowseView view) => !closed && !settingsVisible && playback.Selected is null &&
+        bool IsActive(BrowseView view) => !closed && !settingsVisible && !search.Active && playback.Selected is null &&
             feed.Visibility == Visibility.Visible && (home ? view == BrowseView.Home : view is BrowseView.History or BrowseView.Subscriptions);
 
         void QueuePage(bool underfilled = false)
@@ -157,6 +157,18 @@ internal sealed partial class MainWindow
         DispatcherQueue.TryEnqueue(() =>
         {
             if (closed || settingsVisible || playback.Selected is not null || controller is not { CanPlayFeed: true }) return;
+            if (search.Active)
+            {
+                var results = C<GridView>("SearchResultsList");
+                if (origin is not null && search.Videos.Any(video => ReferenceEquals(video, origin)))
+                {
+                    results.ScrollIntoView(origin);
+                    results.UpdateLayout();
+                    if (results.ContainerFromItem(origin) is Control item && item.Focus(FocusState.Programmatic)) return;
+                }
+                C<TextBox>("BrowseSearchBox").Focus(FocusState.Programmatic);
+                return;
+            }
             if (controller.View == BrowseView.Home)
             {
                 RestoreHomeFocus(origin);
@@ -288,7 +300,7 @@ internal sealed partial class MainWindow
 
     private async void OpenHomeVideoAsync(object sender, ItemClickEventArgs args)
     {
-        if (closed || settingsVisible || playback.Selected is not null ||
+        if (closed || settingsVisible || search.Active || playback.Selected is not null ||
             controller is not { CanPlayFeed: true, View: BrowseView.Home } current ||
             sender is not GridView { Tag: HomeShelf shelf } || args.ClickedItem is not HistoryVideo video ||
             !current.HomeShelves.Any(candidate => ReferenceEquals(candidate, shelf)) ||
