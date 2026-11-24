@@ -10,7 +10,13 @@ public sealed record PlaybackStartupSnapshot(int Completed, long ElapsedMs, IRea
 public enum StreamDiscoveryStep { StreamList, Reachability, Compatibility }
 public readonly record struct StreamCheckProgress(int Checked, int Total);
 public enum ReachabilityMode { Sequential, Parallel, Mixed }
-public enum ReachabilityFallback { None, ConfiguredSequential, MissingLength, ExternalManifest, CipheredUrl, UnpredictableRequests, RequestMismatch }
+public enum ReachabilityFallback
+{
+    None, ConfiguredSequential, MissingLength, ExternalManifest, CipheredUrl, UnpredictableRequests, RequestMismatch,
+    NoPlayerResponse, NoStreamList, UnreadablePlayerResponse, PlayerNotConfirmedPlayable, InvalidStreamEntry,
+    UnsupportedStreamUrl, ExistingRangeParameter, DuplicateStreamUrl, NoDirectCandidates, CandidateCountOutsideWindow,
+    MissingDirectUrl, InvalidFormatId, DuplicateFormatId, InvalidLength, ExistingLanguageParameter
+}
 public sealed record StreamReachabilityDiagnostics(int PeakInFlight, ReachabilityMode Mode, ReachabilityFallback Fallback,
     int TailRequests, int SizeRequests, int OtherRequests, int RedirectHops, int ProbeRetries, int PlayerRetries,
     long? MedianCheckMs, long? SlowestCheckMs, long? FinalQuarterMs);

@@ -78,6 +78,12 @@ internal static class PlaybackProgressSummaryTests
             Check(!visibleDetails.Contains("Streams checked: 20/20") && visibleDetails.Contains("Actual mode: Mixed · Peak in flight: 4"),
                 "the disclosure retains diagnostics without repeating the checked count shown by its reachability row");
 
+            var specific = discovery with { ReachabilityDiagnostics = diagnostics with { Fallback = ReachabilityFallback.ExistingLanguageParameter } };
+            const string specificLabel = "Fallback reason: Stream URL already has a language parameter";
+            Check(PlaybackProgressSummary.ReachabilityLines(specific, settings).Contains(specificLabel), "the disclosure shows the fixed eligibility label");
+            Equal(PlaybackProgressSummary.Format(success, settings, version).Replace("Fallback reason: Missing stream length", specificLabel, StringComparison.Ordinal),
+                PlaybackProgressSummary.Format(success with { Discovery = specific }, settings, version), "the eligibility label is the only copied change");
+
             foreach (var (mode, label) in new[] { (ReachabilityMode.Sequential, "Sequential"), (ReachabilityMode.Parallel, "Parallel"), ((ReachabilityMode)999, "Unknown") })
             {
                 var lines = PlaybackProgressSummary.ReachabilityLines(discovery with

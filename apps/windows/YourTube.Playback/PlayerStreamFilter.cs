@@ -21,7 +21,7 @@ internal static class PlayerStreamFilter
     {
         candidates = null;
         probes = null;
-        fallback = ReachabilityFallback.UnpredictableRequests;
+        fallback = ReachabilityFallback.NoStreamList;
         try
         {
             if (JsonNode.Parse(original) is not JsonObject root ||
@@ -44,20 +44,25 @@ internal static class PlayerStreamFilter
             {
                 var direct = DirectCandidates(streaming, ref fallback);
                 if (measure) candidates = direct;
-                if (prefetch && direct is not null && root["playabilityStatus"] is JsonObject status && Text(status["status"]) == "OK")
-                    probes = DirectTailProbes(streaming, direct.Count, ref fallback);
+                if (prefetch && direct is not null)
+                {
+                    if (root["playabilityStatus"] is JsonObject status && Text(status["status"]) == "OK")
+                        probes = DirectTailProbes(streaming, direct.Count, ref fallback);
+                    else
+                        fallback = ReachabilityFallback.PlayerNotConfirmedPlayable;
+                }
             }
             return bytes;
         }
-        catch (JsonException) { return original; }
-        catch (ArgumentException) { return original; } // Ambiguous JSON, e.g. duplicate property names.
+        catch (JsonException) { fallback = ReachabilityFallback.UnreadablePlayerResponse; return original; }
+        catch (ArgumentException) { fallback = ReachabilityFallback.UnreadablePlayerResponse; return original; } // E.g. duplicate property names.
     }
 
     // Only prefetch the pinned library's predictable direct-URL, known-length
     // tail checks. HEAD discovery, alternate providers and deciphering stay serial.
     private static Uri[]? DirectTailProbes(JsonObject streaming, int count, ref ReachabilityFallback fallback)
     {
-        if (count is < 2 or > 128) return null;
+        if (count is < 2 or > 128) { fallback = ReachabilityFallback.CandidateCountOutsideWindow; return null; }
         var probes = new List<Uri>(count);
         var itags = new HashSet<int>();
         foreach (var name in new[] { "formats", "adaptiveFormats" })
@@ -65,17 +70,20 @@ internal static class PlayerStreamFilter
             if (streaming[name] is not JsonArray entries) continue;
             foreach (var node in entries)
             {
-                if (node is not JsonObject entry || Text(entry["url"]) is not { Length: > 0 } url ||
-                    entry["itag"] is not JsonValue value || !value.TryGetValue<int>(out var itag) || itag <= 0 || !itags.Add(itag))
-                    return null;
+                if (node is not JsonObject entry) { fallback = ReachabilityFallback.InvalidStreamEntry; return null; }
+                if (Text(entry["url"]) is not { Length: > 0 } url) { fallback = ReachabilityFallback.MissingDirectUrl; return null; }
+                if (entry["itag"] is not JsonValue value || !value.TryGetValue<int>(out var itag) || itag <= 0)
+                { fallback = ReachabilityFallback.InvalidFormatId; return null; }
+                if (!itags.Add(itag)) { fallback = ReachabilityFallback.DuplicateFormatId; return null; }
                 if (!long.TryParse(Text(entry["contentLength"]), NumberStyles.None, CultureInfo.InvariantCulture, out var length) || length < 2)
                 {
-                    if (entry["contentLength"] is null) fallback = ReachabilityFallback.MissingLength;
+                    fallback = entry["contentLength"] is null ? ReachabilityFallback.MissingLength : ReachabilityFallback.InvalidLength;
                     return null;
                 }
                 var uri = new Uri(url);
                 if (uri.Query.TrimStart('?').Split('&').Any(p =>
-                    string.Equals(System.Net.WebUtility.UrlDecode(p.Split('=', 2)[0]), "hl", StringComparison.OrdinalIgnoreCase))) return null;
+                    string.Equals(System.Net.WebUtility.UrlDecode(p.Split('=', 2)[0]), "hl", StringComparison.OrdinalIgnoreCase)))
+                { fallback = ReachabilityFallback.ExistingLanguageParameter; return null; }
                 probes.Add(new Uri(uri.AbsoluteUri + (uri.Query.Length == 0 ? "?" : "&") +
                     FormattableString.Invariant($"range={length - 2}-{length - 1}&hl=en")));
             }
@@ -99,7 +107,7 @@ internal static class PlayerStreamFilter
             if (streaming[name] is not JsonArray entries) continue;
             foreach (var node in entries)
             {
-                if (node is not JsonObject entry) return null;
+                if (node is not JsonObject entry) { fallback = ReachabilityFallback.InvalidStreamEntry; return null; }
                 if (entry["cipher"] is not null || entry["signatureCipher"] is not null)
                 {
                     fallback = ReachabilityFallback.CipheredUrl;
@@ -107,12 +115,16 @@ internal static class PlayerStreamFilter
                 }
                 var url = Text(entry["url"]);
                 if (string.IsNullOrWhiteSpace(url)) continue;
-                if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || !PublicTransport.IsCdn(uri) ||
-                    uri.Query.TrimStart('?').Split('&').Any(p => System.Net.WebUtility.UrlDecode(p.Split('=', 2)[0]) == "range") ||
-                    !urls.Add(uri.AbsoluteUri)) return null;
+                if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || !PublicTransport.IsCdn(uri))
+                { fallback = ReachabilityFallback.UnsupportedStreamUrl; return null; }
+                if (uri.Query.TrimStart('?').Split('&').Any(p => System.Net.WebUtility.UrlDecode(p.Split('=', 2)[0]) == "range"))
+                { fallback = ReachabilityFallback.ExistingRangeParameter; return null; }
+                if (!urls.Add(uri.AbsoluteUri)) { fallback = ReachabilityFallback.DuplicateStreamUrl; return null; }
             }
         }
-        return urls.Count > 0 ? urls : null;
+        if (urls.Count > 0) return urls;
+        fallback = ReachabilityFallback.NoDirectCandidates;
+        return null;
     }
 
     private static string? Text(JsonNode? node) => node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;

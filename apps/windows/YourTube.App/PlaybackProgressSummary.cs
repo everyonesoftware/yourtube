@@ -42,6 +42,21 @@ internal static class PlaybackProgressSummary
                 ReachabilityFallback.CipheredUrl => "Ciphered stream URL",
                 ReachabilityFallback.UnpredictableRequests => "Unpredictable requests",
                 ReachabilityFallback.RequestMismatch => "Request mismatch",
+                ReachabilityFallback.NoPlayerResponse => "No successful player response before checks",
+                ReachabilityFallback.NoStreamList => "No stream list in player response",
+                ReachabilityFallback.UnreadablePlayerResponse => "Unreadable or ambiguous player response",
+                ReachabilityFallback.PlayerNotConfirmedPlayable => "Player response did not confirm playability",
+                ReachabilityFallback.InvalidStreamEntry => "Invalid stream entry",
+                ReachabilityFallback.UnsupportedStreamUrl => "Unsupported stream URL",
+                ReachabilityFallback.ExistingRangeParameter => "Stream URL already has a byte-range parameter",
+                ReachabilityFallback.DuplicateStreamUrl => "Duplicate stream URL",
+                ReachabilityFallback.NoDirectCandidates => "No direct stream URLs",
+                ReachabilityFallback.CandidateCountOutsideWindow => "Parallel checks require 2–128 candidates",
+                ReachabilityFallback.MissingDirectUrl => "A stream entry has no direct URL",
+                ReachabilityFallback.InvalidFormatId => "Missing or invalid stream format ID",
+                ReachabilityFallback.DuplicateFormatId => "Duplicate stream format ID",
+                ReachabilityFallback.InvalidLength => "Invalid stream length",
+                ReachabilityFallback.ExistingLanguageParameter => "Stream URL already has a language parameter",
                 _ => "Unknown"
             }));
         lines.Add(FormattableString.Invariant($"CDN requests: {diagnostics.TailRequests} tail · {diagnostics.SizeRequests} size · {diagnostics.OtherRequests} other · {diagnostics.RedirectHops} redirect hops"));

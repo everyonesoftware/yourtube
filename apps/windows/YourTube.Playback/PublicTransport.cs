@@ -19,7 +19,7 @@ internal sealed class PublicTransport(HttpMessageHandler handler, TimeSpan? requ
         internal bool CanPrefetch => limit > 1;
         internal ProbeWindow? Window { get; private set; }
         internal ReachabilityMeter? Meter { get; } = timing?.TracksStartup == true ? new(timing, limit) : null;
-        internal ReachabilityFallback Fallback { get; set; } = ReachabilityFallback.UnpredictableRequests;
+        internal ReachabilityFallback Fallback { get; set; } = ReachabilityFallback.NoPlayerResponse;
         private readonly object progressLock = new();
         private HashSet<string>? remaining;
         private int total;

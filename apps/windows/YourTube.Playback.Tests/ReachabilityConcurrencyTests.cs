@@ -64,6 +64,28 @@ public sealed class ReachabilityConcurrencyTests
     }
 
     [Fact]
+    public async Task ExistingLanguageParameterExplainsSerialChecksWithoutChangingTheCatalog()
+    {
+        using var fixture = new ProbeFixture(existingLanguage: true);
+        fixture.ReleaseAll();
+        using var resolver = new PlaybackResolver(fixture) { MaxConcurrentStreamChecks = 4 };
+        var timing = PlaybackTiming.StartForStartup();
+        var media = await resolver.ResolveAsync(VideoId, CancellationToken.None, timing).WaitAsync(Deadline);
+        var discovery = timing.ReadStartup()!.Discovery;
+        var diagnostics = Assert.IsType<StreamReachabilityDiagnostics>(discovery.ReachabilityDiagnostics);
+        Assert.Equal(new StreamCheckProgress(4, 4), discovery.ReachabilityProgress);
+        Assert.Equal((1, ReachabilityMode.Sequential, 4, 0, 0),
+            (diagnostics.PeakInFlight, diagnostics.Mode, diagnostics.TailRequests, diagnostics.SizeRequests, diagnostics.ProbeRetries));
+        Assert.Equal(new[] { 0, 1, 2, 3 }, fixture.Calls);
+        using var serialFixture = new ProbeFixture(existingLanguage: true);
+        serialFixture.ReleaseAll();
+        using var serial = new PlaybackResolver(serialFixture);
+        var baseline = await serial.ResolveAsync(VideoId).WaitAsync(Deadline);
+        Assert.True(baseline.Manifest.AsSpan().SequenceEqual(media.Manifest));
+        Assert.Equal(ReachabilityFallback.ExistingLanguageParameter, diagnostics.Fallback);
+    }
+
+    [Fact]
     public async Task CancellationDrainsAdmittedChecksWithoutStartingQueuedChecks()
     {
         using var fixture = new ProbeFixture();
@@ -209,7 +231,7 @@ public sealed class ReachabilityConcurrencyTests
     }
 
     private sealed class ProbeFixture(bool unsafeRedirect = false, bool abandonFirstSecondProbe = false, bool timeout = false,
-        bool holdFirstProbeUntilCanceled = false) : HttpMessageHandler
+        bool holdFirstProbeUntilCanceled = false, bool existingLanguage = false) : HttpMessageHandler
     {
         internal TaskCompletionSource[] Entered { get; } = Signals();
         internal TaskCompletionSource[] Exited { get; } = Signals();
@@ -220,7 +242,8 @@ public sealed class ReachabilityConcurrencyTests
         private int active, peak;
         private int firstProbeCalls, secondProbeCalls;
         internal int Peak => Volatile.Read(ref peak);
-        private static string StreamUrl(int index) => $"https://a.googlevideo.com/videoplayback?expire=4102444800&id={index}";
+        private string StreamUrl(int index) => $"https://a.googlevideo.com/videoplayback?expire=4102444800&id={index}" +
+            (existingLanguage && index == 0 ? "&hl=fixture-private-marker" : "");
         internal Uri TailUri(int index)
         {
             int length = (index == 3 ? audio : video).Length;
@@ -268,7 +291,7 @@ public sealed class ReachabilityConcurrencyTests
             byte[] bytes = index == 3 ? audio : video;
             if (query["range"] == $"{bytes.Length - 2}-{bytes.Length - 1}")
             {
-                Assert.Equal("en", query["hl"]);
+                Assert.Equal(existingLanguage && index == 0 ? "fixture-private-marker" : "en", query["hl"]);
                 Calls.Enqueue(index);
                 int count = Interlocked.Increment(ref active);
                 for (int old; count > (old = Peak) && Interlocked.CompareExchange(ref peak, count, old) != old;) { }
