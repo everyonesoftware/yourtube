@@ -431,14 +431,48 @@ public sealed partial class YouTubeClient
             if (shorts) title = Find(card, "primaryText").Select(Text).FirstOrDefault() ?? "";
             var channel = TextAt(card, "shortBylineText");
             if (channel.Length == 0) channel = TextAt(card, "longBylineText");
-            if (tile) channel = Find(card, "lineItemRenderer").Select(n => TextAt(n, "text")).FirstOrDefault() ?? "";
+            // Shorts tile metadata may start with a view count or age, not a channel.
+            if (tile && !shortTile) channel = Find(card, "lineItemRenderer").Select(n => TextAt(n, "text")).FirstOrDefault() ?? "";
             if (lockup) channel = Find(card, "metadataParts").SelectMany(n => n.EnumerateArray()).Select(n => TextAt(n, "text")).FirstOrDefault() ?? "";
             var percent = Find(card, "percentDurationWatched").FirstOrDefault();
             if (lockup) percent = Find(card, "startPercent").FirstOrDefault();
             var duration = tile ? Find(card, "thumbnailOverlayTimeStatusRenderer").Select(n => TextAt(n, "text")).FirstOrDefault() ?? "" : TextAt(card, "lengthText");
             if (lockup) duration = Find(card, "thumbnailBadgeViewModel").Select(n => TextAt(n, "text")).FirstOrDefault() ?? "";
-            videos.Add(new(id.GetString()!, title, channel, duration, percent.ValueKind == JsonValueKind.Number && percent.TryGetInt32(out var watched) ? Math.Clamp(watched, 0, 100) : null));
+            var age = PublicationAge(ReadPublicationText(At(card, "publishedTimeText")));
+            if (age is null && tile)
+                age = ArrayItems(At(card, "metadata", "tileMetadataRenderer", "lines")).Skip(shortTile ? 0 : 1)
+                    .SelectMany(row => ArrayItems(At(row, "lineRenderer", "items")))
+                    .Select(part => PublicationAge(ReadPublicationText(At(part, "lineItemRenderer", "text"))))
+                    .FirstOrDefault(value => value is not null);
+            if (age is null && lockup)
+                age = ArrayItems(At(card, "metadata", "lockupMetadataViewModel", "metadata", "contentMetadataViewModel", "metadataRows")).Skip(1)
+                    .SelectMany(row => ArrayItems(At(row, "metadataParts")))
+                    .Select(part => PublicationAge(ReadPublicationText(At(part, "text"))))
+                    .FirstOrDefault(value => value is not null);
+            var date = At(card, "publishDate");
+            videos.Add(new(id.GetString()!, title, channel, duration, percent.ValueKind == JsonValueKind.Number && percent.TryGetInt32(out var watched) ? Math.Clamp(watched, 0, 100) : null)
+            {
+                PublishedAge = age,
+                PublishedDate = date.ValueKind == JsonValueKind.String && DateOnly.TryParseExact(date.GetString(), "yyyy-MM-dd",
+                    System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var published) ? published : null
+            });
         }
         return videos;
+    }
+
+    // Optional card text must never make an otherwise usable feed fail to parse.
+    private static string ReadPublicationText(JsonElement text)
+    {
+        try { return Text(text); }
+        catch (InvalidOperationException) { return ""; }
+    }
+
+    private static string? PublicationAge(string value)
+    {
+        var text = value.Trim();
+        // TV requests use English. Match relative publication labels, not channel names, views, or schedules.
+        return text.Length <= 64 && Regex.IsMatch(text,
+            @"\A(?:(?:Streamed |Premiered )?[0-9]{1,6} (?:second|minute|hour|day|week|month|year)s? ago|Just now)\z",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) ? text : null;
     }
 }

@@ -24,7 +24,11 @@ public sealed record YouTubeAccount(string Name, string? Handle, string? PageId)
 
     public override string ToString() => $"YouTubeAccount {{ Name = {Name}, Handle = {Handle}, PageId = {PageId} }}";
 }
-public sealed record HistoryVideo(string VideoId, string Title, string Channel, string Duration, int? PercentWatched);
+public sealed record HistoryVideo(string VideoId, string Title, string Channel, string Duration, int? PercentWatched)
+{
+    public string? PublishedAge { get; init; }
+    public DateOnly? PublishedDate { get; init; }
+}
 public sealed record HistoryPage(IReadOnlyList<HistoryVideo> Videos, string? Continuation, string? Message);
 public sealed class YouTubeException(string code, string message) : Exception(message)
 {

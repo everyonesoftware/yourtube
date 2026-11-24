@@ -358,13 +358,40 @@ internal sealed partial class MainWindow
             Text = video.Title, FontSize = 15, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap,
             MaxLines = 2, TextTrimming = TextTrimming.CharacterEllipsis
         });
-        labels.Children.Add(new TextBlock { Text = video.Channel, FontSize = 12, Foreground = muted, TextTrimming = TextTrimming.CharacterEllipsis });
+        var metadata = new Grid { HorizontalAlignment = HorizontalAlignment.Left };
+        var channelLabel = new TextBlock { Text = video.Channel, FontSize = 12, Foreground = muted, TextTrimming = TextTrimming.CharacterEllipsis };
+        string? publication = null;
+        if (video.PublishedAge is { } age)
+        {
+            publication = $"{(age.StartsWith("Streamed ", StringComparison.OrdinalIgnoreCase) || age.StartsWith("Premiered ", StringComparison.OrdinalIgnoreCase) ? "" : "Published ")}{age}";
+            var ageLabel = new TextBlock { Text = age, FontSize = 12, Foreground = muted };
+            if (video.PublishedDate is { } date)
+            {
+                var exact = $"Published {date:D}";
+                ToolTipService.SetToolTip(ageLabel, exact);
+                publication += $" ({exact})";
+            }
+            if (!string.IsNullOrWhiteSpace(video.Channel))
+            {
+                metadata.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                metadata.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                metadata.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                metadata.Children.Add(channelLabel);
+                var separator = new TextBlock { Text = "·", FontSize = 12, Foreground = muted, Margin = new Thickness(5, 0, 5, 0) };
+                Grid.SetColumn(separator, 1);
+                metadata.Children.Add(separator);
+                Grid.SetColumn(ageLabel, 2);
+            }
+            metadata.Children.Add(ageLabel);
+        }
+        else if (!string.IsNullOrWhiteSpace(video.Channel)) metadata.Children.Add(channelLabel);
+        labels.Children.Add(metadata);
         host.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         host.RowDefinitions.Add(new RowDefinition { Height = new GridLength(64) });
         host.Children.Add(cover);
         Grid.SetRow(labels, 1);
         host.Children.Add(labels);
-        var description = string.Join(", ", new[] { video.Title, video.Channel, video.Duration, progress is int value ? $"{Math.Clamp(value, 0, 100)}% watched" : "" }.Where(part => !string.IsNullOrWhiteSpace(part)));
+        var description = string.Join(", ", new[] { video.Title, video.Channel, publication, video.Duration, progress is int value ? $"{Math.Clamp(value, 0, 100)}% watched" : "" }.Where(part => !string.IsNullOrWhiteSpace(part)));
         AutomationProperties.SetName(container, $"{description}. Play video.");
         args.Handled = true;
 

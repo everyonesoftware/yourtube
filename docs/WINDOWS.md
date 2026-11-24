@@ -51,6 +51,8 @@ If loading more **History** videos fails with an unsupported response, share onl
 
 After sign-in, select a YouTube identity to load **Home**. Compare the Recommended and Shorts shelves with that identity’s YouTube TV Home feed when they’re available. Scrolling near the bottom automatically requests the next set of shelves when available. If that request fails, use **Retry loading more rows**. If YouTube does not supply Shorts, YourTube does not make up a shelf or fetch a separate Shorts feed. The page shows video cards, not channel or playlist tiles.
 
+When YouTube supplies a recognized age, check for the inline **Channel · 2 days ago** label beneath the video title in Home, Subscriptions, and History. A Short without a channel name shows just the age when known; cards without an age show no separator. Hover over the age for the exact date only when YouTube also supplies it. These are publication labels, not when a video was watched; the app makes no extra requests and does not estimate a date from a rounded age.
+
 In an installed Windows build, wheel over a video card and verify only the page moves vertically; hold **Shift** and verify only the row moves horizontally. Check keyboard scrolling and the row scrollbar separately. Scroll near the bottom and confirm new rows append without a click or scroll reset, including when the page is too short to scroll. Open a card and check that Back returns focus to it. Verify that Refresh replaces the rows and that switching account, opening Settings, or signing out during a request does not restore rows from the old view. A fixture or compile check is not proof of live personalized results or native scrolling and focus.
 
 ### Windows publication

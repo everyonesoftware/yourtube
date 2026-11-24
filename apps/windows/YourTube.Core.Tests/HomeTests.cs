@@ -47,6 +47,55 @@ public sealed class HomeTests
     }
 
     [Fact]
+    public async Task HomeUsesOnlyPublicationMetadataFromTheCard()
+    {
+        const string body = """
+        {"contents":{"sectionListRenderer":{"contents":[
+          {"shelfRenderer":{"title":"Recommended","content":{"horizontalListRenderer":{"items":[
+            {"tileRenderer":{"contentType":"TILE_CONTENT_TYPE_VIDEO","onSelectCommand":{"watchEndpoint":{"videoId":"tile0000001"}},"metadata":{"tileMetadataRenderer":{"title":"Tile","lines":[{"lineRenderer":{"items":[{"lineItemRenderer":{"text":{"simpleText":"Example Channel"}}}]}},{"lineRenderer":{"items":[{"lineItemRenderer":{"text":{"simpleText":"358K views"}}},{"lineItemRenderer":{"text":{"simpleText":"•"}}},{"lineItemRenderer":{"text":{"simpleText":"3 months ago"}}}]}}]}}}},
+            {"videoRenderer":{"videoId":"recom000001","publishedTimeText":{"runs":[{"text":"2 days"},{"text":" ago"}]},"publishDate":"2026-11-22"}},
+            {"gridVideoRenderer":{"videoId":"decoy000001","shortBylineText":"4 days ago","publishedTimeText":{"runs":false},"publishDate":"2026-02-30","navigationEndpoint":{"publishedTimeText":"7 days ago"}}},
+            {"lockupViewModel":{"contentId":"modern00001","contentType":"LOCKUP_CONTENT_TYPE_VIDEO","metadata":{"lockupMetadataViewModel":{"metadata":{"contentMetadataViewModel":{"metadataRows":[{"metadataParts":[{"text":{"content":"Example Channel"}}]},{"metadataParts":[{"text":{"content":"400 views"}},{"text":{"content":"Streamed 1 day ago"}}]}]}}}}}}
+          ]}}}},
+          {"shelfRenderer":{"tvhtml5ShelfRendererType":"TVHTML5_SHELF_RENDERER_TYPE_SHORTS","content":{"horizontalListRenderer":{"items":[
+            {"shortsLockupViewModel":{"onTap":{"innertubeCommand":{"reelWatchEndpoint":{"videoId":"short000001"}}},"overlayMetadata":{"primaryText":{"content":"Short"},"secondaryText":{"content":"500 views"}}}},
+            {"shortsLockupViewModel":{"onTap":{"innertubeCommand":{"reelWatchEndpoint":{"videoId":"short000002"}}},"publishedTimeText":{"content":"5 hours ago"}}}
+          ]}}}}
+        ]}}}
+        """;
+        using var transport = new Transport(Html, Script, body);
+        using var http = new HttpClient(transport);
+        var clock = new Clock();
+        var page = await clock.Client(http).GetHomeAsync(new("fixture-access", "fixture-refresh", clock.Now.AddHours(1)), new("Owner", null, null));
+        var regular = page.Shelves.Single(s => s.Title == "Recommended").Videos;
+        Assert.Equal(new string?[] { "3 months ago", "2 days ago", null, "Streamed 1 day ago" }, regular.Select(v => v.PublishedAge));
+        Assert.Equal(new DateOnly(2026, 11, 22), regular[1].PublishedDate);
+        Assert.Null(regular[0].PublishedDate);
+        Assert.Null(regular[2].PublishedDate);
+        Assert.Equal(new string?[] { null, "5 hours ago" }, page.Shelves.Single(s => s.Title == "Shorts").Videos.Select(v => v.PublishedAge));
+        Assert.Equal(3, transport.Requests.Count);
+    }
+
+    [Fact]
+    public async Task TvShortsDoNotTreatAgeOrViewCountAsTheChannel()
+    {
+        const string body = """
+        {"contents":{"sectionListRenderer":{"contents":[{"shelfRenderer":{
+          "tvhtml5ShelfRendererType":"TVHTML5_SHELF_RENDERER_TYPE_SHORTS","content":{"horizontalListRenderer":{"items":[
+            {"tileRenderer":{"contentType":"TILE_CONTENT_TYPE_SHORTS","onSelectCommand":{"reelWatchEndpoint":{"videoId":"short000001"}},"metadata":{"tileMetadataRenderer":{"lines":[{"lineRenderer":{"items":[{"lineItemRenderer":{"text":"5 hours ago"}}]}}]}}}},
+            {"tileRenderer":{"contentType":"TILE_CONTENT_TYPE_SHORTS","shortBylineText":"Shorts Channel","onSelectCommand":{"reelWatchEndpoint":{"videoId":"short000002"}},"metadata":{"tileMetadataRenderer":{"lines":[{"lineRenderer":{"items":[{"lineItemRenderer":{"text":"500 views"}},{"lineItemRenderer":{"text":"2 days ago"}}]}}]}}}}
+          ]}}}}
+        ]}}}
+        """;
+        using var transport = new Transport(Html, Script, body);
+        using var http = new HttpClient(transport);
+        var clock = new Clock();
+        var page = await clock.Client(http).GetHomeAsync(new("fixture-access", "fixture-refresh", clock.Now.AddHours(1)), new("Owner", null, null));
+        var videos = Assert.Single(page.Shelves).Videos;
+        Assert.Equal(new (string, string?)[] { ("", "5 hours ago"), ("Shorts Channel", "2 days ago") }, videos.Select(v => (v.Channel, v.PublishedAge)));
+    }
+
+    [Fact]
     public async Task UntitledVideoRowDoesNotInventShortsOrUseRowCursor()
     {
         const string body = """
