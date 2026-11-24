@@ -6,4 +6,5 @@
   <ItemGroup><Compile Include="../YourTube.App/PlayerStageLayout.cs" Link="PlayerStageLayout.cs" /></ItemGroup>
   <ItemGroup><Compile Include="../YourTube.App/WatchProgress.cs" Link="WatchProgress.cs" /></ItemGroup>
   <ItemGroup><Compile Include="../YourTube.App/ReachabilityPreference.cs" Link="ReachabilityPreference.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../YourTube.App/PlaybackProgressSummary.cs" Link="PlaybackProgressSummary.cs" /></ItemGroup>
 </Project>

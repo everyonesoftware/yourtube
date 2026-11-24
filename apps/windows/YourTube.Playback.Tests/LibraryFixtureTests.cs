@@ -6,6 +6,30 @@ namespace YourTube.Playback.Tests;
 
 public sealed class LibraryFixtureTests
 {
+    [Fact]
+    public async Task TerminalHeadWithNoContentLengthContributesATimingSample()
+    {
+        var timing = PlaybackTiming.StartForStartup();
+        using var transport = new PublicTransport(new Handler(_ => new(HttpStatusCode.OK) { Content = new UnknownLengthContent() }));
+        using var http = new HttpClient(transport);
+        await transport.DiscoverAsync("jNQXAC9IVRw", timing, 4, CancellationToken.None, async () =>
+        {
+            using var response = await http.SendAsync(new(HttpMethod.Head, ResolverTests.Url("no-length")));
+            Assert.Null(response.Content.Headers.ContentLength);
+            return true;
+        });
+        var diagnostics = Assert.IsType<StreamReachabilityDiagnostics>(timing.ReadStartup()!.Discovery.ReachabilityDiagnostics);
+        Assert.Equal(1, diagnostics.SizeRequests);
+        Assert.NotNull(diagnostics.MedianCheckMs);
+        Assert.Equal(diagnostics.MedianCheckMs, diagnostics.SlowestCheckMs);
+    }
+
+    private sealed class UnknownLengthContent : HttpContent
+    {
+        protected override bool TryComputeLength(out long length) { length = 0; return false; }
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => Task.CompletedTask;
+    }
+
     // Synthetic public-shaped provider fixtures; never captured authenticated responses.
     [Theory][InlineData(true, "complete")][InlineData(false, "complete")]
     [InlineData(true, "wrong_id")][InlineData(true, "invalid_duration")][InlineData(true, "missing_description")][InlineData(true, "empty_description")]
@@ -103,6 +127,17 @@ public sealed class LibraryFixtureTests
             else
                 Assert.Equal(expected.Length, probeSnapshots.Count); // No duplicate probes or redirect hops.
             Assert.Equal(new StreamCheckProgress(total, total), discovery.ReachabilityProgress);
+            var diagnostics = Assert.IsType<StreamReachabilityDiagnostics>(discovery.ReachabilityDiagnostics);
+            Assert.Equal(includeLength ? total : 2, diagnostics.TailRequests);
+            Assert.Equal(includeLength ? 0 : total, diagnostics.SizeRequests);
+            Assert.Equal(2, diagnostics.RedirectHops); // Excludes the two later index-read redirects.
+            Assert.Equal(0, diagnostics.ProbeRetries + diagnostics.PlayerRetries + diagnostics.OtherRequests);
+            if (!includeLength && maxConcurrentChecks > 1)
+            {
+                Assert.Equal(ReachabilityMode.Sequential, diagnostics.Mode);
+                Assert.Equal(ReachabilityFallback.MissingLength, diagnostics.Fallback);
+                Assert.Equal(1, diagnostics.PeakInFlight);
+            }
         }
         Assert.Equal(scenario == "invalid_duration" ? 1 : 0, watches);
         Assert.Equal("Synthetic fixture title", media!.Title); Assert.Equal("Fixture author", media.Author);

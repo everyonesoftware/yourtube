@@ -25,6 +25,7 @@ public sealed class ReachabilityConcurrencyTests
             // Hold the first candidate while the other admitted checks finish out of order.
             await fixture.Entered[limit - 1].Task.WaitAsync(Deadline);
             Assert.Equal(limit, fixture.Calls.Count);
+            Assert.Equal(limit, timing.ReadStartup()!.Discovery.ReachabilityDiagnostics?.PeakInFlight);
             Assert.Equal(new StreamCheckProgress(0, 4), timing.ReadStartup()!.Discovery.ReachabilityProgress);
             for (int i = 1; i < limit; i++) fixture.Release[i].TrySetResult();
             for (int i = 1; i < limit; i++) await fixture.Exited[i].Task.WaitAsync(Deadline);
@@ -38,6 +39,13 @@ public sealed class ReachabilityConcurrencyTests
             var media = await resolve.WaitAsync(Deadline);
             Assert.Equal(new[] { new PlaybackQuality(144, 250_000), new PlaybackQuality(360, 1_000_000), new PlaybackQuality(720, 2_000_000) }, media.Qualities);
             Assert.Equal(new StreamCheckProgress(4, 4), timing.ReadStartup()!.Discovery.ReachabilityProgress);
+            var diagnostics = Assert.IsType<StreamReachabilityDiagnostics>(timing.ReadStartup()!.Discovery.ReachabilityDiagnostics);
+            Assert.Equal(limit == 1 ? ReachabilityMode.Sequential : ReachabilityMode.Parallel, diagnostics.Mode);
+            Assert.Equal(limit == 1 ? ReachabilityFallback.ConfiguredSequential : ReachabilityFallback.None, diagnostics.Fallback);
+            Assert.Equal((4, 0, 0, 0, 0, 0), (diagnostics.TailRequests, diagnostics.SizeRequests, diagnostics.OtherRequests,
+                diagnostics.RedirectHops, diagnostics.ProbeRetries, diagnostics.PlayerRetries));
+            Assert.NotNull(diagnostics.FinalQuarterMs);
+            Assert.True(diagnostics.MedianCheckMs >= 0 && diagnostics.SlowestCheckMs >= diagnostics.MedianCheckMs);
             Assert.Equal(new[] { 0, 1, 2, 3 }, fixture.Calls.Order());
             Assert.Equal(limit, fixture.Peak);
 
@@ -144,6 +152,10 @@ public sealed class ReachabilityConcurrencyTests
         });
         Assert.Equal(new StreamCheckProgress(4, 4), timing.ReadStartup()!.Discovery.ReachabilityProgress);
         Assert.Equal(new[] { 0, 0, 1, 1, 2, 3 }, fixture.Calls.Order());
+        var diagnostics = Assert.IsType<StreamReachabilityDiagnostics>(timing.ReadStartup()!.Discovery.ReachabilityDiagnostics);
+        Assert.Equal(6, diagnostics.TailRequests);
+        Assert.Equal(1, diagnostics.PlayerRetries);
+        Assert.Equal(0, diagnostics.ProbeRetries);
     }
 
     [Theory]
@@ -171,6 +183,9 @@ public sealed class ReachabilityConcurrencyTests
         });
         Assert.Equal(new[] { 0, 1, 1, 2, 3 }, fixture.Calls.Order());
         Assert.Equal(new StreamCheckProgress(4, 4), timing.ReadStartup()!.Discovery.ReachabilityProgress);
+        var diagnostics = Assert.IsType<StreamReachabilityDiagnostics>(timing.ReadStartup()!.Discovery.ReachabilityDiagnostics);
+        Assert.Equal(5, diagnostics.TailRequests);
+        Assert.Equal(1, diagnostics.ProbeRetries);
     }
 
     [Fact]

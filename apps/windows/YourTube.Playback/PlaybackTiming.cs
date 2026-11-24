@@ -53,6 +53,7 @@ public sealed class PlaybackTiming
     public void FailStartup() => startup?.Fail(ElapsedMs);
     internal bool TracksStartup => startup is not null;
     internal void RecordReachabilityProgress(StreamCheckProgress? progress) => startup?.RecordReachabilityProgress(progress);
+    internal void RecordReachabilityDiagnostics(StreamReachabilityDiagnostics diagnostics) => startup?.RecordReachabilityDiagnostics(diagnostics);
 
     public void Mark(PlaybackTimingStage stage, long? positionMs = null, uint? bitrateBps = null,
         uint? previousBitrateBps = null, int? height = null, int? reasonCode = null)

@@ -5,13 +5,14 @@ using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
+using Windows.ApplicationModel.DataTransfer;
 using YourTube.Playback;
 
 namespace YourTube.App;
 
 internal sealed partial class MainWindow
 {
-    private static readonly string[] StartupLabels = ["Find video streams", "Prepare stream data", "Set up the player", "Load initial audio & video", "Start playback"];
+    private static readonly Version AppVersion = typeof(MainWindow).Assembly.GetName().Version ?? new Version(0, 0, 0);
     private static readonly string[] StartupNotes = [
         "Looking for compatible streams.", "Preparing the audio and video streams for Windows.",
         "Opening the source in the Windows player.", "Waiting for Windows to open the audio and video.",
@@ -20,8 +21,10 @@ internal sealed partial class MainWindow
     private readonly TextBlock progressTotal = new() { FontSize = 12 };
     private readonly TextBlock progressSummary = new() { FontSize = 13, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock progressNote = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
-    private readonly TextBlock reachabilityLimit = new() { FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(5, 0, 0, 3) };
+    private readonly TextBlock reachabilityDetails = new() { FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(29, 0, 5, 4) };
     private readonly Button progressRetry = new() { Content = "Retry playback", Visibility = Visibility.Collapsed };
+    private readonly Button progressCopy = new() { Content = "Copy startup summary", IsEnabled = false };
+    private readonly TextBlock copyFeedback = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
     private readonly List<StartupRow> progressRows = [];
     private readonly List<StartupRow> discoveryRows = [];
     private readonly ToggleButton discoveryToggle = new() { Padding = new Thickness(0), BorderThickness = new Thickness(0),
@@ -53,24 +56,25 @@ internal sealed partial class MainWindow
         AutomationProperties.SetLiveSetting(progressSummary, AutomationLiveSetting.Polite);
         feed.Children.Add(progressSummary);
         var rows = new StackPanel { Spacing = 1 };
-        for (int i = 0; i < StartupLabels.Length; i++)
+        foreach (var label in PlaybackProgressSummary.StartupLabels)
         {
-            var row = new StartupRow(StartupLabels[i], disclosure: i == 0);
+            bool disclosure = progressRows.Count == 0;
+            var row = new StartupRow(label, disclosure: disclosure);
             progressRows.Add(row);
-            if (i != 0) { rows.Children.Add(row.View); continue; }
+            if (!disclosure) { rows.Children.Add(row.View); continue; }
             discoveryToggle.Content = row.View;
             discoveryToggle.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-            AutomationProperties.SetName(discoveryToggle, StartupLabels[i]);
+            AutomationProperties.SetName(discoveryToggle, label);
             AutomationProperties.SetAccessibilityView(row.View, AccessibilityView.Raw);
             rows.Children.Add(discoveryToggle);
             var details = new StackPanel();
-            foreach (var label in new[] { "Get stream list from YouTube", "Check that streams are reachable", "Confirm compatible audio and video" })
+            foreach (var detailLabel in PlaybackProgressSummary.DiscoveryLabels)
             {
-                var child = new StartupRow(label, detail: true);
+                var child = new StartupRow(detailLabel, detail: true);
                 discoveryRows.Add(child);
                 details.Children.Add(child.View);
                 if (discoveryRows.Count - 1 == (int)StreamDiscoveryStep.Reachability)
-                    details.Children.Add(reachabilityLimit);
+                    details.Children.Add(reachabilityDetails);
             }
             var branch = new Border { Child = details, Margin = new Thickness(17, 0, 0, 4),
                 Padding = new Thickness(8, 0, 0, 0), BorderThickness = new Thickness(1, 0, 0, 0),
@@ -88,6 +92,9 @@ internal sealed partial class MainWindow
         feed.Children.Add(rows);
         feed.Children.Add(progressNote);
         feed.Children.Add(progressRetry);
+        feed.Children.Add(progressCopy);
+        AutomationProperties.SetLiveSetting(copyFeedback, AutomationLiveSetting.Polite);
+        feed.Children.Add(copyFeedback);
         var scroll = new ScrollViewer { Content = feed, Width = 300, IsTabStop = true,
             HorizontalScrollMode = ScrollMode.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         AutomationProperties.SetName(scroll, "Playback progress");
@@ -114,6 +121,8 @@ internal sealed partial class MainWindow
         {
             playerProgressOpen = false;
             progressClock.Stop();
+            progressCopy.IsEnabled = false;
+            SetCopyFeedback(string.Empty);
             if (!closed && playback.Selected is not null && !settingsVisible)
                 lastPlayerActivity = Environment.TickCount64;
             UpdatePlayerControlsVisibility();
@@ -124,6 +133,34 @@ internal sealed partial class MainWindow
             SyncPlaybackContext();
             await playback.RetryAsync();
         };
+        progressCopy.Click += (_, _) => CopyPlaybackSummary();
+    }
+
+    private void CopyPlaybackSummary()
+    {
+        if (closed || !playerProgressOpen || settingsVisible || playback.Selected is null ||
+            playback.StartupTiming is not { } timing || !ReferenceEquals(timing, displayedStartup) ||
+            timing.ReadStartup() is not { } state) return;
+        var package = new DataPackage();
+        package.SetText(PlaybackProgressSummary.Format(state, startupSettings, AppVersion));
+        bool copied;
+        try
+        {
+            copied = Clipboard.SetContentWithOptions(package, new ClipboardContentOptions { IsAllowedInHistory = false, IsRoamable = false });
+        }
+        catch (Exception)
+        {
+            copied = false;
+        }
+        SetCopyFeedback(copied ? "Summary copied." : "Couldn’t copy the summary. Try again.");
+    }
+
+    private void SetCopyFeedback(string message)
+    {
+        SetText(copyFeedback, message);
+        copyFeedback.Visibility = ToVisibility(message.Length > 0);
+        if (message.Length > 0 && AutomationPeer.ListenerExists(AutomationEvents.LiveRegionChanged))
+            FrameworkElementAutomationPeer.CreatePeerForElement(copyFeedback)?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
     }
 
     private void RenderPlaybackProgress()
@@ -134,11 +171,12 @@ internal sealed partial class MainWindow
         {
             displayedStartup = timing;
             discoveryToggle.IsChecked = false;
-            SetText(reachabilityLimit, $"Configured limit for this attempt: {startupReachabilityChecks}");
+            SetCopyFeedback(string.Empty);
         }
+        progressCopy.IsEnabled = true;
         bool started = state.Completed == PlaybackStartupSnapshot.StepCount;
         SetText(progressSummary, state.Failed ? "Couldn’t start playback" : started ? "Playback started" :
-            state.EndedUnconfirmed ? "Video ended" : $"{state.Completed} of {StartupLabels.Length} steps complete");
+            state.EndedUnconfirmed ? "Video ended" : $"{state.Completed} of {PlaybackStartupSnapshot.StepCount} steps complete");
         SetText(progressTotal, Seconds(state.ElapsedMs) + (started ? " to start" : " elapsed"));
         bool canRetry = playback.Error is not null && !playback.Busy;
         string note = state.Failed ? playback.Error ?? "Try loading this video again." : started
@@ -162,6 +200,7 @@ internal sealed partial class MainWindow
                 duration.HasValue && !current, state.IsFinal && !state.Failed && current, duration,
                 state.Completed > 0 ? "Not needed" : state.IsFinal ? "Not run" : "Waiting", checks);
         }
+        SetText(reachabilityDetails, string.Join('\n', PlaybackProgressSummary.ReachabilityLines(state.Discovery, startupSettings, includeCount: false)));
         if (state.IsFinal) progressClock?.Stop();
         else if (progressClock is { IsRunning: false }) progressClock.Start();
     }

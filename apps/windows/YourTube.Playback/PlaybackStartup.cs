@@ -9,10 +9,16 @@ public sealed record PlaybackStartupSnapshot(int Completed, long ElapsedMs, IRea
 
 public enum StreamDiscoveryStep { StreamList, Reachability, Compatibility }
 public readonly record struct StreamCheckProgress(int Checked, int Total);
+public enum ReachabilityMode { Sequential, Parallel, Mixed }
+public enum ReachabilityFallback { None, ConfiguredSequential, MissingLength, ExternalManifest, CipheredUrl, UnpredictableRequests, RequestMismatch }
+public sealed record StreamReachabilityDiagnostics(int PeakInFlight, ReachabilityMode Mode, ReachabilityFallback Fallback,
+    int TailRequests, int SizeRequests, int OtherRequests, int RedirectHops, int ProbeRetries, int PlayerRetries,
+    long? MedianCheckMs, long? SlowestCheckMs, long? FinalQuarterMs);
 public sealed record StreamDiscoverySnapshot(StreamDiscoveryStep? Current, IReadOnlyList<long?> Durations)
 {
     public const int StepCount = 3;
     public StreamCheckProgress? ReachabilityProgress { get; init; }
+    public StreamReachabilityDiagnostics? ReachabilityDiagnostics { get; init; }
 }
 
 // One small in-memory timeline per startup attempt, shared by resolver and native callbacks.
@@ -23,6 +29,7 @@ internal sealed class PlaybackStartup
     private readonly long?[] discoveryStarted = new long?[StreamDiscoverySnapshot.StepCount];
     private StreamDiscoveryStep? discoveryStep;
     private StreamCheckProgress? reachabilityProgress;
+    private StreamReachabilityDiagnostics? reachabilityDiagnostics;
     private int current;
     private long? stoppedAt;
     private bool failed;
@@ -36,6 +43,13 @@ internal sealed class PlaybackStartup
         lock (gate)
             if (stoppedAt is null && current == 0 && discoveryStep != StreamDiscoveryStep.Compatibility)
                 reachabilityProgress = progress;
+    }
+
+    public void RecordReachabilityDiagnostics(StreamReachabilityDiagnostics diagnostics)
+    {
+        lock (gate)
+            if (stoppedAt is null && current == 0 && discoveryStep != StreamDiscoveryStep.Compatibility)
+                reachabilityDiagnostics = diagnostics;
     }
 
     public void Record(PlaybackTimingStage stage, long elapsed)
@@ -136,7 +150,8 @@ internal sealed class PlaybackStartup
                 }
             return new(current, total, durations, failed, stoppedAt is not null && !failed)
             {
-                Discovery = new(current == 0 ? discoveryStep : null, discovery) { ReachabilityProgress = reachabilityProgress }
+                Discovery = new(current == 0 ? discoveryStep : null, discovery)
+                    { ReachabilityProgress = reachabilityProgress, ReachabilityDiagnostics = reachabilityDiagnostics }
             };
         }
     }

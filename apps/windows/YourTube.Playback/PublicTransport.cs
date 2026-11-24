@@ -3,6 +3,10 @@ namespace YourTube.Playback;
 // Dedicated public-only transport: never shares the account client's handler or defaults.
 internal sealed class PublicTransport(HttpMessageHandler handler, TimeSpan? requestBudget = null) : HttpMessageHandler
 {
+    private static bool IsTerminalProbe(HttpMethod method, HttpResponseMessage response) =>
+        response.StatusCode == System.Net.HttpStatusCode.NotFound || response.IsSuccessStatusCode &&
+        (method != HttpMethod.Head || response.Content.Headers.ContentLength is null);
+
     private readonly HttpMessageInvoker inner = new(handler);
     // Reserve most of the normal HttpClient budget for an on-demand retry.
     // Its timer starts before the handler dispatches the first probe.
@@ -14,15 +18,18 @@ internal sealed class PublicTransport(HttpMessageHandler handler, TimeSpan? requ
         internal bool MeasuresProgress => timing?.TracksStartup == true;
         internal bool CanPrefetch => limit > 1;
         internal ProbeWindow? Window { get; private set; }
+        internal ReachabilityMeter? Meter { get; } = timing?.TracksStartup == true ? new(timing, limit) : null;
+        internal ReachabilityFallback Fallback { get; set; } = ReachabilityFallback.UnpredictableRequests;
         private readonly object progressLock = new();
         private HashSet<string>? remaining;
         private int total;
         private int probing;
-        internal void BeginPlayerResponse(HashSet<string>? candidates, Uri[]? probes)
+        internal void BeginPlayerResponse(HashSet<string>? candidates, Uri[]? probes, ReachabilityFallback fallback)
         {
+            Fallback = fallback;
             remaining = candidates;
             total = candidates?.Count ?? 0;
-            timing?.RecordReachabilityProgress(total > 0 ? new(0, total) : null);
+            PublishProgress(total > 0 ? new(0, total) : null);
             if (probes is not null) Window = new(probes, limit, probeBudget, token);
         }
 
@@ -43,8 +50,7 @@ internal sealed class PublicTransport(HttpMessageHandler handler, TimeSpan? requ
         private void ObserveProbeCore(Uri origin, HttpMethod method, HttpResponseMessage response)
         {
             if (remaining is null) return;
-            if (!response.IsSuccessStatusCode && response.StatusCode != System.Net.HttpStatusCode.NotFound) return;
-            if (method == HttpMethod.Head && response.IsSuccessStatusCode && response.Content.Headers.ContentLength is not null) return;
+            if (!IsTerminalProbe(method, response)) return;
             var key = origin.AbsoluteUri;
             if (method == HttpMethod.Get)
             {
@@ -58,10 +64,16 @@ internal sealed class PublicTransport(HttpMessageHandler handler, TimeSpan? requ
                 !(method == HttpMethod.Head && (key.EndsWith("&hl=en", StringComparison.Ordinal) || key.EndsWith("?hl=en", StringComparison.Ordinal)) && remaining.Remove(key[..^6])))
             {
                 remaining = null;
-                timing?.RecordReachabilityProgress(null);
+                PublishProgress(null);
                 return;
             }
-            timing?.RecordReachabilityProgress(new(total - remaining.Count, total));
+            PublishProgress(new(total - remaining.Count, total));
+        }
+
+        private void PublishProgress(StreamCheckProgress? progress)
+        {
+            timing?.RecordReachabilityProgress(progress);
+            Meter?.CandidateProgress(progress);
         }
 
         internal void MarkReachability()
@@ -74,7 +86,7 @@ internal sealed class PublicTransport(HttpMessageHandler handler, TimeSpan? requ
         {
             // A successful manifest should account for every advertised probe.
             // Keep the timing, but don't retain a misleading partial count.
-            if (remaining is { Count: > 0 }) timing?.RecordReachabilityProgress(null);
+            if (remaining is { Count: > 0 }) PublishProgress(null);
         }
     }
 
@@ -170,19 +182,27 @@ internal sealed class PublicTransport(HttpMessageHandler handler, TimeSpan? requ
                 // A speculative timeout or oversized response should not make a
                 // stream fail before the library has made its normal request.
                 if (await window.ReadAsync(this, cancellationToken) is { } response) return response;
+                return await SendCoreAsync(request, cancellationToken, retry: true);
             }
-            else await capture.DrainAsync();
+            if (request.RequestUri is { } uri && IsCdn(uri)) capture.Fallback = ReachabilityFallback.RequestMismatch;
+            await capture.DrainAsync();
         }
         return await SendCoreAsync(request, cancellationToken);
     }
 
-    private async Task<HttpResponseMessage> SendCoreAsync(HttpRequestMessage request, CancellationToken cancellationToken, bool speculative = false)
+    private async Task<HttpResponseMessage> SendCoreAsync(HttpRequestMessage request, CancellationToken cancellationToken,
+        bool speculative = false, bool retry = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var origin = request.RequestUri ?? throw Unsafe();
         var uri = origin; bool cdn = IsCdn(uri);
         Dictionary<string, string>? originalQuery = null;
         if (!cdn && !IsYouTube(uri) || cdn && request.Method != HttpMethod.Get && request.Method != HttpMethod.Head) throw Unsafe();
+        var capture = discoveryCapture.Value;
+        var meter = capture?.Meter;
+        bool tail = meter is not null && cdn && request.Method == HttpMethod.Get && ReachabilityMeter.IsTail(origin);
+        long? probeStarted = null;
+        bool sample = false;
         try
         {
             for (int redirects = 0; ; redirects++)
@@ -202,7 +222,13 @@ internal sealed class PublicTransport(HttpMessageHandler handler, TimeSpan? requ
                 }
                 HttpResponseMessage response;
                 // Only a CDN dispatch during library discovery is a reachability check.
-                if (cdn && redirects == 0) discoveryCapture.Value?.MarkReachability();
+                if (cdn && redirects == 0)
+                {
+                    capture?.MarkReachability();
+                    if (capture is not null) probeStarted = meter?.Dispatch(request.Method, tail, speculative, retry, capture.Fallback);
+                }
+                else if (cdn) meter?.RedirectDispatched();
+                else if (request.Method == HttpMethod.Post && uri.AbsolutePath == "/youtubei/v1/player") meter?.PlayerDispatched();
                 try { response = await inner.SendAsync(outgoing, cancellationToken); }
                 finally { if (!cdn) outgoing.Content = null; }
                 if ((int)response.StatusCode is 301 or 302 or 303 or 307 or 308)
@@ -220,7 +246,8 @@ internal sealed class PublicTransport(HttpMessageHandler handler, TimeSpan? requ
                 }
                 if (request.Method == HttpMethod.Head)
                 {
-                    if (!cancellationToken.IsCancellationRequested) discoveryCapture.Value?.ObserveProbe(origin, request.Method, response);
+                    if (!cancellationToken.IsCancellationRequested) capture?.ObserveProbe(origin, request.Method, response);
+                    sample = meter is not null && !cancellationToken.IsCancellationRequested && IsTerminalProbe(request.Method, response);
                     return response;
                 }
                 // Buffer only bounded responses, including library validity probes and JSON.
@@ -246,21 +273,22 @@ internal sealed class PublicTransport(HttpMessageHandler handler, TimeSpan? requ
                     bool publicPlayer = !cdn && response.IsSuccessStatusCode && request.Method == HttpMethod.Post && uri.AbsolutePath == "/youtubei/v1/player";
                     // The pinned stream client uses the last successful transport response,
                     // including on a retry. Never carry details forward from an earlier response.
-                    var capture = discoveryCapture.Value;
                     var bytes = original;
                     if (publicPlayer)
                     {
                         if (capture is not null) capture.Latest = PlayerMetadata.Read(original, capture.Id);
                         bytes = PlayerStreamFilter.Filter(original, capture?.MeasuresProgress == true, capture?.CanPrefetch == true,
-                            out var candidates, out var probes);
-                        capture?.BeginPlayerResponse(candidates, probes);
+                            out var candidates, out var probes, out var fallback);
+                        capture?.BeginPlayerResponse(candidates, probes, fallback);
                     }
                     if (cdn && !cancellationToken.IsCancellationRequested) capture?.ObserveProbe(origin, request.Method, response);
                     var content = new ByteArrayContent(bytes);
                     foreach (var h in response.Content.Headers)
                         if (ReferenceEquals(bytes, original) || !h.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
                             content.Headers.TryAddWithoutValidation(h.Key, h.Value);
-                    response.Content.Dispose(); response.Content = content; return response;
+                    response.Content.Dispose(); response.Content = content;
+                    sample = tail && !cancellationToken.IsCancellationRequested && IsTerminalProbe(request.Method, response);
+                    return response;
                 }
                 catch { response.Dispose(); throw; }
             }
@@ -269,6 +297,10 @@ internal sealed class PublicTransport(HttpMessageHandler handler, TimeSpan? requ
         catch (SpeculativeBodyTooLargeException) { throw; }
         catch (PlaybackException) { throw; }
         catch { throw new PlaybackException("network_error", "The public playback request failed."); }
+        finally
+        {
+            if (probeStarted is long started) meter!.Complete(started, sample);
+        }
     }
 
     private static Dictionary<string, string> ReadBoundQuery(Uri uri)

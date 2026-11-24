@@ -17,10 +17,11 @@ internal static class PlayerStreamFilter
     internal const int MaxWidth = 1920;
 
     internal static byte[] Filter(byte[] original, bool measure, bool prefetch,
-        out HashSet<string>? candidates, out Uri[]? probes)
+        out HashSet<string>? candidates, out Uri[]? probes, out ReachabilityFallback fallback)
     {
         candidates = null;
         probes = null;
+        fallback = ReachabilityFallback.UnpredictableRequests;
         try
         {
             if (JsonNode.Parse(original) is not JsonObject root ||
@@ -41,10 +42,10 @@ internal static class PlayerStreamFilter
             var bytes = changed ? JsonSerializer.SerializeToUtf8Bytes(root) : original;
             if (measure || prefetch)
             {
-                var direct = DirectCandidates(streaming);
+                var direct = DirectCandidates(streaming, ref fallback);
                 if (measure) candidates = direct;
                 if (prefetch && direct is not null && root["playabilityStatus"] is JsonObject status && Text(status["status"]) == "OK")
-                    probes = DirectTailProbes(streaming, direct.Count);
+                    probes = DirectTailProbes(streaming, direct.Count, ref fallback);
             }
             return bytes;
         }
@@ -54,7 +55,7 @@ internal static class PlayerStreamFilter
 
     // Only prefetch the pinned library's predictable direct-URL, known-length
     // tail checks. HEAD discovery, alternate providers and deciphering stay serial.
-    private static Uri[]? DirectTailProbes(JsonObject streaming, int count)
+    private static Uri[]? DirectTailProbes(JsonObject streaming, int count, ref ReachabilityFallback fallback)
     {
         if (count is < 2 or > 128) return null;
         var probes = new List<Uri>(count);
@@ -65,9 +66,13 @@ internal static class PlayerStreamFilter
             foreach (var node in entries)
             {
                 if (node is not JsonObject entry || Text(entry["url"]) is not { Length: > 0 } url ||
-                    entry["itag"] is not JsonValue value || !value.TryGetValue<int>(out var itag) || itag <= 0 || !itags.Add(itag) ||
-                    !long.TryParse(Text(entry["contentLength"]), NumberStyles.None, CultureInfo.InvariantCulture, out var length) || length < 2)
+                    entry["itag"] is not JsonValue value || !value.TryGetValue<int>(out var itag) || itag <= 0 || !itags.Add(itag))
                     return null;
+                if (!long.TryParse(Text(entry["contentLength"]), NumberStyles.None, CultureInfo.InvariantCulture, out var length) || length < 2)
+                {
+                    if (entry["contentLength"] is null) fallback = ReachabilityFallback.MissingLength;
+                    return null;
+                }
                 var uri = new Uri(url);
                 if (uri.Query.TrimStart('?').Split('&').Any(p =>
                     string.Equals(System.Net.WebUtility.UrlDecode(p.Split('=', 2)[0]), "hl", StringComparison.OrdinalIgnoreCase))) return null;
@@ -75,21 +80,31 @@ internal static class PlayerStreamFilter
                     FormattableString.Invariant($"range={length - 2}-{length - 1}&hl=en")));
             }
         }
+        fallback = ReachabilityFallback.None;
         return probes.ToArray();
     }
 
     // Match the pinned library's two arrays. An external DASH manifest, a cipher,
     // or ambiguous URLs prevent an exact count from this response alone.
-    private static HashSet<string>? DirectCandidates(JsonObject streaming)
+    private static HashSet<string>? DirectCandidates(JsonObject streaming, ref ReachabilityFallback fallback)
     {
-        if (!string.IsNullOrWhiteSpace(Text(streaming["dashManifestUrl"]))) return null;
+        if (!string.IsNullOrWhiteSpace(Text(streaming["dashManifestUrl"])))
+        {
+            fallback = ReachabilityFallback.ExternalManifest;
+            return null;
+        }
         var urls = new HashSet<string>(StringComparer.Ordinal);
         foreach (var name in new[] { "formats", "adaptiveFormats" })
         {
             if (streaming[name] is not JsonArray entries) continue;
             foreach (var node in entries)
             {
-                if (node is not JsonObject entry || entry["cipher"] is not null || entry["signatureCipher"] is not null) return null;
+                if (node is not JsonObject entry) return null;
+                if (entry["cipher"] is not null || entry["signatureCipher"] is not null)
+                {
+                    fallback = ReachabilityFallback.CipheredUrl;
+                    return null;
+                }
                 var url = Text(entry["url"]);
                 if (string.IsNullOrWhiteSpace(url)) continue;
                 if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || !PublicTransport.IsCdn(uri) ||

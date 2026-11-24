@@ -30,7 +30,7 @@ internal sealed partial class MainWindow : Window
     private readonly bool compareWatchLookups = Environment.GetEnvironmentVariable("YOURTUBE_WATCH_LOOKUP_COMPARE") == "1";
     private int startupQuality;
     private int reachabilityChecks;
-    private int startupReachabilityChecks;
+    private PlaybackStartupSettings startupSettings;
     private NativePlaybackSession? boundSession;
     private Action? unbindWatchSeek;
     private HistoryVideo? watchSelection;
@@ -110,7 +110,7 @@ internal sealed partial class MainWindow : Window
         C<ToggleSwitch>("WatchHistorySync").Toggled += (_, _) => ResetWatchStatus();
         var theater = C<MediaPlayerElement>("TheaterPlayer");
         playback = new PlaybackController<NativePlaybackSession>((id, ct, timing) => playbackResolver.ResolveAsync(id, ct, timing),
-            async (media, ct, timing) => new NativePlaybackSession(await NativePlaybackSource.CreateAsync(playbackResolver, media, ct, timing, startupQuality), theater),
+            async (media, ct, timing) => new NativePlaybackSession(await NativePlaybackSource.CreateAsync(playbackResolver, media, ct, timing, startupSettings.AutoHeight), theater),
             StartStartupTiming);
         playback.Changed += RenderPlayback;
         WirePlayerOverlay();
@@ -263,8 +263,8 @@ internal sealed partial class MainWindow : Window
 
     private PlaybackTiming StartStartupTiming()
     {
-        startupReachabilityChecks = reachabilityChecks;
-        playbackResolver.MaxConcurrentStreamChecks = startupReachabilityChecks;
+        startupSettings = new(startupQuality, reachabilityChecks);
+        playbackResolver.MaxConcurrentStreamChecks = startupSettings.ReachabilityLimit;
         return PlaybackTiming.StartForStartup();
     }
 
