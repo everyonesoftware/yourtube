@@ -17,6 +17,7 @@ Check(BrowserPolicy.VideoUri("../bad") is null, "invalid video ID rejected");
 Console.WriteLine("PASS: browser allowlists and canonical video IDs.");
 
 AutoStartupPreferenceTests.Run();
+ReachabilityPreferenceTests.Run();
 var audio = new PlayerAudioState();
 audio.SetVolume(.3);
 audio.SetVolume(0);

@@ -11,7 +11,8 @@ public sealed class LibraryFixtureTests
     [InlineData(true, "wrong_id")][InlineData(true, "invalid_duration")][InlineData(true, "missing_description")][InlineData(true, "empty_description")]
     [InlineData(true, "malformed_description")][InlineData(true, "expired_description")][InlineData(true, "missing_audio")]
     [InlineData(true, "unreachable")][InlineData(false, "unreachable")]
-    public async Task ActualPinnedLibraryResolvesMetadataStreamsAndValidityRedirect(bool includeLength, string scenario)
+    [InlineData(true, "unreachable", 2)][InlineData(false, "unreachable", 2)]
+    public async Task ActualPinnedLibraryResolvesMetadataStreamsAndValidityRedirect(bool includeLength, string scenario, int maxConcurrentChecks = 1)
     {
         byte[] full = [..IndexTests.Header(), ..new byte[100]];
         byte[] fullAudio = [..IndexTests.Header(true), ..new byte[100]];
@@ -38,7 +39,7 @@ public sealed class LibraryFixtureTests
             if (u.Host == "www.youtube.com")
             {
                 Assert.Null(r.Headers.Authorization);
-                if (u.AbsolutePath == "/watch") { watches++; if (scenario == "expired_description") clock.Now = DateTimeOffset.MaxValue; return new(HttpStatusCode.OK) { Content = new StringContent("<html><head><meta property=\"og:url\" content=\"https://www.youtube.com/watch?v=jNQXAC9IVRw\"></head><body><div id=\"player\"></div><script>var ytInitialPlayerResponse = " + watchPlayer + ";</script></body></html>") }; }
+                if (u.AbsolutePath == "/watch") { Interlocked.Increment(ref watches); if (scenario == "expired_description") clock.Now = DateTimeOffset.MaxValue; return new(HttpStatusCode.OK) { Content = new StringContent("<html><head><meta property=\"og:url\" content=\"https://www.youtube.com/watch?v=jNQXAC9IVRw\"></head><body><div id=\"player\"></div><script>var ytInitialPlayerResponse = " + watchPlayer + ";</script></body></html>") }; }
                 if (u.AbsolutePath == "/sw.js_data") return new(HttpStatusCode.OK) { Content = new StringContent("[[null,null,[[[null,null,null,null,null,null,null,null,null,null,null,null,null,\"fixture-visitor\"]]]]]") };
                 if (u.AbsolutePath == "/youtubei/v1/player")
                 {
@@ -52,23 +53,23 @@ public sealed class LibraryFixtureTests
             if (live.Completed == 0)
             {
                 Assert.Equal(StreamDiscoveryStep.Reachability, live.Discovery.Current);
-                probeSnapshots.Add(live.Discovery);
+                lock (probeSnapshots) probeSnapshots.Add(live.Discovery);
             }
             else Assert.Null(live.Discovery.Current); // DASH index reads are not discovery.
             if (u.Query.Contains("id=decoy-", StringComparison.Ordinal))
             {
-                decoyRequests++;
+                Interlocked.Increment(ref decoyRequests);
                 return new(HttpStatusCode.NotFound);
             }
             if (u.Query.Contains("id=missing", StringComparison.Ordinal)) return new(HttpStatusCode.NotFound);
             var source = u.Query.Contains("id=audio", StringComparison.Ordinal) ? fullAudio : full;
-            if (r.Method == HttpMethod.Head) { heads++; var h = new HttpResponseMessage(HttpStatusCode.OK); h.Content.Headers.ContentLength=source.Length; return h; }
-            if (u.Host == "a.googlevideo.com") { redirects++; var redirect = new HttpResponseMessage(HttpStatusCode.Found); redirect.Headers.Location = new UriBuilder(u) { Host="b.googlevideo.com" }.Uri; return redirect; }
+            if (r.Method == HttpMethod.Head) { Interlocked.Increment(ref heads); var h = new HttpResponseMessage(HttpStatusCode.OK); h.Content.Headers.ContentLength=source.Length; return h; }
+            if (u.Host == "a.googlevideo.com") { Interlocked.Increment(ref redirects); var redirect = new HttpResponseMessage(HttpStatusCode.Found); redirect.Headers.Location = new UriBuilder(u) { Host="b.googlevideo.com" }.Uri; return redirect; }
             var range = u.Query.TrimStart('?').Split('&').Single(p => p.StartsWith("range=", StringComparison.Ordinal))[6..].Split('-');
-            int start=int.Parse(range[0]), end=int.Parse(range[1]); if (end==source.Length-1 && start==source.Length-2) tails++;
+            int start=int.Parse(range[0]), end=int.Parse(range[1]); if (end==source.Length-1 && start==source.Length-2) Interlocked.Increment(ref tails);
             return new(HttpStatusCode.OK) { Content = new ByteArrayContent(source[start..(end+1)]) };
         });
-        using var resolver = new PlaybackResolver(handler); PlaybackMedia? media = null; string? error = null;
+        using var resolver = new PlaybackResolver(handler) { MaxConcurrentStreamChecks = maxConcurrentChecks }; PlaybackMedia? media = null; string? error = null;
         try { media = await resolver.ResolveAsync("jNQXAC9IVRw", CancellationToken.None, timing); } catch (PlaybackException e) { error=e.Code; timing.FailStartup(); }
         var discovery = Assert.IsType<PlaybackStartupSnapshot>(timing.ReadStartup()).Discovery;
         Assert.NotNull(discovery.Durations[0]);
@@ -97,14 +98,17 @@ public sealed class LibraryFixtureTests
             int total = scenario == "unreachable" ? 3 : 2;
             int[] expected = includeLength ? [0, 0, 1, 1] : [0, 0, 0, 1, 1, 1];
             if (total == 3) expected = [0, .. expected.Select(n => n + 1)];
-            Assert.Equal(expected.Select(n => (StreamCheckProgress?)new StreamCheckProgress(n, total)), probeSnapshots.Select(s => s.ReachabilityProgress));
+            if (maxConcurrentChecks == 1 || !includeLength)
+                Assert.Equal(expected.Select(n => (StreamCheckProgress?)new StreamCheckProgress(n, total)), probeSnapshots.Select(s => s.ReachabilityProgress));
+            else
+                Assert.Equal(expected.Length, probeSnapshots.Count); // No duplicate probes or redirect hops.
             Assert.Equal(new StreamCheckProgress(total, total), discovery.ReachabilityProgress);
         }
         Assert.Equal(scenario == "invalid_duration" ? 1 : 0, watches);
         Assert.Equal("Synthetic fixture title", media!.Title); Assert.Equal("Fixture author", media.Author);
         bool missing = scenario is "missing_description" or "malformed_description" or "expired_description";
         Assert.Equal(missing || scenario == "empty_description" ? "" : "Fixture description", media.Description);
-        Assert.Single(media.Qualities); Assert.True(tails >= 2); Assert.True(redirects >= 4); Assert.Equal(includeLength ? 0 : 2, heads);
+        Assert.Single(media.Qualities); Assert.Equal(2, tails); Assert.Equal(4, redirects); Assert.Equal(includeLength ? 0 : 2, heads);
         // The existing filter leaves unrewritable JSON untouched. Invalid optional
         // text must not make resolution fail or relax final codec selection.
         if (scenario != "malformed_description") Assert.Equal(0, decoyRequests);

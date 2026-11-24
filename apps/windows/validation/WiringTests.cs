@@ -63,6 +63,20 @@ internal static class WiringTests
                 $"top-right player buttons honor system high-contrast colors in {state}");
         }
         var progressCode = File.ReadAllText(Path.Combine(app, "PlaybackProgressFlyout.cs"));
+        var reachabilityChooser = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "ReachabilityChecksChooser");
+        StateTests.Verify(reachabilityChooser?.Name.LocalName == "ComboBox" &&
+            (string?)reachabilityChooser.Attribute("Header") == "Parallel reachability checks" &&
+            reachabilityChooser.Parent == Named("StartupQualityChooser").Parent &&
+            (string?)Named("ReachabilityChecksStatus").Attribute("AutomationProperties.LiveSetting") == "Polite",
+            "Playback Settings has a native reachability chooser and announces a save failure");
+        StateTests.Verify(code.Contains("InitializeReachabilityChecks();") &&
+            code.Contains("reachabilityChecks = ReachabilityPreference.Load(path);") &&
+            Regex.IsMatch(code, @"if \(ReachabilityPreference\.TrySave\(path, count\)\)\s*\{\s*reachabilityChecks = count;") &&
+            code.Contains("saved == reachabilityChecks"), "the chooser restores the saved selection and rolls back a failed save");
+        StateTests.Verify(Regex.IsMatch(code, @"StartStartupTiming\(\)\s*\{\s*startupReachabilityChecks = reachabilityChecks;\s*playbackResolver\.MaxConcurrentStreamChecks = startupReachabilityChecks;\s*return PlaybackTiming\.StartForStartup\(\);") &&
+            code.Contains("StartStartupTiming);") && Regex.Matches(code, @"playbackResolver\.MaxConcurrentStreamChecks\s*=").Count == 1 &&
+            progressCode.Contains("Configured limit for this attempt: {startupReachabilityChecks}"),
+            "each new playback attempt, including Retry, applies and displays its own configured limit, not live edits");
         StateTests.Verify(!progressCode.Contains("Timing is for this startup attempt", StringComparison.Ordinal) &&
             progressCode.Contains("progressNote.Visibility = ToVisibility(note.Length > 0);") &&
             progressCode.Contains("Playback started, then stopped. You can retry."),

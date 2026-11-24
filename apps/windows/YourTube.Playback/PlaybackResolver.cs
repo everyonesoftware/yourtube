@@ -17,6 +17,23 @@ internal sealed class MediaTrack(Uri uri, ulong size, string codec, uint bitrate
 }
 public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
 {
+    public const int DefaultConcurrentStreamChecks = 1;
+    public const int MaximumConcurrentStreamChecks = 16;
+    private int maxConcurrentStreamChecks = DefaultConcurrentStreamChecks;
+
+    /// <summary>Maximum overlapping reachability checks per resolution. One preserves serial discovery.</summary>
+    public int MaxConcurrentStreamChecks
+    {
+        get => Volatile.Read(ref maxConcurrentStreamChecks);
+        set
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(value, 1);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, MaximumConcurrentStreamChecks);
+            Volatile.Write(ref maxConcurrentStreamChecks, value);
+        }
+    }
+
+    internal static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(40);
     private const ulong MaximumRead = 16 * 1024 * 1024;
     private const ulong InitialHeaderRead = 16 * 1024;
     private const ulong HeaderRead = 1024 * 1024;
@@ -33,7 +50,7 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
     public PlaybackResolver(HttpMessageHandler handler)
     {
         transport = new PublicTransport(handler);
-        http = new HttpClient(transport) { Timeout = TimeSpan.FromSeconds(40) };
+        http = new HttpClient(transport) { Timeout = RequestTimeout };
         client = new YoutubeClient(http);
     }
     public Task<PlaybackMedia> ResolveAsync(string videoId, CancellationToken cancellationToken = default) =>
@@ -41,12 +58,13 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
 
     public async Task<PlaybackMedia> ResolveAsync(string videoId, CancellationToken cancellationToken, PlaybackTiming? timing)
     {
+        int streamCheckLimit = MaxConcurrentStreamChecks;
         try
         {
             CheckDisposed();
             if (!Regex.IsMatch(videoId ?? "", "\\A[A-Za-z0-9_-]{11}\\z", RegexOptions.CultureInvariant)) throw new PlaybackException("invalid_video", "The video identity is invalid.");
             timing?.Mark(PlaybackTimingStage.StreamManifestStarted);
-            var (manifest, metadata) = await transport.DiscoverAsync(videoId!, timing, () =>
+            var (manifest, metadata) = await transport.DiscoverAsync(videoId!, timing, streamCheckLimit, cancellationToken, () =>
                 client.Videos.Streams.GetManifestAsync(videoId!, cancellationToken));
             timing?.Mark(PlaybackTimingStage.StreamManifestCompleted);
             var videos = manifest.GetVideoOnlyStreams().Where(s => s.Container.Name == "mp4" && Regex.IsMatch(s.VideoCodec, PlayerStreamFilter.AvcPattern) && s.VideoResolution.Height is > 0 and <= PlayerStreamFilter.MaxHeight && s.VideoResolution.Width <= PlayerStreamFilter.MaxWidth).OrderBy(s => s.VideoResolution.Height).ThenBy(s => s.Bitrate.BitsPerSecond).ToArray();

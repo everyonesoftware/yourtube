@@ -29,6 +29,8 @@ internal sealed partial class MainWindow : Window
     private readonly PlaybackController<NativePlaybackSession> playback;
     private readonly bool compareWatchLookups = Environment.GetEnvironmentVariable("YOURTUBE_WATCH_LOOKUP_COMPARE") == "1";
     private int startupQuality;
+    private int reachabilityChecks;
+    private int startupReachabilityChecks;
     private NativePlaybackSession? boundSession;
     private Action? unbindWatchSeek;
     private HistoryVideo? watchSelection;
@@ -98,6 +100,7 @@ internal sealed partial class MainWindow : Window
         updatesPanel.UpdateAvailabilityChanged += RenderSettingsButton;
         C<ContentControl>("SettingsHost").Content = updatesPanel.View;
         InitializeStartupQuality();
+        InitializeReachabilityChecks();
         if (compareWatchLookups)
         {
             C<ToggleSwitch>("WatchHistorySync").IsOn = false;
@@ -108,7 +111,7 @@ internal sealed partial class MainWindow : Window
         var theater = C<MediaPlayerElement>("TheaterPlayer");
         playback = new PlaybackController<NativePlaybackSession>((id, ct, timing) => playbackResolver.ResolveAsync(id, ct, timing),
             async (media, ct, timing) => new NativePlaybackSession(await NativePlaybackSource.CreateAsync(playbackResolver, media, ct, timing, startupQuality), theater),
-            PlaybackTiming.StartForStartup);
+            StartStartupTiming);
         playback.Changed += RenderPlayback;
         WirePlayerOverlay();
         WirePlaybackProgress();
@@ -229,6 +232,40 @@ internal sealed partial class MainWindow : Window
             status.Text = "Couldn't save the startup quality. Your previous setting is still in use.";
             status.Visibility = Visibility.Visible;
         };
+    }
+
+    private void InitializeReachabilityChecks()
+    {
+        var path = ReachabilityPreference.SettingsPath;
+        reachabilityChecks = ReachabilityPreference.Load(path);
+        var chooser = C<ComboBox>("ReachabilityChecksChooser");
+        var status = C<TextBlock>("ReachabilityChecksStatus");
+        foreach (int count in ReachabilityPreference.Choices)
+        {
+            var item = new ComboBoxItem { Tag = count, Content = count == 1 ? "1 (sequential, default)" : $"{count}" };
+            chooser.Items.Add(item);
+            if (count == reachabilityChecks) chooser.SelectedItem = item;
+        }
+        chooser.SelectionChanged += (_, _) =>
+        {
+            if (closed || chooser.SelectedItem is not ComboBoxItem { Tag: int count } || count == reachabilityChecks) return;
+            if (ReachabilityPreference.TrySave(path, count))
+            {
+                reachabilityChecks = count;
+                status.Visibility = Visibility.Collapsed;
+                return;
+            }
+            chooser.SelectedItem = chooser.Items.OfType<ComboBoxItem>().Single(item => item.Tag is int saved && saved == reachabilityChecks);
+            status.Text = "Couldn't save the reachability check limit. Your previous setting is still in use.";
+            status.Visibility = Visibility.Visible;
+        };
+    }
+
+    private PlaybackTiming StartStartupTiming()
+    {
+        startupReachabilityChecks = reachabilityChecks;
+        playbackResolver.MaxConcurrentStreamChecks = startupReachabilityChecks;
+        return PlaybackTiming.StartForStartup();
     }
 
     private async Task InitializeServicesAsync()

@@ -124,6 +124,9 @@
           <ComboBox x:Name="StartupQualityChooser" Header="Auto startup quality" MinWidth="180"/>
           <TextBlock Text="Preferred starting quality for Auto. Playback can still adjust to your connection." Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
           <TextBlock x:Name="StartupQualityStatus" Visibility="Collapsed" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
+          <ComboBox x:Name="ReachabilityChecksChooser" Header="Parallel reachability checks" MinWidth="180"/>
+          <TextBlock Text="Maximum number of stream reachability checks at once. Changes apply the next time you start or retry a video." Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
+          <TextBlock x:Name="ReachabilityChecksStatus" Visibility="Collapsed" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
           <ToggleSwitch x:Name="WatchHistorySync" Header="Update YouTube History" IsOn="True"/>
           <TextBlock x:Name="WatchHistoryHelp" Text="On each time the app opens. Reports playback starts and watched progress to the selected YouTube account. YouTube decides what appears in History." Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
           <TextBlock x:Name="WatchHistoryStatus" Foreground="{StaticResource Muted}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>

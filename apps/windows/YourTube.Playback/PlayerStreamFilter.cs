@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -15,11 +16,11 @@ internal static class PlayerStreamFilter
     internal const int MaxHeight = 1080;
     internal const int MaxWidth = 1920;
 
-    internal static byte[] Filter(byte[] original) => Filter(original, false, out _);
-
-    internal static byte[] Filter(byte[] original, bool measure, out HashSet<string>? candidates)
+    internal static byte[] Filter(byte[] original, bool measure, bool prefetch,
+        out HashSet<string>? candidates, out Uri[]? probes)
     {
         candidates = null;
+        probes = null;
         try
         {
             if (JsonNode.Parse(original) is not JsonObject root ||
@@ -38,11 +39,43 @@ internal static class PlayerStreamFilter
                 }
             }
             var bytes = changed ? JsonSerializer.SerializeToUtf8Bytes(root) : original;
-            if (measure) candidates = DirectCandidates(streaming);
+            if (measure || prefetch)
+            {
+                var direct = DirectCandidates(streaming);
+                if (measure) candidates = direct;
+                if (prefetch && direct is not null && root["playabilityStatus"] is JsonObject status && Text(status["status"]) == "OK")
+                    probes = DirectTailProbes(streaming, direct.Count);
+            }
             return bytes;
         }
         catch (JsonException) { return original; }
         catch (ArgumentException) { return original; } // Ambiguous JSON, e.g. duplicate property names.
+    }
+
+    // Only prefetch the pinned library's predictable direct-URL, known-length
+    // tail checks. HEAD discovery, alternate providers and deciphering stay serial.
+    private static Uri[]? DirectTailProbes(JsonObject streaming, int count)
+    {
+        if (count is < 2 or > 128) return null;
+        var probes = new List<Uri>(count);
+        var itags = new HashSet<int>();
+        foreach (var name in new[] { "formats", "adaptiveFormats" })
+        {
+            if (streaming[name] is not JsonArray entries) continue;
+            foreach (var node in entries)
+            {
+                if (node is not JsonObject entry || Text(entry["url"]) is not { Length: > 0 } url ||
+                    entry["itag"] is not JsonValue value || !value.TryGetValue<int>(out var itag) || itag <= 0 || !itags.Add(itag) ||
+                    !long.TryParse(Text(entry["contentLength"]), NumberStyles.None, CultureInfo.InvariantCulture, out var length) || length < 2)
+                    return null;
+                var uri = new Uri(url);
+                if (uri.Query.TrimStart('?').Split('&').Any(p =>
+                    string.Equals(System.Net.WebUtility.UrlDecode(p.Split('=', 2)[0]), "hl", StringComparison.OrdinalIgnoreCase))) return null;
+                probes.Add(new Uri(uri.AbsoluteUri + (uri.Query.Length == 0 ? "?" : "&") +
+                    FormattableString.Invariant($"range={length - 2}-{length - 1}&hl=en")));
+            }
+        }
+        return probes.ToArray();
     }
 
     // Match the pinned library's two arrays. An external DASH manifest, a cipher,

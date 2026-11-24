@@ -20,6 +20,7 @@ internal sealed partial class MainWindow
     private readonly TextBlock progressTotal = new() { FontSize = 12 };
     private readonly TextBlock progressSummary = new() { FontSize = 13, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock progressNote = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
+    private readonly TextBlock reachabilityLimit = new() { FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(5, 0, 0, 3) };
     private readonly Button progressRetry = new() { Content = "Retry playback", Visibility = Visibility.Collapsed };
     private readonly List<StartupRow> progressRows = [];
     private readonly List<StartupRow> discoveryRows = [];
@@ -68,6 +69,8 @@ internal sealed partial class MainWindow
                 var child = new StartupRow(label, detail: true);
                 discoveryRows.Add(child);
                 details.Children.Add(child.View);
+                if (discoveryRows.Count - 1 == (int)StreamDiscoveryStep.Reachability)
+                    details.Children.Add(reachabilityLimit);
             }
             var branch = new Border { Child = details, Margin = new Thickness(17, 0, 0, 4),
                 Padding = new Thickness(8, 0, 0, 0), BorderThickness = new Thickness(1, 0, 0, 0),
@@ -131,6 +134,7 @@ internal sealed partial class MainWindow
         {
             displayedStartup = timing;
             discoveryToggle.IsChecked = false;
+            SetText(reachabilityLimit, $"Configured limit for this attempt: {startupReachabilityChecks}");
         }
         bool started = state.Completed == PlaybackStartupSnapshot.StepCount;
         SetText(progressSummary, state.Failed ? "Couldn’t start playback" : started ? "Playback started" :

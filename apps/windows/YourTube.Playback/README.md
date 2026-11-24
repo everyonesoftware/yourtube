@@ -10,6 +10,10 @@ Credential-isolated public VOD resolver for the native Windows adaptive-media ad
 - Each candidate requires a complete unencrypted initialization and usable `sidx` in the first 1 MiB. The parser handles 32/64-bit box sizes and version 0/1 indexes, validates direct references against the source size, and carries index timing into DASH. Missing, malformed, encrypted, hierarchical or oversized indexes are unsupported, never guessed. At most 32 eligible video representations and one audio representation are accepted; exceeding this explicit bound fails.
 - The UTF-8 static on-demand DASH manifest has real initialization/index ranges, codec/size/bitrate attributes, and separate audio/video adaptation sets. It contains signed URLs **in memory only**. Do not persist or log `Manifest`, URLs, provider responses, or exception details from external libraries.
 
+## Reachability concurrency
+
+Set `PlaybackResolver.MaxConcurrentStreamChecks` to an integer from 1 to 16. The default, 1, keeps serial discovery. Each resolution snapshots its setting at startup. For unambiguous direct CDN URLs with known lengths, a fixed window overlaps the pinned library's exact tail probes, then returns their responses to the library in request order. Missing lengths (HEAD fallback), ciphered URLs, external DASH manifests, and other ambiguous responses stay on the library's original path. The option does not parallelize DASH index reads or media downloads, and an overlap test does not establish a live playback speedup.
+
 ## Resource boundary
 
 `ReadResourceAsync` accepts only exact original resource identities registered to that same media object by that same resolver. Publicly constructing a `PlaybackMedia`, copying a manifest, changing query parameters, or using another resolver cannot grant ownership. Ownership uses weak keys and is cleared on disposal.
