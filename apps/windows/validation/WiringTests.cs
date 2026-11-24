@@ -47,6 +47,21 @@ internal static class WiringTests
             (string?)progress.Attribute("AutomationProperties.Name") == "Playback progress" &&
             progress.Descendants().Any(e => e.Name.LocalName == "Flyout" && ((string?)e.Attribute("Placement"))?.StartsWith("Bottom", StringComparison.Ordinal) == true),
             "a native playback progress flyout opens below the hamburger immediately left of the close button");
+        var ns = xml.Root!.Name.Namespace;
+        var actionThemes = close!.Parent!.Element(ns + "StackPanel.Resources")?.Element(ns + "ResourceDictionary")?
+            .Element(ns + "ResourceDictionary.ThemeDictionaries");
+        string? ActionColor(string theme, string key) => (string?)actionThemes?.Elements(ns + "ResourceDictionary")
+            .SingleOrDefault(e => (string?)e.Attribute(x + "Key") == theme)?.Elements(ns + "SolidColorBrush")
+            .SingleOrDefault(e => (string?)e.Attribute(x + "Key") == key)?.Attribute("Color");
+        foreach (var state in new[] { "PointerOver", "Pressed" })
+        {
+            StateTests.Verify(ActionColor("Default", "ButtonForeground" + state) == "White" &&
+                Regex.IsMatch(ActionColor("Default", "ButtonBackground" + state) ?? "", @"^#[0-4][0-9A-F][0-4][0-9A-F][0-4][0-9A-F]$"),
+                $"top-right player buttons retain white glyphs on an opaque dark fill over bright video in {state}");
+            StateTests.Verify(ActionColor("HighContrast", "ButtonForeground" + state) == "{ThemeResource SystemColorHighlightTextColor}" &&
+                ActionColor("HighContrast", "ButtonBackground" + state) == "{ThemeResource SystemColorHighlightColor}",
+                $"top-right player buttons honor system high-contrast colors in {state}");
+        }
         var progressCode = File.ReadAllText(Path.Combine(app, "PlaybackProgressFlyout.cs"));
         StateTests.Verify(!progressCode.Contains("Timing is for this startup attempt", StringComparison.Ordinal) &&
             progressCode.Contains("progressNote.Visibility = ToVisibility(note.Length > 0);") &&
