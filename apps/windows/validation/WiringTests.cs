@@ -47,6 +47,15 @@ internal static class WiringTests
             (string?)progress.Attribute("AutomationProperties.Name") == "Playback progress" &&
             progress.Descendants().Any(e => e.Name.LocalName == "Flyout" && ((string?)e.Attribute("Placement"))?.StartsWith("Bottom", StringComparison.Ordinal) == true),
             "a native playback progress flyout opens below the hamburger immediately left of the close button");
+        var progressCode = File.ReadAllText(Path.Combine(app, "PlaybackProgressFlyout.cs"));
+        StateTests.Verify(!progressCode.Contains("Timing is for this startup attempt", StringComparison.Ordinal) &&
+            progressCode.Contains("progressNote.Visibility = ToVisibility(note.Length > 0);") &&
+            progressCode.Contains("Playback started, then stopped. You can retry."),
+            "successful startup has no footer or reserved footer space; retry guidance remains available");
+        StateTests.Verify(!Regex.IsMatch(progressCode, @"MaxHeight\s*=\s*\d") &&
+            progressCode.Contains("scroll.MaxHeight = Math.Max(80, xamlRoot.Size.Height - 90);") &&
+            progressCode.Contains("VerticalScrollBarVisibility = ScrollBarVisibility.Auto"),
+            "the expanded checklist can use the available window height with scrolling only as an overflow fallback");
         var startupSample = Regex.Match(code, @"ObserveStartupClock\(!playback\.QualityBusy[^;]*;");
         StateTests.Verify(startupSample.Success && !startupSample.Value.Contains("watchProgress", StringComparison.Ordinal),
             "startup clock observation must not wait indefinitely for the History seek-completion gate");

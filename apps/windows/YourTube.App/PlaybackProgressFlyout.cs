@@ -19,7 +19,7 @@ internal sealed partial class MainWindow
     ];
     private readonly TextBlock progressTotal = new() { FontSize = 12 };
     private readonly TextBlock progressSummary = new() { FontSize = 13, TextWrapping = TextWrapping.Wrap };
-    private readonly TextBlock progressNote = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap };
+    private readonly TextBlock progressNote = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
     private readonly Button progressRetry = new() { Content = "Retry playback", Visibility = Visibility.Collapsed };
     private readonly List<StartupRow> progressRows = [];
     private readonly List<StartupRow> discoveryRows = [];
@@ -39,7 +39,7 @@ internal sealed partial class MainWindow
 
     private void WirePlaybackProgress()
     {
-        var feed = new StackPanel { Spacing = 8 };
+        var feed = new StackPanel { Spacing = 6 };
         var header = new Grid { ColumnSpacing = 8 };
         header.ColumnDefinitions.Add(new ColumnDefinition());
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -51,7 +51,7 @@ internal sealed partial class MainWindow
         feed.Children.Add(header);
         AutomationProperties.SetLiveSetting(progressSummary, AutomationLiveSetting.Polite);
         feed.Children.Add(progressSummary);
-        var rows = new StackPanel { Spacing = 2 };
+        var rows = new StackPanel { Spacing = 1 };
         for (int i = 0; i < StartupLabels.Length; i++)
         {
             var row = new StartupRow(StartupLabels[i], disclosure: i == 0);
@@ -85,7 +85,7 @@ internal sealed partial class MainWindow
         feed.Children.Add(rows);
         feed.Children.Add(progressNote);
         feed.Children.Add(progressRetry);
-        var scroll = new ScrollViewer { Content = feed, Width = 300, MaxHeight = 330, IsTabStop = true,
+        var scroll = new ScrollViewer { Content = feed, Width = 300, IsTabStop = true,
             HorizontalScrollMode = ScrollMode.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         AutomationProperties.SetName(scroll, "Playback progress");
         var flyout = PlayerProgressFlyout;
@@ -97,7 +97,7 @@ internal sealed partial class MainWindow
         {
             if (root.XamlRoot is not { } xamlRoot) return;
             scroll.Width = Math.Clamp(xamlRoot.Size.Width - 48, 120, 300);
-            scroll.MaxHeight = Math.Clamp(xamlRoot.Size.Height - 90, 80, 330);
+            scroll.MaxHeight = Math.Max(80, xamlRoot.Size.Height - 90);
         }
         root.SizeChanged += (_, _) => { if (playerProgressOpen) SizeToWindow(); };
         flyout.Opening += (_, _) =>
@@ -137,9 +137,11 @@ internal sealed partial class MainWindow
             state.EndedUnconfirmed ? "Video ended" : $"{state.Completed} of {StartupLabels.Length} steps complete");
         SetText(progressTotal, Seconds(state.ElapsedMs) + (started ? " to start" : " elapsed"));
         bool canRetry = playback.Error is not null && !playback.Busy;
-        SetText(progressNote, state.Failed ? playback.Error ?? "Try loading this video again." : started
-            ? (canRetry ? "Playback started, then stopped. You can retry." : "Timing is for this startup attempt.")
-            : state.EndedUnconfirmed ? "The video ended before startup timing could be confirmed." : StartupNotes[state.Completed]);
+        string note = state.Failed ? playback.Error ?? "Try loading this video again." : started
+            ? (canRetry ? "Playback started, then stopped. You can retry." : string.Empty)
+            : state.EndedUnconfirmed ? "The video ended before startup timing could be confirmed." : StartupNotes[state.Completed];
+        SetText(progressNote, note);
+        progressNote.Visibility = ToVisibility(note.Length > 0);
         if (!canRetry && progressRetry.FocusState != FocusState.Unfocused)
             ((ScrollViewer)PlayerProgressFlyout.Content).Focus(FocusState.Programmatic);
         progressRetry.Visibility = ToVisibility(canRetry);
@@ -173,7 +175,7 @@ internal sealed partial class MainWindow
         private readonly ProgressRing ring = new() { Width = 15, Height = 15, IsActive = false, Visibility = Visibility.Collapsed };
         private readonly TextBlock time = new() { FontSize = 11, VerticalAlignment = VerticalAlignment.Center };
         private string? status;
-        public Grid View { get; } = new() { MinHeight = 34, ColumnSpacing = 8, Padding = new Thickness(5, 3, 5, 3), CornerRadius = new CornerRadius(4) };
+        public Grid View { get; } = new() { MinHeight = 30, ColumnSpacing = 8, Padding = new Thickness(5, 3, 5, 3), CornerRadius = new CornerRadius(4) };
 
         public string AccessibleStatus => status ?? "Waiting";
 
@@ -181,7 +183,7 @@ internal sealed partial class MainWindow
         {
             this.label = label;
             this.detail = detail;
-            if (detail) View.MinHeight = 26;
+            if (detail) View.MinHeight = 22;
             View.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(16) });
             View.ColumnDefinitions.Add(new ColumnDefinition());
             View.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
