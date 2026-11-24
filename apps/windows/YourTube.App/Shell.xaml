@@ -15,6 +15,7 @@
       <Setter Property="HorizontalContentAlignment" Value="Left"/>
     </Style>
     <DataTemplate x:Key="HistoryRowTemplate"><Grid Padding="14,10" MinHeight="76"/></DataTemplate>
+    <DataTemplate x:Key="SubscribedChannelRowTemplate"><Grid Padding="10,5" MinHeight="32"/></DataTemplate>
     <DataTemplate x:Key="LibraryCardTemplate"><Grid Padding="6"/></DataTemplate>
     <Style x:Key="LibraryCardContainer" TargetType="GridViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="VerticalContentAlignment" Value="Stretch"/><Setter Property="Margin" Value="0"/></Style>
     <DataTemplate x:Key="HomeShelfTemplate">
@@ -64,36 +65,40 @@
     <Grid x:Name="WorkspaceContent" Grid.Row="1" Grid.Column="1" Margin="19,21,19,0">
     <Grid x:Name="HistoryPanel" Visibility="Collapsed">
       <Grid x:Name="LibraryContent" RowSpacing="10">
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
         <Grid ColumnSpacing="12">
           <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
           <StackPanel Spacing="2"><TextBlock x:Name="ViewHeading" Text="History" FontSize="22" FontWeight="Bold" TextWrapping="Wrap" AutomationProperties.HeadingLevel="Level1"/><TextBlock x:Name="VideosStatusText" Foreground="{StaticResource Muted}" TextWrapping="Wrap"/></StackPanel>
           <Button x:Name="RefreshButton" Grid.Column="1" VerticalAlignment="Center" IsEnabled="False" Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Refresh" AutomationProperties.Name="Refresh feed"><FontIcon Glyph="&#xE72C;" FontSize="15"/></Button>
         </Grid>
-        <Border x:Name="ChannelsDisclosure" Grid.Row="1" BorderBrush="#36413a" BorderThickness="0,1,0,1" Visibility="Collapsed">
-        <Expander x:Name="ChannelsPanel" Background="Transparent" BorderThickness="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-          <Expander.Header><TextBlock x:Name="ChannelsStatusText" Text="Subscribed channels" TextWrapping="Wrap"/></Expander.Header>
-          <ListView x:Name="ChannelsList" MaxHeight="136" ItemTemplate="{StaticResource HistoryRowTemplate}" SelectionMode="None" HorizontalContentAlignment="Stretch" AutomationProperties.Name="Subscribed channels">
-            <ListView.ItemsPanel><ItemsPanelTemplate><ItemsStackPanel Orientation="Vertical"/></ItemsPanelTemplate></ListView.ItemsPanel>
-          </ListView>
-        </Expander>
-        </Border>
-        <Grid x:Name="FeedStatus" Grid.Row="2" ColumnSpacing="8" Visibility="Collapsed">
+        <Grid x:Name="FeedStatus" Grid.Row="1" ColumnSpacing="8" Visibility="Collapsed">
           <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
           <ProgressRing x:Name="FeedBusyRing" Width="16" Height="16" Visibility="Collapsed"/>
           <TextBlock x:Name="FeedStatusText" Grid.Column="1" Foreground="{StaticResource Muted}" TextWrapping="Wrap" VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite"/>
           <Button x:Name="FeedCancelButton" Grid.Column="2" Content="Cancel" Visibility="Collapsed" AutomationProperties.Name="Cancel and clear session"/>
         </Grid>
-        <GridView x:Name="HistoryList" Grid.Row="3" Padding="0,0,8,0" ItemTemplate="{StaticResource LibraryCardTemplate}" ItemContainerStyle="{StaticResource LibraryCardContainer}" IsItemClickEnabled="True" SelectionMode="None" ScrollViewer.HorizontalScrollMode="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Watch history">
+        <Grid x:Name="LibraryFeeds" Grid.Row="2">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <Border x:Name="SubscriptionRail" Width="214" Margin="0,0,16,0" Padding="0,0,10,0" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,0,1,0" Visibility="Collapsed">
+          <Grid RowSpacing="6">
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+            <TextBlock Text="Subscribed Channels" Margin="10,4,0,0" FontWeight="SemiBold" TextWrapping="Wrap" AutomationProperties.HeadingLevel="Level2"/>
+            <ListView x:Name="ChannelsList" Grid.Row="1" Padding="0,0,8,0" ItemTemplate="{StaticResource SubscribedChannelRowTemplate}" SelectionMode="Single" HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollMode="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Subscribed channels">
+              <ListView.ItemsPanel><ItemsPanelTemplate><ItemsStackPanel Orientation="Vertical"/></ItemsPanelTemplate></ListView.ItemsPanel>
+            </ListView>
+          </Grid>
+        </Border>
+        <GridView x:Name="HistoryList" Grid.Column="1" Padding="0,0,8,0" ItemTemplate="{StaticResource LibraryCardTemplate}" ItemContainerStyle="{StaticResource LibraryCardContainer}" IsItemClickEnabled="True" SelectionMode="None" ScrollViewer.HorizontalScrollMode="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Watch history">
           <GridView.ItemsPanel><ItemsPanelTemplate><ItemsWrapGrid Orientation="Horizontal" ItemWidth="230" ItemHeight="212"/></ItemsPanelTemplate></GridView.ItemsPanel>
           <GridView.Footer><Button x:Name="FeedRetryButton" Content="Retry loading more videos" Margin="0,0,0,16" HorizontalAlignment="Center" Visibility="Collapsed"/></GridView.Footer>
         </GridView>
-        <ListView x:Name="HomeShelvesList" Grid.Row="3" Padding="0,0,8,0" SelectionMode="None" Visibility="Collapsed"
+        <ListView x:Name="HomeShelvesList" Grid.Column="1" Padding="0,0,8,0" SelectionMode="None" Visibility="Collapsed"
                   ItemTemplate="{StaticResource HomeShelfTemplate}"
                   ScrollViewer.HorizontalScrollMode="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Home shelves">
           <ListView.ItemContainerStyle><Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="0"/><Setter Property="IsTabStop" Value="False"/></Style></ListView.ItemContainerStyle>
           <ListView.Footer><Button x:Name="HomeRetryButton" Content="Retry loading more rows" Margin="0,0,0,16" HorizontalAlignment="Center" Visibility="Collapsed"/></ListView.Footer>
         </ListView>
+        </Grid>
       </Grid>
     </Grid>
     <ScrollViewer x:Name="SignInPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">

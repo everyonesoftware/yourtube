@@ -32,10 +32,51 @@ internal static class SubscriptionStateTests
         Verify(controller.Channels.Count == 0 && controller.Videos.Count == 0 && controller.Continuation is null && !controller.Busy && store.Value is null, "late subscription response cannot resurrect sign-out data or credentials");
         Console.WriteLine("PASS: account switching and sign-out clear subscription data and reject late results.");
         await Pagination();
+        await ChannelSelection();
         await FlatFeedBackgroundPaging(BrowseView.Subscriptions);
         await FlatFeedBackgroundPaging(BrowseView.History);
         await NavigationAndFailures();
         await AccountAndRevocation();
+    }
+
+    private static async Task ChannelSelection()
+    {
+        var api = new TestApi();
+        var controller = new SessionController(api, new TestStore(), "fixture-device");
+        SubscribedChannel[] channels = [new("Same name", false), new("Same name", false)];
+        var all = Video("aaaaaaaaaaa");
+        var first = Video("bbbbbbbbbbb") with { Channel = "Unrelated display byline" };
+        var second = Video("ccccccccccc");
+        var late = new TaskCompletionSource<SubscriptionsPage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var requests = new List<string?>();
+        api.Subscriptions = (_, cursor) =>
+        {
+            Verify(cursor is null, "returning to All cannot send a channel cursor");
+            return Task.FromResult(new SubscriptionsPage(channels, [all], "all-cursor", null));
+        };
+        api.SubscriptionChannel = (account, channel, cursor) =>
+        {
+            Verify(account == TestApi.A, "channel request retains the active account");
+            requests.Add(cursor);
+            return ReferenceEquals(channel, channels[0]) ? late.Task : Task.FromResult(cursor is null
+                ? new SubscriptionsPage([], [first], "channel-cursor", null)
+                : new SubscriptionsPage([], [second], null, null));
+        };
+        await controller.SignInAsync();
+        await controller.SelectAccountAsync(TestApi.A);
+        await controller.NavigateAsync(BrowseView.Subscriptions);
+        await controller.SelectSubscriptionChannelAsync(new("Same name", false));
+        Verify(requests.Count == 0, "a matching name is not an authorized channel selection");
+        var older = controller.SelectSubscriptionChannelAsync(channels[0]);
+        await controller.SelectSubscriptionChannelAsync(channels[1]);
+        Verify(ReferenceEquals(controller.SelectedSubscriptionChannel, channels[1]) && controller.Videos.SequenceEqual([first]), "selection uses the exact tab and its provider videos, not the byline");
+        late.SetResult(new([], [all], "obsolete-cursor", null));
+        await older;
+        await controller.LoadHistoryAsync(append: true);
+        Verify(requests.SequenceEqual(new string?[] { null, null, "channel-cursor" }) && controller.Videos.SequenceEqual([first, second]) && ReferenceEquals(controller.Channels, channels), "channel paging ignores obsolete responses and retains the rail");
+        await controller.SelectSubscriptionChannelAsync(null);
+        Verify(controller.SelectedSubscriptionChannel is null && controller.Videos.SequenceEqual([all]) && controller.Continuation == "all-cursor", "All Subscriptions resets the grid and its cursor");
+        Console.WriteLine("PASS: exact channel selection, stale response rejection, channel paging and aggregate reset.");
     }
 
     private static async Task FlatFeedBackgroundPaging(BrowseView view)

@@ -288,6 +288,8 @@ internal sealed class TestApi : IYouTubeApi
     public Task<IReadOnlyList<YouTubeAccount>> GetAccountsAsync(YouTubeSession session, CancellationToken token) => Accounts();
     public Func<YouTubeAccount, string?, Task<SubscriptionsPage>> Subscriptions = (_, _) => Task.FromResult(new SubscriptionsPage([], [], null, null));
     public Task<SubscriptionsPage> GetSubscriptionsAsync(YouTubeSession session, YouTubeAccount account, string? continuation, CancellationToken token) => Subscriptions(account, continuation);
+    public Func<YouTubeAccount, SubscribedChannel, string?, Task<SubscriptionsPage>> SubscriptionChannel = (_, _, _) => throw new InvalidOperationException("Unexpected channel request");
+    public Task<SubscriptionsPage> GetSubscriptionChannelAsync(YouTubeSession session, YouTubeAccount account, SubscribedChannel channel, string? continuation, CancellationToken token) => SubscriptionChannel(account, channel, continuation);
     public Func<YouTubeAccount, string?, Task<HomePage>> Home = (_, _) => Task.FromResult(new HomePage([], null, null));
     public Task<HomePage> GetHomeAsync(YouTubeSession session, YouTubeAccount account, string? continuation, CancellationToken token) => Home(account, continuation);
     public Func<YouTubeAccount, string?, Task<HistoryPage>> History = (_, _) => Task.FromResult(new HistoryPage([], null, null));

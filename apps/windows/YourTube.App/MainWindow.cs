@@ -63,6 +63,12 @@ internal sealed partial class MainWindow : Window
     private CancellationTokenSource? avatarRequest;
     private IReadOnlyList<HistoryVideo>? displayedVideos;
     private IReadOnlyList<SubscribedChannel>? displayedChannels;
+    private sealed class ChannelChoice(SubscribedChannel? channel)
+    {
+        public SubscribedChannel? Channel { get; } = channel;
+    }
+    private static readonly ChannelChoice AllSubscriptions = new(null);
+    private bool syncingChannelSelection;
     private BrowseView lastBrowseView = BrowseView.Home;
     private string? browserNotice;
     private bool settingsVisible;
@@ -146,6 +152,15 @@ internal sealed partial class MainWindow : Window
         accountMenu.Opening += (_, _) => PopulateAccountMenu(accountMenu);
         accountMenu.Closed += (_, _) => accountMenu.Items.Clear();
         C<ListView>("ChannelsList").ContainerContentChanging += (_, args) => RenderChannelRow(args);
+        C<ListView>("ChannelsList").SelectionChanged += async (sender, _) =>
+        {
+            if (syncingChannelSelection || closed || settingsVisible || playback.Selected is not null ||
+                controller is not { View: BrowseView.Subscriptions } current ||
+                sender is not ListView { SelectedItem: ChannelChoice choice }) return;
+            await current.SelectSubscriptionChannelAsync(choice.Channel);
+        };
+        C<Grid>("LibraryFeeds").SizeChanged += (_, args) =>
+            C<Border>("SubscriptionRail").Width = Math.Clamp(args.NewSize.Width * .27, 134, 214);
         WireLibrary();
         C<GridView>("HistoryList").ItemClick += async (_, args) =>
         {
@@ -350,13 +365,10 @@ internal sealed partial class MainWindow : Window
             SetLibraryDestination(C<Button>("HistoryButton"), "History", signedIn, !settingsVisible && controller.View == BrowseView.History);
             SetLibraryDestination(C<Button>("SubscriptionsButton"), "Subscriptions", signedIn, !settingsVisible && subscriptions);
             C<TextBlock>("ViewHeading").Text = home ? "Home" : subscriptions ? "Subscriptions" : "History";
-            C<Border>("ChannelsDisclosure").Visibility = ToVisibility(subscriptions);
-            if (!subscriptions || controller.Channels.Count == 0) C<Expander>("ChannelsPanel").IsExpanded = false;
-            C<TextBlock>("ChannelsStatusText").Text = controller.Channels.Count > 0 ? $"Subscribed channels ({controller.Channels.Count})" : controller.Busy ? "Loading subscribed channels…" : "No subscribed channels loaded.";
+            C<Border>("SubscriptionRail").Visibility = ToVisibility(subscriptions && controller.SelectedAccount is not null);
             var videosStatus = C<TextBlock>("VideosStatusText");
-            videosStatus.Text = home ? "" : subscriptions ? "Latest videos from your channels" : "Videos you’ve watched";
-            videosStatus.Visibility = ToVisibility(!home);
-            AutomationProperties.SetName(C<GridView>("HistoryList"), subscriptions ? "Latest subscription videos" : "Watch history");
+            videosStatus.Visibility = ToVisibility(!home && !subscriptions);
+            AutomationProperties.SetName(C<GridView>("HistoryList"), subscriptions ? $"Videos: {controller.SelectedSubscriptionChannel?.Name ?? "All Subscriptions"}" : "Watch history");
             C<ListView>("HomeShelvesList").Visibility = ToVisibility(home);
             C<GridView>("HistoryList").Visibility = ToVisibility(!home);
             C<Grid>("HistoryPanel").Visibility = ToVisibility(!settingsVisible && signedIn && playback.Selected is null);
@@ -386,11 +398,7 @@ internal sealed partial class MainWindow : Window
             C<TextBlock>("ExpiryText").Text = authorization is null ? "" : $"Code expires at {authorization.ExpiresAt.ToLocalTime():t}.";
             C<Button>("OpenActivationButton").IsEnabled = authorization is not null && authorization.ExpiresAt > DateTimeOffset.UtcNow && BrowserPolicy.IsActivationUri(authorization.VerificationUri);
 
-            if (!ReferenceEquals(displayedChannels, controller.Channels))
-            {
-                displayedChannels = controller.Channels;
-                C<ListView>("ChannelsList").ItemsSource = controller.Channels;
-            }
+            RenderSubscriptionChoices(controller.Channels, controller.SelectedSubscriptionChannel);
             RenderHomeShelves(signedIn && home ? controller.HomeShelves : []);
             RenderLibraryVideos(signedIn && !home ? controller.Videos : null);
         }
@@ -438,17 +446,40 @@ internal sealed partial class MainWindow : Window
 
     private static Visibility ToVisibility(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
 
+    private void RenderSubscriptionChoices(IReadOnlyList<SubscribedChannel> channels, SubscribedChannel? selected)
+    {
+        var list = C<ListView>("ChannelsList");
+        syncingChannelSelection = true;
+        try
+        {
+            if (!ReferenceEquals(displayedChannels, channels))
+            {
+                displayedChannels = channels;
+                list.ItemsSource = new[] { AllSubscriptions }.Concat(channels.Select(c => new ChannelChoice(c))).ToArray();
+            }
+            if (list.SelectedItem is not ChannelChoice choice || !ReferenceEquals(choice.Channel, selected))
+            {
+                var index = 0;
+                while (selected is not null && index < channels.Count && !ReferenceEquals(channels[index], selected)) index++;
+                list.SelectedIndex = selected is null || index == channels.Count ? 0 : index + 1;
+            }
+        }
+        finally { syncingChannelSelection = false; }
+    }
+
     private void RenderChannelRow(ContainerContentChangingEventArgs args)
     {
         if (args.ItemContainer.ContentTemplateRoot is not Grid host) return;
         host.Children.Clear();
         AutomationProperties.SetName(args.ItemContainer, "");
-        if (closed || args.InRecycleQueue || args.Item is not SubscribedChannel channel) return;
-        var row = new StackPanel { Spacing = 5 };
-        row.Children.Add(new TextBlock { Text = channel.Name, FontSize = 16, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
-        if (channel.HasNewContent) row.Children.Add(new TextBlock { Text = "New content", FontSize = 12 });
+        if (closed || args.InRecycleQueue || args.Item is not ChannelChoice choice) return;
+        var channel = choice.Channel;
+        var name = channel?.Name ?? "All Subscriptions";
+        var row = new StackPanel { Spacing = 2 };
+        row.Children.Add(new TextBlock { Text = name, FontSize = 14, TextWrapping = TextWrapping.Wrap });
+        if (channel?.HasNewContent == true) row.Children.Add(new TextBlock { Text = "New content", FontSize = 11 });
         host.Children.Add(row);
-        AutomationProperties.SetName(args.ItemContainer, channel.HasNewContent ? $"{channel.Name}, new content" : channel.Name);
+        AutomationProperties.SetName(args.ItemContainer, channel?.HasNewContent == true ? $"{name}, new content" : name);
         args.Handled = true;
     }
 

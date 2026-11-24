@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using YourTube.Core;
 using Xunit;
 using static YourTube.Core.Tests.ClientTests;
@@ -16,6 +17,170 @@ public sealed class SubscriptionsTests
       {"expandableTabRenderer":{"title":"Second channel","endpoint":{"browseEndpoint":{"browseId":"FEsubscriptions","params":"opaque-second-channel"}},"thumbnail":{"thumbnails":[]}}}
     ]}}]}}}}}
     """;
+
+    private static string WithChannelReloads()
+    {
+        var response = JsonNode.Parse(Initial)!;
+        var tabs = response["contents"]!["tvBrowseRenderer"]!["content"]!["tvSecondaryNavRenderer"]!["sections"]![0]!["tvSecondaryNavSectionRenderer"]!["tabs"]!;
+        void AddReload(int index, string renderer, string token)
+        {
+            var tab = tabs[index]![renderer]!;
+            tab["content"] ??= new JsonObject();
+            tab["content"]!["tvSurfaceContentRenderer"] ??= new JsonObject();
+            tab["content"]!["tvSurfaceContentRenderer"]!["continuation"] = new JsonObject
+            {
+                ["reloadContinuationData"] = new JsonObject { ["continuation"] = token }
+            };
+        }
+        AddReload(0, "tabRenderer", "wrong-aggregate-reload");
+        AddReload(1, "tabRenderer", "channel-first");
+        AddReload(2, "expandableTabRenderer", "channel-second+/=");
+        tabs[2]!["expandableTabRenderer"]!["title"] = "Fixture Channel";
+        return response.ToJsonString();
+    }
+
+    [Fact]
+    public async Task ReloadSelectsTheActualTabEvenWhenTitlesAndBrowseIdsMatch()
+    {
+        const string channelBody = """
+        {"continuationContents":{"sectionListContinuation":{"contents":[{"shelfRenderer":{"content":{"horizontalListRenderer":{"items":[
+          {"videoRenderer":{"videoId":"ccccccccccc","title":{"simpleText":"Channel upload"},"shortBylineText":{"simpleText":"Not the tab title"}}}
+        ]}}}}]}}}
+        """;
+        using var transport = new Transport(Html, Script, WithChannelReloads(), channelBody);
+        using var http = new HttpClient(transport);
+        var clock = new Clock();
+        var client = clock.Client(http);
+        var session = new YouTubeSession("fixture-access", "fixture-refresh", clock.Now.AddHours(1));
+        var account = new YouTubeAccount("Brand", "@brand", "brand-page");
+        var aggregate = await client.GetSubscriptionsAsync(session, account);
+        Assert.Equal(new[] { "Fixture Channel", "Fixture Channel" }, aggregate.Channels.Select(c => c.Name));
+        Assert.All(aggregate.Channels, c => Assert.True(c.CanLoadVideos));
+        Assert.DoesNotContain("channel-second", aggregate.Channels[1].ToString());
+
+        var page = await client.GetSubscriptionChannelAsync(session, account, aggregate.Channels[1]);
+        Assert.Empty(page.Channels);
+        var video = Assert.Single(page.Videos);
+        Assert.Equal("ccccccccccc", video.VideoId);
+        Assert.Equal("Not the tab title", video.Channel);
+        Assert.Null(page.Continuation);
+        Assert.Null(page.Message);
+        Assert.Equal(4, transport.Requests.Count);
+        var request = transport.Requests[^1];
+        Assert.Equal("POST", request.Method);
+        Assert.Equal("https://www.youtube.com/youtubei/v1/browse", request.Url);
+        Assert.Equal("https://www.youtube.com/tv", request.Referer);
+        Assert.Equal("Bearer fixture-access", request.Auth);
+        Assert.Equal("brand-page", request.Page);
+        using var doc = JsonDocument.Parse(request.Body);
+        var json = doc.RootElement;
+        Assert.Equal("channel-second+/=", json.GetProperty("continuation").GetString());
+        Assert.False(json.TryGetProperty("params", out _));
+        Assert.False(json.TryGetProperty("browseId", out _));
+        Assert.True(json.GetProperty("racyCheckOk").GetBoolean());
+        Assert.True(json.GetProperty("contentCheckOk").GetBoolean());
+        Assert.Equal("TVHTML5", json.GetProperty("context").GetProperty("client").GetProperty("clientName").GetString());
+        Assert.Equal("brand-page", json.GetProperty("context").GetProperty("user").GetProperty("onBehalfOfUser").GetString());
+    }
+
+    [Fact]
+    public async Task ChannelPageCursorIsStableForRetryAndCannotCrossTabAccountOrAggregate()
+    {
+        const string response = """
+        {"continuationContents":{"gridContinuation":{"items":[{"videoRenderer":{"videoId":"ccccccccccc"}}],
+         "continuations":[{"nextContinuationData":{"continuation":"provider-page+/="}}]}}}
+        """;
+        using var transport = new Transport(Html, Script, WithChannelReloads(), response, response, response);
+        using var http = new HttpClient(transport);
+        var clock = new Clock();
+        var client = clock.Client(http);
+        var session = new YouTubeSession("fixture-access", "fixture-refresh", clock.Now.AddHours(1));
+        var account = new YouTubeAccount("Owner", null, null);
+        var aggregate = await client.GetSubscriptionsAsync(session, account);
+        var channel = aggregate.Channels[0];
+        var first = await client.GetSubscriptionChannelAsync(session, account, channel);
+        var secondTab = await client.GetSubscriptionChannelAsync(session, account, aggregate.Channels[1]);
+        Assert.NotNull(first.Continuation);
+        Assert.NotNull(secondTab.Continuation);
+        Assert.NotEqual(first.Continuation, secondTab.Continuation);
+        Assert.DoesNotContain("provider-page", first.Continuation);
+
+        foreach (var rejected in new Func<Task>[]
+        {
+            () => client.GetSubscriptionChannelAsync(session, account, aggregate.Channels[1], first.Continuation),
+            () => client.GetSubscriptionChannelAsync(session, account with { }, channel, first.Continuation),
+            () => client.GetSubscriptionChannelAsync(session, account, channel, aggregate.Continuation),
+            () => client.GetSubscriptionChannelAsync(session, account, channel, "provider-page+/="),
+            () => client.GetSubscriptionChannelAsync(session, account, new SubscribedChannel(channel.Name, true)),
+            () => client.GetSubscriptionsAsync(session, account, first.Continuation)
+        })
+            Assert.Equal("invalid_argument", (await Assert.ThrowsAsync<YouTubeException>(rejected)).Code);
+        Assert.Equal(5, transport.Requests.Count);
+
+        var next = await client.GetSubscriptionChannelAsync(session, account, channel, first.Continuation);
+        Assert.Equal(first.Continuation, next.Continuation); // UI can detect repetition without reading provider tokens.
+        Assert.Equal(6, transport.Requests.Count);
+        Assert.Null(transport.Requests[^1].Page);
+        using var doc = JsonDocument.Parse(transport.Requests[^1].Body);
+        Assert.Equal("provider-page+/=", doc.RootElement.GetProperty("continuation").GetString());
+        Assert.False(doc.RootElement.GetProperty("context").GetProperty("user").TryGetProperty("onBehalfOfUser", out _));
+    }
+
+    [Theory]
+    [InlineData("grid")]
+    [InlineData("body-reload")]
+    [InlineData("browse-only")]
+    public async Task ChannelResultsUseOnlyTheContinuationBody(string kind)
+    {
+        var response = JsonNode.Parse("""
+        {"contents":{"tvBrowseRenderer":{"content":{"tvSurfaceContentRenderer":{"content":{"gridRenderer":{"items":[
+          {"videoRenderer":{"videoId":"aaaaaaaaaaa"}},
+          {"continuationItemRenderer":{"continuationEndpoint":{"continuationCommand":{"token":"wrong-browse"}}}}
+        ]}}}}}}}
+        """)!;
+        // Both header and ordinary browse content have parseable cards and cursors.
+        response["onResponseReceivedActions"] = JsonNode.Parse("""
+        [{"reloadContinuationItemsCommand":{"slot":"RELOAD_CONTINUATION_SLOT_HEADER","continuationItems":[
+           {"videoRenderer":{"videoId":"decoy000001"}},
+           {"continuationItemRenderer":{"continuationEndpoint":{"continuationCommand":{"token":"wrong-header"}}}}
+        ]}}]
+        """);
+        var body = JsonNode.Parse("""
+        [{"videoRenderer":{"videoId":"ccccccccccc"}},
+         {"continuationItemRenderer":{"continuationEndpoint":{"continuationCommand":{"token":"selected-body"}}}}]
+        """);
+        if (kind == "grid") response["continuationContents"] = new JsonObject { ["gridContinuation"] = new JsonObject { ["items"] = body } };
+        if (kind == "body-reload") response["onResponseReceivedActions"]!.AsArray().Add(new JsonObject
+        {
+            ["reloadContinuationItemsCommand"] = new JsonObject
+            {
+                ["slot"] = "RELOAD_CONTINUATION_SLOT_BODY", ["continuationItems"] = body
+            }
+        });
+        using var transport = new Transport(Html, Script, WithChannelReloads(), response.ToJsonString(), "{\"continuationContents\":{}}");
+        using var http = new HttpClient(transport);
+        var clock = new Clock();
+        var client = clock.Client(http);
+        var session = new YouTubeSession("fixture-access", "fixture-refresh", clock.Now.AddHours(1));
+        var account = new YouTubeAccount("Owner", null, null);
+        var channel = (await client.GetSubscriptionsAsync(session, account)).Channels[0];
+        if (kind == "browse-only")
+        {
+            Assert.Equal("invalid_response", (await Assert.ThrowsAsync<YouTubeException>(
+                () => client.GetSubscriptionChannelAsync(session, account, channel))).Code);
+            Assert.Equal(4, transport.Requests.Count);
+            return;
+        }
+        var page = await client.GetSubscriptionChannelAsync(session, account, channel);
+        Assert.Equal("ccccccccccc", Assert.Single(page.Videos).VideoId);
+        Assert.NotNull(page.Continuation);
+        var empty = await client.GetSubscriptionChannelAsync(session, account, channel, page.Continuation);
+        Assert.Empty(empty.Videos);
+        Assert.Null(empty.Continuation);
+        Assert.Equal("No videos were returned for this subscribed channel.", empty.Message);
+        using var doc = JsonDocument.Parse(transport.Requests[^1].Body);
+        Assert.Equal("selected-body", doc.RootElement.GetProperty("continuation").GetString());
+    }
 
     [Theory]
     [InlineData(false)]

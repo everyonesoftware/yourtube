@@ -14,6 +14,7 @@ internal sealed class CoreApi(YouTubeClient client) : IYouTubeApi
     public Task<YouTubeSession> RefreshSessionAsync(string refreshToken, CancellationToken cancellationToken) => client.RefreshSessionAsync(refreshToken, cancellationToken);
     public Task<IReadOnlyList<YouTubeAccount>> GetAccountsAsync(YouTubeSession session, CancellationToken cancellationToken) => client.GetAccountsAsync(session, cancellationToken);
     public Task<SubscriptionsPage> GetSubscriptionsAsync(YouTubeSession session, YouTubeAccount account, string? continuation, CancellationToken cancellationToken) => client.GetSubscriptionsAsync(session, account, continuation, cancellationToken);
+    public Task<SubscriptionsPage> GetSubscriptionChannelAsync(YouTubeSession session, YouTubeAccount account, SubscribedChannel channel, string? continuation, CancellationToken cancellationToken) => client.GetSubscriptionChannelAsync(session, account, channel, continuation, cancellationToken);
     public Task<HomePage> GetHomeAsync(YouTubeSession session, YouTubeAccount account, string? continuation, CancellationToken cancellationToken) => client.GetHomeAsync(session, account, continuation, cancellationToken);
     public Task<HistoryPage> GetHistoryAsync(YouTubeSession session, YouTubeAccount account, string? continuation, CancellationToken cancellationToken) => client.GetHistoryAsync(session, account, continuation, cancellationToken);
 }

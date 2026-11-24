@@ -237,10 +237,14 @@ internal static class WiringTests
             e.Name.LocalName == "ItemsWrapGrid" && (string?)e.Attribute("Orientation") == "Horizontal") &&
             (string?)library.Attribute("IsItemClickEnabled") == "True" && names["SettingsHost"] == "ContentControl",
             "Library uses a native virtualized wrapping grid with item activation and retains Settings");
-        StateTests.Verify(Named("ChannelsList").Ancestors().Any(e => e.Name.LocalName == "Expander") &&
+        StateTests.Verify(Named("ChannelsList").Ancestors().Contains(Named("SubscriptionRail")) &&
+            Named("SubscriptionRail").Parent == library.Parent &&
+            (string?)library.Attribute("Grid.Column") == "1" &&
+            (string?)Named("ChannelsList").Attribute("SelectionMode") == "Single" &&
+            !code.Contains("Latest videos from your channels") &&
             Named("SubscriptionsButton").Ancestors().Contains(Named("LibraryNavigation")) &&
             Named("HistoryButton").Ancestors().Contains(Named("LibraryNavigation")),
-            "Library uses a dedicated feed rail and a disclosure for read-only channels");
+            "Subscriptions uses a selectable inline rail left of the existing video grid without the old subtitle");
         StateTests.Verify(code.Contains("libraryOrigin = video;") && code.Contains("RestoreLibraryFocus(origin)") &&
             libraryCode.Contains("ReferenceEquals(video, origin)") && libraryCode.Contains("feed.ScrollIntoView(origin)"),
             "Back restores the originating Library card, only if it still belongs to the active feed");

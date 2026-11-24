@@ -3,20 +3,70 @@ using System.Text.Json;
 
 namespace YourTube.Core;
 
-public sealed record SubscribedChannel(string Name, bool HasNewContent);
+public sealed record SubscribedChannel(string Name, bool HasNewContent)
+{
+    internal SubscriptionChannelRoute? Route { get; init; }
+    public bool CanLoadVideos => Route is not null;
+}
 public sealed record SubscriptionsPage(IReadOnlyList<SubscribedChannel> Channels, IReadOnlyList<HistoryVideo> Videos, string? Continuation, string? Message);
+
+internal sealed class SubscriptionChannelRoute(YouTubeClient client, YouTubeAccount account, string reloadToken)
+{
+    internal const string CursorPrefix = "yourtube-channel:";
+    private readonly object gate = new();
+    private readonly Dictionary<string, string> providerToHandle = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> handleToProvider = new(StringComparer.Ordinal);
+
+    internal string ReloadToken { get; } = reloadToken;
+    internal bool BelongsTo(YouTubeClient requester, YouTubeAccount identity) =>
+        ReferenceEquals(client, requester) && ReferenceEquals(account, identity);
+
+    internal string? ResolveCursor(string handle)
+    {
+        lock (gate) return handleToProvider.GetValueOrDefault(handle);
+    }
+
+    internal string? IssueCursor(string? providerToken)
+    {
+        if (providerToken is null) return null;
+        lock (gate)
+        {
+            // Stable within this route so the UI can detect paging cycles. No provider token leaves the route.
+            if (providerToHandle.TryGetValue(providerToken, out var handle)) return handle;
+            handle = CursorPrefix + Guid.NewGuid().ToString("N");
+            providerToHandle.Add(providerToken, handle);
+            handleToProvider.Add(handle, providerToken);
+            return handle;
+        }
+    }
+}
 
 public sealed partial class YouTubeClient
 {
+    public Task<SubscriptionsPage> GetSubscriptionChannelAsync(YouTubeSession session, YouTubeAccount account,
+        SubscribedChannel channel, string? continuation = null, CancellationToken cancellationToken = default) => SafeAsync(async () =>
+    {
+        ValidateSession(session);
+        if (channel?.Route is not { } route || !route.BelongsTo(this, account)) throw InvalidArgument();
+        var token = continuation is null ? route.ReloadToken : route.ResolveCursor(continuation) ?? throw InvalidArgument();
+        cancellationToken.ThrowIfCancellationRequested();
+        await BootstrapAsync(cancellationToken);
+        var json = await BrowseSubscriptionsAsync(session, account, "continuation", token, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        var page = ParseVideoPage(FilterSubscriptionRows(SubscriptionChannelContainer(json)));
+        return new SubscriptionsPage([], page.Videos, route.IssueCursor(page.Continuation),
+            page.Videos.Count == 0 ? "No videos were returned for this subscribed channel." : null);
+    }, cancellationToken);
+
     public Task<SubscriptionsPage> GetSubscriptionsAsync(YouTubeSession session, YouTubeAccount account, string? continuation = null, CancellationToken cancellationToken = default) => SafeAsync(async () =>
     {
         ValidateSession(session);
-        if (account is null || (continuation is not null && string.IsNullOrWhiteSpace(continuation))) throw InvalidArgument();
+        if (account is null || (continuation is not null && (string.IsNullOrWhiteSpace(continuation) ||
+            continuation.StartsWith(SubscriptionChannelRoute.CursorPrefix, StringComparison.Ordinal)))) throw InvalidArgument();
         cancellationToken.ThrowIfCancellationRequested();
         await BootstrapAsync(cancellationToken);
-        var payload = new Dictionary<string, object?> { ["context"] = Context(account.PageId), ["racyCheckOk"] = true, ["contentCheckOk"] = true };
-        payload[continuation is null ? "browseId" : "continuation"] = continuation ?? "FEsubscriptions";
-        var json = await PostAsync("youtubei/v1/browse", payload, cancellationToken, session: session, pageId: account.PageId);
+        var json = await BrowseSubscriptionsAsync(session, account, continuation is null ? "browseId" : "continuation",
+            continuation ?? "FEsubscriptions", cancellationToken);
         if (continuation is not null)
         {
             var continued = ParseVideoPage(FilterSubscriptionRows(HistoryContainer(json)));
@@ -36,11 +86,43 @@ public sealed partial class YouTubeClient
             if (index == 0 && At(tab, "thumbnail").ValueKind is JsonValueKind.Undefined or JsonValueKind.Null) continue;
             var name = TextAt(tab, "title");
             if (name.Length == 0) throw Invalid();
-            channels.Add(new(name, TextAt(At(tab, "presentationStyle"), "style") == "NEW_CONTENT"));
+            channels.Add(new(name, TextAt(At(tab, "presentationStyle"), "style") == "NEW_CONTENT")
+            {
+                Route = tab.Equals(aggregate) || ChannelReloadToken(tab) is not { } reload ? null : new(this, account, reload)
+            });
         }
         var page = ParseVideoPage(FilterSubscriptionRows(ActiveHistoryContent(At(aggregate, "content"))));
         return new SubscriptionsPage(channels, page.Videos, page.Continuation, page.Videos.Count == 0 ? "No subscription videos were returned." : null);
     }, cancellationToken);
+
+    private Task<JsonElement> BrowseSubscriptionsAsync(YouTubeSession session, YouTubeAccount account,
+        string selector, string value, CancellationToken cancellationToken) => PostAsync("youtubei/v1/browse", new Dictionary<string, object?>
+    {
+        ["context"] = Context(account.PageId), ["racyCheckOk"] = true, ["contentCheckOk"] = true, [selector] = value
+    }, cancellationToken, session: session, pageId: account.PageId);
+
+    private static JsonElement SubscriptionChannelContainer(JsonElement response)
+    {
+        // This request is always a continuation. Do not let a co-present browse snapshot
+        // supply aggregate videos or a cursor, even when that snapshot is parseable.
+        if (!response.TryGetProperty("contents", out _)) return HistoryContainer(response);
+        var continuationEnvelope = new Dictionary<string, JsonElement>();
+        foreach (var key in new[] { "continuationContents", "onResponseReceivedActions", "onResponseReceivedEndpoints" })
+            if (response.TryGetProperty(key, out var value)) continuationEnvelope.Add(key, value);
+        return HistoryContainer(JsonSerializer.SerializeToElement(continuationEnvelope));
+    }
+
+    private static string? ChannelReloadToken(JsonElement tab)
+    {
+        // BrowseHelper.TabRenderer.getReloadToken -> WatchNextHelper.ContinuationItem.getContinuationToken.
+        var continuation = At(tab, "content", "tvSurfaceContentRenderer", "continuation");
+        foreach (var key in new[] { "nextContinuationData", "nextRadioContinuationData", "reloadContinuationData" })
+        {
+            var token = At(continuation, key, "continuation");
+            if (token.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(token.GetString())) return token.GetString();
+        }
+        return null;
+    }
 
     private static JsonElement FilterSubscriptionRows(JsonElement container)
     {

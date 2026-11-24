@@ -21,6 +21,7 @@ internal interface IYouTubeApi
     Task<IReadOnlyList<YouTubeAccount>> GetAccountsAsync(YouTubeSession session, CancellationToken cancellationToken);
     Task<HistoryPage> GetHistoryAsync(YouTubeSession session, YouTubeAccount account, string? continuation, CancellationToken cancellationToken);
     Task<SubscriptionsPage> GetSubscriptionsAsync(YouTubeSession session, YouTubeAccount account, string? continuation, CancellationToken cancellationToken);
+    Task<SubscriptionsPage> GetSubscriptionChannelAsync(YouTubeSession session, YouTubeAccount account, SubscribedChannel channel, string? continuation, CancellationToken cancellationToken);
     Task<HomePage> GetHomeAsync(YouTubeSession session, YouTubeAccount account, string? continuation, CancellationToken cancellationToken);
     Task<YouTubeClient.WatchRecord> RecordWatchStartAsync(YouTubeSession session, YouTubeAccount account, string videoId, TimeSpan duration, TimeSpan position, CancellationToken cancellationToken);
     Task RecordWatchProgressAsync(YouTubeSession session, YouTubeAccount account, YouTubeClient.WatchRecord record, TimeSpan start, TimeSpan end, CancellationToken cancellationToken);
@@ -39,6 +40,7 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
     public YouTubeAccount? SelectedAccount { get; private set; }
     public IReadOnlyList<HistoryVideo> Videos { get; private set; } = [];
     public IReadOnlyList<SubscribedChannel> Channels { get; private set; } = [];
+    public SubscribedChannel? SelectedSubscriptionChannel { get; private set; }
     public IReadOnlyList<HomeShelf> HomeShelves { get; private set; } = [];
     public bool Appending { get; private set; }
     public bool AppendFailed { get; private set; }
@@ -127,10 +129,15 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
     }
     private void ClearFeed()
     {
+        Channels = []; HomeShelves = []; SelectedSubscriptionChannel = null;
+        ClearVideoPage();
+    }
+    private void ClearVideoPage()
+    {
         consumedCursors.Clear();
         Appending = false;
         AppendFailed = false;
-        Videos = []; Channels = []; HomeShelves = []; Continuation = null;
+        Videos = []; Continuation = null;
     }
     public async Task SignInAsync()
     {
@@ -187,12 +194,21 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
         return FetchHistoryAsync(SelectedAccount, append, switching: false);
     }
 
+    public Task SelectSubscriptionChannelAsync(SubscribedChannel? channel)
+    {
+        if (View != BrowseView.Subscriptions || Phase != SessionPhase.SignedIn || SelectedAccount is not { } account ||
+            ReferenceEquals(channel, SelectedSubscriptionChannel) ||
+            (channel is not null && !Channels.Any(item => ReferenceEquals(item, channel)))) return Task.CompletedTask;
+        return FetchHistoryAsync(account, append: false, switching: false, changingSubscription: true, subscriptionChoice: channel);
+    }
+
     private async Task FetchHistoryAsync(YouTubeAccount account, bool append, bool switching,
-        (long Id, CancellationToken Token)? restoring = null)
+        (long Id, CancellationToken Token)? restoring = null, bool changingSubscription = false, SubscribedChannel? subscriptionChoice = null)
     {
         var op = restoring ?? epoch.Begin();
         YouTubeSession? captured = null;
         string? continuation = null;
+        SubscribedChannel? channel = null;
         var view = View;
         epoch.Commit(op.Id, () =>
         {
@@ -204,6 +220,12 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
                 SelectedAccount = account;
                 ClearFeed();
             }
+            if (changingSubscription)
+            {
+                SelectedSubscriptionChannel = subscriptionChoice;
+                ClearVideoPage();
+            }
+            channel = SelectedSubscriptionChannel;
             continuation = append ? Continuation : null;
             var label = view switch { BrowseView.Home => "Home videos", BrowseView.Subscriptions => "subscriptions", _ => "history" };
             Appending = append;
@@ -231,10 +253,12 @@ internal sealed class SessionController(IYouTubeApi api, ITokenStore store, stri
             }
             if (view == BrowseView.Subscriptions)
             {
-                var subscriptions = await api.GetSubscriptionsAsync(captured, account, continuation, op.Token);
+                var subscriptions = channel is null
+                    ? await api.GetSubscriptionsAsync(captured, account, continuation, op.Token)
+                    : await api.GetSubscriptionChannelAsync(captured, account, channel, continuation, op.Token);
                 epoch.Commit(op.Id, () =>
                 {
-                    Channels = append ? Channels : subscriptions.Channels;
+                    if (!append && channel is null) Channels = subscriptions.Channels;
                     var added = UpdateVideos(subscriptions.Videos, append);
                     var stopped = SetContinuation(continuation, subscriptions.Continuation, added);
                     Status = stopped ? "YouTube repeated a subscription page. Refresh to try again." : subscriptions.Message ?? (Videos.Count == 0 ? "No subscription videos were returned for this account." : "");
