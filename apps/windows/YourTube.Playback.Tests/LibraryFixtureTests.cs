@@ -10,19 +10,21 @@ public sealed class LibraryFixtureTests
     [Theory][InlineData(true, "complete")][InlineData(false, "complete")]
     [InlineData(true, "wrong_id")][InlineData(true, "invalid_duration")][InlineData(true, "missing_description")][InlineData(true, "empty_description")]
     [InlineData(true, "malformed_description")][InlineData(true, "expired_description")][InlineData(true, "missing_audio")]
+    [InlineData(true, "unreachable")][InlineData(false, "unreachable")]
     public async Task ActualPinnedLibraryResolvesMetadataStreamsAndValidityRedirect(bool includeLength, string scenario)
     {
         byte[] full = [..IndexTests.Header(), ..new byte[100]];
         byte[] fullAudio = [..IndexTests.Header(true), ..new byte[100]];
         var video = ResolverTests.Url("video"); var audio = ResolverTests.Url("audio");
         var streams = new[] {
+            new { itag=160, url=ResolverTests.Url("missing").AbsoluteUri, mimeType="video/mp4; codecs=\"avc1.64001f\"", bitrate=250000, contentLength=includeLength ? full.Length.ToString() : null, width=256, height=144, qualityLabel="144p" },
             new { itag=248, url=ResolverTests.Url("decoy-vp9").AbsoluteUri, mimeType="video/webm; codecs=\"vp9\"", bitrate=2000000, contentLength=includeLength ? full.Length.ToString() : null, width=1920, height=1080, qualityLabel="1080p" },
             new { itag=315, url=ResolverTests.Url("decoy-high").AbsoluteUri, mimeType="video/mp4; codecs=\"avc1.64001f\"", bitrate=5000000, contentLength=includeLength ? full.Length.ToString() : null, width=3840, height=2160, qualityLabel="2160p" },
             new { itag=18, url=ResolverTests.Url("decoy-muxed").AbsoluteUri, mimeType="video/mp4; codecs=\"avc1.64001f, mp4a.40.2\"", bitrate=1000000, contentLength=includeLength ? full.Length.ToString() : null, width=640, height=360, qualityLabel="360p" },
             new { itag=134, url=video.AbsoluteUri, mimeType="video/mp4; codecs=\"avc1.64001f\"", bitrate=1000000, contentLength=includeLength ? full.Length.ToString() : null, width=640, height=360, qualityLabel="360p" },
             new { itag=140, url=audio.AbsoluteUri, mimeType="audio/mp4; codecs=\"mp4a.40.2\"", bitrate=128000, contentLength=includeLength ? fullAudio.Length.ToString() : null, width=0, height=0, qualityLabel="" }
         };
-        string Player(string id, string duration, string? description) => JsonSerializer.Serialize(new { playabilityStatus = new { status="OK" }, videoDetails = new { videoId=id, title="Synthetic fixture title", author="Fixture author", channelId="UCaaaaaaaaaaaaaaaaaaaaaa", lengthSeconds=duration, shortDescription=description }, microformat = new { playerMicroformatRenderer = new { uploadDate="2020-01-01" } }, streamingData = new { adaptiveFormats=scenario == "missing_audio" ? streams[..^1] : streams } });
+        string Player(string id, string duration, string? description) => JsonSerializer.Serialize(new { playabilityStatus = new { status="OK" }, videoDetails = new { videoId=id, title="Synthetic fixture title", author="Fixture author", channelId="UCaaaaaaaaaaaaaaaaaaaaaa", lengthSeconds=duration, shortDescription=description }, microformat = new { playerMicroformatRenderer = new { uploadDate="2020-01-01" } }, streamingData = new { adaptiveFormats=scenario switch { "missing_audio" => streams[1..^1], "unreachable" => streams, _ => streams[1..] } } });
         var watchPlayer = Player("jNQXAC9IVRw", "1", "Fixture description");
         var streamPlayer = Player(scenario == "wrong_id" ? "abcdefghijk" : "jNQXAC9IVRw", scenario == "invalid_duration" ? "0" : "1",
             scenario switch { "missing_description" or "expired_description" => null, "empty_description" => "", _ => "Fixture description" });
@@ -30,6 +32,7 @@ public sealed class LibraryFixtureTests
         var clock = new FixtureClock();
         var timing = PlaybackTiming.StartForStartup();
         int heads=0, tails=0, redirects=0, decoyRequests=0, watches=0;
+        var probeSnapshots = new List<StreamDiscoverySnapshot>();
         var handler = new Handler(r => {
             var u = r.RequestUri!;
             if (u.Host == "www.youtube.com")
@@ -46,13 +49,18 @@ public sealed class LibraryFixtureTests
             }
             Assert.True(PublicTransport.IsCdn(u)); Assert.Null(r.Headers.Authorization); Assert.False(r.Headers.Contains("Cookie"));
             var live = timing.ReadStartup()!;
-            if (live.Completed == 0) Assert.Equal(StreamDiscoveryStep.Reachability, live.Discovery.Current);
+            if (live.Completed == 0)
+            {
+                Assert.Equal(StreamDiscoveryStep.Reachability, live.Discovery.Current);
+                probeSnapshots.Add(live.Discovery);
+            }
             else Assert.Null(live.Discovery.Current); // DASH index reads are not discovery.
             if (u.Query.Contains("id=decoy-", StringComparison.Ordinal))
             {
                 decoyRequests++;
                 return new(HttpStatusCode.NotFound);
             }
+            if (u.Query.Contains("id=missing", StringComparison.Ordinal)) return new(HttpStatusCode.NotFound);
             var source = u.Query.Contains("id=audio", StringComparison.Ordinal) ? fullAudio : full;
             if (r.Method == HttpMethod.Head) { heads++; var h = new HttpResponseMessage(HttpStatusCode.OK); h.Content.Headers.ContentLength=source.Length; return h; }
             if (u.Host == "a.googlevideo.com") { redirects++; var redirect = new HttpResponseMessage(HttpStatusCode.Found); redirect.Headers.Location = new UriBuilder(u) { Host="b.googlevideo.com" }.Uri; return redirect; }
@@ -84,6 +92,14 @@ public sealed class LibraryFixtureTests
         Assert.True(media is not null, "Pinned library fixture resolution failed: " + (error ?? "unknown"));
         Assert.Null(discovery.Current);
         Assert.All(discovery.Durations, duration => Assert.NotNull(duration));
+        if (scenario is "complete" or "unreachable")
+        {
+            int total = scenario == "unreachable" ? 3 : 2;
+            int[] expected = includeLength ? [0, 0, 1, 1] : [0, 0, 0, 1, 1, 1];
+            if (total == 3) expected = [0, .. expected.Select(n => n + 1)];
+            Assert.Equal(expected.Select(n => (StreamCheckProgress?)new StreamCheckProgress(n, total)), probeSnapshots.Select(s => s.ReachabilityProgress));
+            Assert.Equal(new StreamCheckProgress(total, total), discovery.ReachabilityProgress);
+        }
         Assert.Equal(scenario == "invalid_duration" ? 1 : 0, watches);
         Assert.Equal("Synthetic fixture title", media!.Title); Assert.Equal("Fixture author", media.Author);
         bool missing = scenario is "missing_description" or "malformed_description" or "expired_description";

@@ -153,9 +153,10 @@ internal sealed partial class MainWindow
         {
             var duration = state.Discovery.Durations[i];
             bool current = state.Discovery.Current == (StreamDiscoveryStep)i;
+            var checks = i == (int)StreamDiscoveryStep.Reachability && duration.HasValue ? state.Discovery.ReachabilityProgress : null;
             discoveryRows[i].RenderStatus(current && !state.IsFinal, current && state.Failed,
                 duration.HasValue && !current, state.IsFinal && !state.Failed && current, duration,
-                state.Completed > 0 ? "Not needed" : state.IsFinal ? "Not run" : "Waiting");
+                state.Completed > 0 ? "Not needed" : state.IsFinal ? "Not run" : "Waiting", checks);
         }
         if (state.IsFinal) progressClock?.Stop();
         else if (progressClock is { IsRunning: false }) progressClock.Start();
@@ -173,6 +174,7 @@ internal sealed partial class MainWindow
         private readonly FontIcon? chevron;
         private readonly FontIcon mark = new() { FontSize = 11 };
         private readonly ProgressRing ring = new() { Width = 15, Height = 15, IsActive = false, Visibility = Visibility.Collapsed };
+        private readonly TextBlock text;
         private readonly TextBlock time = new() { FontSize = 11, VerticalAlignment = VerticalAlignment.Center };
         private string? status;
         public Grid View { get; } = new() { MinHeight = 30, ColumnSpacing = 8, Padding = new Thickness(5, 3, 5, 3), CornerRadius = new CornerRadius(4) };
@@ -192,7 +194,7 @@ internal sealed partial class MainWindow
             icon.Children.Add(mark);
             icon.Children.Add(ring);
             View.Children.Add(icon);
-            var text = new TextBlock { Text = label, FontSize = detail ? 11 : 13, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
+            text = new TextBlock { Text = label, FontSize = detail ? 11 : 13, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
             Grid.SetColumn(text, 1);
             View.Children.Add(text);
             if (disclosure)
@@ -216,14 +218,16 @@ internal sealed partial class MainWindow
                 current && snapshot.EndedUnconfirmed, snapshot.StepDurations[index]);
         }
 
-        public void RenderStatus(bool active, bool failed, bool done, bool unconfirmed, long? duration, string waiting = "Waiting")
+        public void RenderStatus(bool active, bool failed, bool done, bool unconfirmed, long? duration, string waiting = "Waiting", StreamCheckProgress? checks = null)
         {
             string next = active ? "In progress" : failed ? "Failed" : done ? "Complete" :
                 unconfirmed ? "Not confirmed" : waiting;
+            SetText(text, checks is { } count ? $"{label} ({count.Checked}/{count.Total})" : label);
+            string name = checks is { } progress ? $"{label}: {progress.Checked} of {progress.Total} streams checked. {next}" : $"{label}: {next}";
+            if (AutomationProperties.GetName(View) != name) AutomationProperties.SetName(View, name);
             if (status != next)
             {
                 status = next;
-                AutomationProperties.SetName(View, $"{label}: {next}");
                 View.Background = active ? ActiveBackground : failed ? FailedBackground : null;
                 mark.Glyph = failed ? "\uE783" : done ? "\uE73E" : "\uEA3A";
                 mark.Visibility = ToVisibility(!active);

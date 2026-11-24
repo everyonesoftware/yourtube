@@ -8,11 +8,53 @@ internal sealed class PublicTransport(HttpMessageHandler handler) : HttpMessageH
     {
         internal string Id { get; } = id;
         internal PlayerMetadata? Latest { get; set; }
+        internal bool MeasuresProgress => timing?.TracksStartup == true;
+        private HashSet<string>? remaining;
+        private int total;
         private int probing;
+        internal void BeginPlayerResponse(HashSet<string>? candidates)
+        {
+            remaining = candidates;
+            total = candidates?.Count ?? 0;
+            timing?.RecordReachabilityProgress(total > 0 ? new(0, total) : null);
+        }
+
+        // The pinned library probes serially. Use the initiating URL (not the
+        // redirect target) and count the terminal result, not each HTTP request.
+        internal void ObserveProbe(Uri origin, HttpMethod method, HttpResponseMessage response)
+        {
+            if (remaining is null) return;
+            if (!response.IsSuccessStatusCode && response.StatusCode != System.Net.HttpStatusCode.NotFound) return;
+            if (method == HttpMethod.Head && response.IsSuccessStatusCode && response.Content.Headers.ContentLength is not null) return;
+            var key = origin.AbsoluteUri;
+            if (method == HttpMethod.Get)
+            {
+                int range = key.LastIndexOf("&range=", StringComparison.Ordinal);
+                if (range < 0) range = key.IndexOf("?range=", StringComparison.Ordinal);
+                if (range >= 0) key = key[..range];
+            }
+            // The library's HTTP wrapper adds hl=en to CDN requests if absent.
+            // For tail probes it is already stripped with the appended range.
+            if (!remaining.Remove(key) &&
+                !(method == HttpMethod.Head && (key.EndsWith("&hl=en", StringComparison.Ordinal) || key.EndsWith("?hl=en", StringComparison.Ordinal)) && remaining.Remove(key[..^6])))
+            {
+                BeginPlayerResponse(null);
+                return;
+            }
+            timing?.RecordReachabilityProgress(new(total - remaining.Count, total));
+        }
+
         internal void MarkReachability()
         {
             if (timing is not null && Interlocked.Exchange(ref probing, 1) == 0)
                 timing.Mark(PlaybackTimingStage.StreamReachabilityStarted);
+        }
+
+        internal void Finish()
+        {
+            // A successful manifest should account for every advertised probe.
+            // Keep the timing, but don't retain a misleading partial count.
+            if (remaining is { Count: > 0 }) timing?.RecordReachabilityProgress(null);
         }
     }
     private readonly AsyncLocal<DiscoveryCapture?> discoveryCapture = new();
@@ -22,7 +64,12 @@ internal sealed class PublicTransport(HttpMessageHandler handler) : HttpMessageH
         var previous = discoveryCapture.Value;
         var capture = new DiscoveryCapture(videoId, timing);
         discoveryCapture.Value = capture;
-        try { return (await discover(), capture.Latest); }
+        try
+        {
+            var result = await discover();
+            capture.Finish();
+            return (result, capture.Latest);
+        }
         finally { discoveryCapture.Value = previous; }
     }
     internal static bool IsCdn(Uri u) => u.IsAbsoluteUri && u.Scheme == "https" && u.IsDefaultPort && u.UserInfo.Length == 0 && u.Fragment.Length == 0 && u.Host.EndsWith(".googlevideo.com", StringComparison.OrdinalIgnoreCase);
@@ -69,7 +116,11 @@ internal sealed class PublicTransport(HttpMessageHandler handler) : HttpMessageH
                     if (originalQuery.Count != nextQuery.Count || originalQuery.Any(p => !nextQuery.TryGetValue(p.Key, out var value) || value != p.Value)) throw Unsafe();
                     uri = next; continue;
                 }
-                if (request.Method == HttpMethod.Head) return response;
+                if (request.Method == HttpMethod.Head)
+                {
+                    if (!cancellationToken.IsCancellationRequested) discoveryCapture.Value?.ObserveProbe(origin, request.Method, response);
+                    return response;
+                }
                 // Buffer only bounded responses, including library validity probes and JSON.
                 try
                 {
@@ -83,9 +134,15 @@ internal sealed class PublicTransport(HttpMessageHandler handler) : HttpMessageH
                     bool publicPlayer = !cdn && response.IsSuccessStatusCode && request.Method == HttpMethod.Post && uri.AbsolutePath == "/youtubei/v1/player";
                     // The pinned stream client uses the last successful transport response,
                     // including on a retry. Never carry details forward from an earlier response.
-                    if (publicPlayer && discoveryCapture.Value is { } capture)
-                        capture.Latest = PlayerMetadata.Read(original, capture.Id);
-                    var bytes = publicPlayer ? PlayerStreamFilter.Filter(original) : original;
+                    var capture = discoveryCapture.Value;
+                    var bytes = original;
+                    if (publicPlayer)
+                    {
+                        if (capture is not null) capture.Latest = PlayerMetadata.Read(original, capture.Id);
+                        bytes = PlayerStreamFilter.Filter(original, capture?.MeasuresProgress == true, out var candidates);
+                        capture?.BeginPlayerResponse(candidates);
+                    }
+                    if (cdn && !cancellationToken.IsCancellationRequested) capture?.ObserveProbe(origin, request.Method, response);
                     var content = new ByteArrayContent(bytes);
                     foreach (var h in response.Content.Headers)
                         if (ReferenceEquals(bytes, original) || !h.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))

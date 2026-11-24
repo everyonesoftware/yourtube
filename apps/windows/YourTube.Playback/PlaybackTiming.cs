@@ -51,6 +51,8 @@ public sealed class PlaybackTiming
     public PlaybackStartupSnapshot? ReadStartup() => startup?.Read(ElapsedMs);
     public void ObserveStartupClock(TimeSpan? playingPosition, double rate = 1) => startup?.ObserveClock(playingPosition, ElapsedMs, rate);
     public void FailStartup() => startup?.Fail(ElapsedMs);
+    internal bool TracksStartup => startup is not null;
+    internal void RecordReachabilityProgress(StreamCheckProgress? progress) => startup?.RecordReachabilityProgress(progress);
 
     public void Mark(PlaybackTimingStage stage, long? positionMs = null, uint? bitrateBps = null,
         uint? previousBitrateBps = null, int? height = null, int? reasonCode = null)
