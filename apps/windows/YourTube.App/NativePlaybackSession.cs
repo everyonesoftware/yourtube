@@ -49,7 +49,8 @@ internal sealed class NativePlaybackSession(NativePlaybackSource source, MediaPl
         source.Failed += ReportFailure;
         current.MediaFailed += MediaFailed;
         current.MediaOpened += MediaOpened;
-        if (Timing is not null)
+        current.MediaEnded += MediaEnded;
+        if (Timing is { IsRecordingFile: true })
         {
             NativePlaybackSource.Attempt(() => current.PlaybackSession.PositionChanged += PositionChanged);
             NativePlaybackSource.Attempt(() => current.PlaybackSession.BufferingStarted += BufferingStarted);
@@ -79,10 +80,10 @@ internal sealed class NativePlaybackSession(NativePlaybackSource source, MediaPl
     public void Play()
     {
         var current = Player;
-        if (Timing is not null)
+        if (Timing is { IsRecordingFile: true } timing)
         {
             NativePlaybackSource.Attempt(() => Volatile.Write(ref diagnosticPlayStartTicks, current.PlaybackSession.Position.Ticks));
-            Timing.Mark(PlaybackTimingStage.NativePlayRequested);
+            timing.Mark(PlaybackTimingStage.NativePlayRequested);
         }
         current.Play();
     }
@@ -125,6 +126,12 @@ internal sealed class NativePlaybackSession(NativePlaybackSource source, MediaPl
     }
 
     public event Action? Ready;
+    public event Action? Ended;
+
+    private void MediaEnded(MediaPlayer sender, object args) => dispatcher.TryEnqueue(() =>
+    {
+        if (!IsRetired && !HasFailed) Ended?.Invoke();
+    });
 
     public async Task PrepareHandoffAsync(CancellationToken token)
     {
@@ -309,6 +316,7 @@ internal sealed class NativePlaybackSession(NativePlaybackSource source, MediaPl
         source.Failed -= ReportFailure;
         Failed = null;
         Ready = null;
+        Ended = null;
         opened.TrySetResult(false);
         failed.TrySetResult();
         source.StopDownloads();
@@ -318,7 +326,7 @@ internal sealed class NativePlaybackSession(NativePlaybackSource source, MediaPl
         var current = player; player = null;
         if (current is not null)
         {
-            if (Timing is not null)
+            if (Timing is { IsRecordingFile: true })
             {
                 NativePlaybackSource.Attempt(() => current.PlaybackSession.PositionChanged -= PositionChanged);
                 NativePlaybackSource.Attempt(() => current.PlaybackSession.BufferingStarted -= BufferingStarted);
@@ -326,6 +334,7 @@ internal sealed class NativePlaybackSession(NativePlaybackSource source, MediaPl
             }
             playerClosedCleanly &= NativePlaybackSource.Attempt(() => current.MediaFailed -= MediaFailed)
                 & NativePlaybackSource.Attempt(() => current.MediaOpened -= MediaOpened)
+                & NativePlaybackSource.Attempt(() => current.MediaEnded -= MediaEnded)
                 & NativePlaybackSource.Attempt(() => { if (current.PlaybackSession.CanPause) current.Pause(); })
                 & NativePlaybackSource.Attempt(() => current.Source = null)
                 & NativePlaybackSource.Attempt(() => { if (attached && ReferenceEquals(element.MediaPlayer, current)) element.SetMediaPlayer(null); })

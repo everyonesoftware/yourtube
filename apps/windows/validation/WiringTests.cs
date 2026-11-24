@@ -36,12 +36,20 @@ internal static class WiringTests
             "one custom native transport overlay shares the video stage instead of a below-video strip");
         var close = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "PlayerCloseButton");
         var transport = Named("PlayerTransport");
+        var progress = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "PlayerProgressButton");
         StateTests.Verify(overlay?.Name.LocalName == "Grid" && overlay.Attribute("Background") is null &&
-            close?.Name.LocalName == "Button" && close.Parent == overlay && transport.Parent == overlay &&
-            close.ElementsBeforeSelf().Contains(transport) && (string?)transport.Attribute("VerticalAlignment") == "Bottom" &&
-            (string?)close.Attribute("HorizontalAlignment") == "Right" && (string?)close.Attribute("VerticalAlignment") == "Top" &&
+            close?.Name.LocalName == "Button" && close.Ancestors().Contains(overlay) && transport.Parent == overlay &&
+            transport.ElementsAfterSelf().Any(e => close.Ancestors().Contains(e)) && (string?)transport.Attribute("VerticalAlignment") == "Bottom" &&
+            (string?)close.Parent?.Attribute("HorizontalAlignment") == "Right" && (string?)close.Parent?.Attribute("VerticalAlignment") == "Top" &&
             (string?)close.Attribute("AutomationProperties.Name") == "Close video",
             "the top-right close action and bottom transport share a fading overlay that leaves the video surface tappable");
+        StateTests.Verify(progress?.Name.LocalName == "Button" && progress.Parent == close!.Parent && progress.ElementsAfterSelf().FirstOrDefault() == close &&
+            (string?)progress.Attribute("AutomationProperties.Name") == "Playback progress" &&
+            progress.Descendants().Any(e => e.Name.LocalName == "Flyout" && ((string?)e.Attribute("Placement"))?.StartsWith("Bottom", StringComparison.Ordinal) == true),
+            "a native playback progress flyout opens below the hamburger immediately left of the close button");
+        var startupSample = Regex.Match(code, @"ObserveStartupClock\(!playback\.QualityBusy[^;]*;");
+        StateTests.Verify(startupSample.Success && !startupSample.Value.Contains("watchProgress", StringComparison.Ordinal),
+            "startup clock observation must not wait indefinitely for the History seek-completion gate");
         StateTests.Verify(code.Contains("overlay.Visibility = ToVisibility(theaterActive);") &&
             code.Contains("C<StackPanel>(\"PlayerTransport\").Visibility = ToVisibility(ready);") &&
             Regex.IsMatch(code, @"playerClock\?\.Stop\(\);\s*UpdatePlayerControlsVisibility\(\);\s*return;"),

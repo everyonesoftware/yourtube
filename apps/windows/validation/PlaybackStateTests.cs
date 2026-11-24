@@ -22,6 +22,7 @@ internal static class PlaybackStateTests
         await Races();
         await ReplacementRetiresOwnerBeforeCancellation();
         await ResolverContract();
+        await StartupTracksOnlyTheCurrentAttempt();
         await QualitySwitchCommitsOnlyWhenPrepared();
         await QualityFailuresPreserveCommittedPlayback();
         await QualityRaces();
@@ -30,6 +31,36 @@ internal static class PlaybackStateTests
         await QualityDeadline();
         Console.WriteLine("PASS: quality commit, rollback, lifetime transfer and stale completion rejection.");
     }
+    private static async Task StartupTracksOnlyTheCurrentAttempt()
+    {
+        var late = new TaskCompletionSource<Handle>();
+        var attempts = 0;
+        using var player = new PlaybackController<Handle>((_, _, timing) =>
+        {
+            timing!.Mark(PlaybackTimingStage.CompatibleStreamsFound);
+            return ++attempts == 1 ? late.Task : attempts == 2
+                ? Task.FromException<Handle>(new Exception("untrusted detail")) : Task.FromResult(new Handle());
+        }, PlaybackTiming.StartForStartup);
+        player.SetContext(true, new object(), BrowseView.History, [A, B]);
+        var obsolete = player.SelectAsync(A);
+        var first = player.StartupTiming!;
+        StateTests.Verify(first.ReadStartup()!.Completed == 1, "pending resolution exposes current startup steps");
+        await player.SelectAsync(B);
+        var second = player.StartupTiming!;
+        StateTests.Verify(second.ReadStartup() is { Completed: 1, Failed: true }, "current failure freezes the actual step");
+        late.SetResult(new Handle());
+        await obsolete;
+        StateTests.Verify(ReferenceEquals(second, player.StartupTiming), "late completion never replaces the visible attempt");
+        await player.RetryAsync();
+        StateTests.Verify(!ReferenceEquals(second, player.StartupTiming) && player.StartupTiming?.ReadStartup() is { Failed: false },
+            "retry gets a fresh timeline");
+        player.Fail(player.Active!);
+        StateTests.Verify(player.StartupTiming?.ReadStartup() is { Failed: true }, "native failure before progress is visible");
+        player.Back();
+        StateTests.Verify(player.StartupTiming is null, "closing clears the current timeline");
+        Console.WriteLine("PASS: startup progress is scoped to the current video attempt, with failure and retry.");
+    }
+
     private static async Task QualitySwitchCommitsOnlyWhenPrepared()
     {
         var original = new Handle();

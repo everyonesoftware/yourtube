@@ -52,6 +52,7 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
             var videos = manifest.GetVideoOnlyStreams().Where(s => s.Container.Name == "mp4" && Regex.IsMatch(s.VideoCodec, PlayerStreamFilter.AvcPattern) && s.VideoResolution.Height is > 0 and <= PlayerStreamFilter.MaxHeight && s.VideoResolution.Width <= PlayerStreamFilter.MaxWidth).OrderBy(s => s.VideoResolution.Height).ThenBy(s => s.Bitrate.BitsPerSecond).ToArray();
             var audio = manifest.GetAudioOnlyStreams().Where(s => s.Container.Name == "mp4" && s.AudioCodec == PlayerStreamFilter.AacCodec && s.IsAudioLanguageDefault != false).OrderByDescending(s => s.IsAudioLanguageDefault == true).ThenByDescending(s => s.Bitrate.BitsPerSecond).FirstOrDefault();
             if (videos.Length == 0 || audio is null) throw Unsupported();
+            timing?.Mark(PlaybackTimingStage.CompatibleStreamsFound);
             bool needsDescription = metadata is { Description: null };
             if (metadata is null)
             {

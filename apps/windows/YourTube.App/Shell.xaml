@@ -170,11 +170,19 @@
               </StackPanel>
             </Grid>
             </StackPanel>
-            <Button x:Name="PlayerCloseButton" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="12"
-                    Width="36" Height="36" Padding="0" Background="#B3000000" Foreground="White" BorderThickness="0" CornerRadius="18"
-                    ToolTipService.ToolTip="Close video" AutomationProperties.Name="Close video">
-              <FontIcon Glyph="&#xE711;" FontSize="14" AutomationProperties.AccessibilityView="Raw"/>
-            </Button>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="12" Spacing="7">
+              <Button x:Name="PlayerProgressButton" Width="36" Height="36" Padding="0" Background="#B3000000"
+                      Foreground="White" BorderThickness="0" CornerRadius="18"
+                      ToolTipService.ToolTip="Playback progress" AutomationProperties.Name="Playback progress">
+                <FontIcon Glyph="&#xE700;" FontSize="16" AutomationProperties.AccessibilityView="Raw"/>
+                <Button.Flyout><Flyout Placement="BottomEdgeAlignedRight"/></Button.Flyout>
+              </Button>
+              <Button x:Name="PlayerCloseButton" Width="36" Height="36" Padding="0" Background="#B3000000"
+                      Foreground="White" BorderThickness="0" CornerRadius="18"
+                      ToolTipService.ToolTip="Close video" AutomationProperties.Name="Close video">
+                <FontIcon Glyph="&#xE711;" FontSize="14" AutomationProperties.AccessibilityView="Raw"/>
+              </Button>
+            </StackPanel>
           </Grid>
       </Grid>
       <StackPanel x:Name="TheaterDetails" Grid.Row="1" Padding="28,20,28,28" Spacing="14">

@@ -108,9 +108,10 @@ internal sealed partial class MainWindow : Window
         var theater = C<MediaPlayerElement>("TheaterPlayer");
         playback = new PlaybackController<NativePlaybackSession>((id, ct, timing) => playbackResolver.ResolveAsync(id, ct, timing),
             async (media, ct, timing) => new NativePlaybackSession(await NativePlaybackSource.CreateAsync(playbackResolver, media, ct, timing, startupQuality), theater),
-            PlaybackTiming.StartIfEnabled);
+            PlaybackTiming.StartForStartup);
         playback.Changed += RenderPlayback;
         WirePlayerOverlay();
+        WirePlaybackProgress();
         C<Button>("PlayerCloseButton").Click += (_, _) => CloseVideo();
         C<Button>("PlayerRetryButton").Click += async (_, _) => { SyncPlaybackContext(); await playback.RetryAsync(); };
         C<Button>("PlayerOpenYouTubeButton").Click += async (_, _) =>
@@ -185,6 +186,8 @@ internal sealed partial class MainWindow : Window
             CancelWatchRequest();
             BindWatchSeekSource(null);
             playerClock?.Stop();
+            progressClock?.Stop();
+            PlayerProgressFlyout.Hide();
             playerTapFade?.Stop();
             CancelScrub();
             ResetDescription(null);
@@ -525,12 +528,14 @@ internal sealed partial class MainWindow : Window
         if (!ReferenceEquals(selected, watchSelection))
         {
             ShowPlayerBrowserNotice(null);
+            PlayerProgressFlyout.Hide();
             if (theater.VerticalOffset > 0) theater.ChangeView(null, 0, null, disableAnimation: true);
             CancelWatchRequest();
             watchSelection = selected;
             watchAttempted = false;
         }
         bool showTheater = selected is not null && !settingsVisible;
+        if (!showTheater) PlayerProgressFlyout.Hide();
         if (showTheater && theater.Visibility != Visibility.Visible) C<Button>("AccountButton").Flyout.Hide();
         C<Grid>("BrowseAndSettings").Visibility = ToVisibility(!fullscreen && !showTheater);
         theater.Visibility = ToVisibility(showTheater);
@@ -540,6 +545,7 @@ internal sealed partial class MainWindow : Window
         if (!ReferenceEquals(source, boundSession))
         {
             boundSession = source;
+            playback.StartupTiming?.ObserveStartupClock(null);
             BindWatchSeekSource(source);
             playerTapFade?.Stop();
             PlayerMenu.Hide();
@@ -551,6 +557,7 @@ internal sealed partial class MainWindow : Window
                     var active = source;
                     active.Failed += () => playback.Fail(active);
                     active.Ready += () => { if (ReferenceEquals(playback.Active, active)) RenderPlayback(); };
+                    WireStartupEnd(active);
                     active.Prepare();
                     ApplyPlayerAudio(active);
                     active.Open();
@@ -589,6 +596,7 @@ internal sealed partial class MainWindow : Window
         C<TextBlock>("PlayerQueueLabel").Text = playback.Queue.Count == 0 ? $"No other videos loaded in {label}" : $"Up next · from your loaded {label}";
         C<ListView>("PlayerQueue").ItemsSource = playback.Queue;
         UpdatePlayerOverlay();
+        if (playerProgressOpen) RenderPlaybackProgress();
     }
 
     private void ResetDescription(PlaybackMedia? catalog)
@@ -724,7 +732,7 @@ internal sealed partial class MainWindow : Window
         if (closed) return;
         var overlay = C<Grid>("PlayerOverlay");
         if (overlay.Visibility != Visibility.Visible) return;
-        bool interacting = playerMenuOpen || seekPointer is not null;
+        bool interacting = playerMenuOpen || playerProgressOpen || seekPointer is not null;
         if (!interacting && root.XamlRoot is { } xamlRoot &&
             FocusManager.GetFocusedElement(xamlRoot) is Control { FocusState: FocusState.Keyboard } focused)
         {
@@ -798,7 +806,7 @@ internal sealed partial class MainWindow : Window
         shortcut.Invoked += (_, args) =>
         {
             // Escape belongs to the open menu first.
-            if (playerMenuOpen || (!fullscreen && (!toggle || InteractivePlayer is null))) return;
+            if (playerMenuOpen || playerProgressOpen || (!fullscreen && (!toggle || InteractivePlayer is null))) return;
             ToggleFullscreen();
             args.Handled = true;
         };
@@ -816,6 +824,7 @@ internal sealed partial class MainWindow : Window
         var stage = C<Grid>("PlayerStage");
         var theater = C<ScrollViewer>("TheaterPanel");
         PlayerMenu.Hide();
+        PlayerProgressFlyout.Hide();
         CancelScrub();
         if (enabled)
         {
@@ -922,6 +931,7 @@ internal sealed partial class MainWindow : Window
         }
         // Never infer completion from clock advancement. If events are lost or coalesced,
         // only reporting is suppressed; subsequent native transport commands still go through.
+        playback.StartupTiming?.ObserveStartupClock(null);
         watchProgress.BeginSeek();
         view.Position = target;
     }
@@ -985,6 +995,8 @@ internal sealed partial class MainWindow : Window
             {
                 var player = session!.Player;
                 var view = player.PlaybackSession;
+                playback.StartupTiming?.ObserveStartupClock(!playback.QualityBusy &&
+                    view.PlaybackState == MediaPlaybackState.Playing ? view.Position : null, view.PlaybackRate);
                 ObserveWatchProgress(view);
                 var seek = C<Slider>("PlayerSeek");
                 double duration = Math.Max(0, view.NaturalDuration.TotalSeconds);
@@ -1212,6 +1224,7 @@ internal sealed partial class MainWindow : Window
             C<MediaPlayerElement>("TheaterPlayer"), active.Catalog);
         try
         {
+            WireStartupEnd(candidate);
             await candidate.PrepareHandoffAsync(operation);
             candidate.Failed += () => playback.Fail(candidate);
             return candidate;

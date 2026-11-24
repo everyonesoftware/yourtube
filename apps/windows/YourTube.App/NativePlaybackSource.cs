@@ -79,7 +79,7 @@ internal sealed class NativePlaybackSource : IDisposable
                 throw new PlaybackException("native_source", "Windows could not open this playback source.");
             timing?.Mark(PlaybackTimingStage.NativeSourceCreated);
             owner.adaptive.DownloadRequested += owner.DownloadRequested;
-            if (timing is not null)
+            if (timing is { IsRecordingFile: true })
             {
                 Attempt(() => owner.adaptive.DownloadBitrateChanged += owner.DownloadBitrateChanged);
                 Attempt(() => owner.adaptive.PlaybackBitrateChanged += owner.PlaybackBitrateChanged);
@@ -155,8 +155,8 @@ internal sealed class NativePlaybackSource : IDisposable
             args.Result.ExtendedStatus = unchecked((uint)0x80004005);
             token.ThrowIfCancellationRequested();
             if (Media.ExpiresAt <= DateTimeOffset.UtcNow) throw new OperationCanceledException();
-            if (Timing is not null && Interlocked.Exchange(ref firstReadRequested, 1) == 0)
-                Timing.Mark(PlaybackTimingStage.NativeFirstReadStarted);
+            if (Timing is { IsRecordingFile: true } timing && Interlocked.Exchange(ref firstReadRequested, 1) == 0)
+                timing.Mark(PlaybackTimingStage.NativeFirstReadStarted);
             // Release the WinRT deferral on cancellation even if a read does not cooperate.
             var resource = await resolver.ReadResourceAsync(Media, args.ResourceUri, args.ResourceByteRangeOffset, args.ResourceByteRangeLength, token)
                 .WaitAsync(token).ConfigureAwait(false);
@@ -202,7 +202,7 @@ internal sealed class NativePlaybackSource : IDisposable
         }
         downloadsStoppedCleanly = Attempt(() => cancellation.Cancel());
         if (adaptive is not null) downloadsStoppedCleanly &= Attempt(() => adaptive.DownloadRequested -= DownloadRequested);
-        if (adaptive is not null && Timing is not null)
+        if (adaptive is not null && Timing is { IsRecordingFile: true })
         {
             Attempt(() => adaptive.DownloadBitrateChanged -= DownloadBitrateChanged);
             Attempt(() => adaptive.PlaybackBitrateChanged -= PlaybackBitrateChanged);

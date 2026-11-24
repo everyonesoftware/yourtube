@@ -4,16 +4,18 @@ using YourTube.Playback;
 namespace YourTube.App;
 
 // UI-thread state machine; injected resources make cancellation races testable without WinRT.
-internal sealed class PlaybackController<T>(Func<string, CancellationToken, Task<T>> create) : IDisposable where T : class, IDisposable
+internal sealed class PlaybackController<T>(Func<string, CancellationToken, PlaybackTiming?, Task<T>> create,
+    Func<PlaybackTiming?> startTiming) : IDisposable where T : class, IDisposable
 {
+    public PlaybackController(Func<string, CancellationToken, Task<T>> create) : this((id, ct, _) => create(id, ct), () => null) { }
+
     public PlaybackController(IPlaybackResolver resolver, Func<PlaybackMedia, CancellationToken, Task<T>> attach)
         : this((id, ct, _) => resolver.ResolveAsync(id, ct), (media, ct, _) => attach(media, ct), () => null) { }
 
     public PlaybackController(Func<string, CancellationToken, PlaybackTiming?, Task<PlaybackMedia>> resolve,
         Func<PlaybackMedia, CancellationToken, PlaybackTiming?, Task<T>> attach, Func<PlaybackTiming?> startTiming)
-        : this(async (id, ct) =>
+        : this(async (id, ct, timing) =>
         {
-            var timing = startTiming();
             timing?.Mark(PlaybackTimingStage.ResolveStarted);
             PlaybackMedia media;
             try
@@ -37,13 +39,14 @@ internal sealed class PlaybackController<T>(Func<string, CancellationToken, Task
             if (media.ExpiresAt <= DateTimeOffset.UtcNow)
                 throw new StreamLoadFailure("The video stream expired. Retry, or open it on YouTube.");
             return await attach(media, ct, timing);
-        }) { }
+        }, startTiming) { }
 
     private sealed class StreamLoadFailure(string message) : Exception(message);
 
     public HistoryVideo? Selected { get; private set; }
     public T? Active { get; private set; }
     public bool Busy { get; private set; }
+    public PlaybackTiming? StartupTiming { get; private set; }
     public string? Error { get; private set; }
     public bool QualityBusy => qualityCancellation is not null;
     public int? QualityHeight { get; private set; }
@@ -82,21 +85,26 @@ internal sealed class PlaybackController<T>(Func<string, CancellationToken, Task
         if (!CanSelect(video)) return;
         Stop();
         Selected = video; Busy = true; Error = null;
+        var timing = StartupTiming = startTiming();
         cancellation = new CancellationTokenSource();
         var token = cancellation.Token;
         var id = generation;
         Changed?.Invoke();
         try
         {
-            var resource = await create(video.VideoId, token);
+            token.ThrowIfCancellationRequested();
+            var resource = await create(video.VideoId, token, timing);
             if (id != generation || !CanSelect(video)) { resource.Dispose(); return; }
             Active = resource;
         }
         catch (Exception error)
         {
-            if (id == generation) Error = error is StreamLoadFailure streamError
-                ? streamError.Message
-                : "Couldn’t start native playback. Retry, or open it on YouTube.";
+            if (id == generation)
+            {
+                timing?.FailStartup();
+                Error = error is StreamLoadFailure streamError ? streamError.Message
+                    : "Couldn’t start native playback. Retry, or open it on YouTube.";
+            }
         }
         finally
         {
@@ -190,6 +198,7 @@ internal sealed class PlaybackController<T>(Func<string, CancellationToken, Task
     public void Fail(T source)
     {
         if (!ReferenceEquals(source, Active)) return;
+        StartupTiming?.FailStartup();
         Stop(); Busy = false;
         Error = "Playback stopped or its source expired. Retry to request a fresh source, or open YouTube.";
         Changed?.Invoke();
@@ -216,7 +225,7 @@ internal sealed class PlaybackController<T>(Func<string, CancellationToken, Task
     public void Back()
     {
         var notify = Selected is not null || Active is not null || Busy || Error is not null;
-        Stop(); Selected = null; Busy = false; Error = null;
+        Stop(); Selected = null; Busy = false; Error = null; StartupTiming = null;
         if (notify) Changed?.Invoke();
     }
     public void Dispose()

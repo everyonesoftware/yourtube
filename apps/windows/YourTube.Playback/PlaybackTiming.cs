@@ -19,12 +19,13 @@ public enum PlaybackTimingStage
     NativeDownloadBitrateChanged, NativePlaybackBitrateChanged,
     NativeDownloadBitrateAtFirstProgress, NativePlaybackBitrateAtFirstProgress,
     NativePlayerFailed, NativeSourceExpired, NativeDisposed,
-    ReturnToAutoStarted, ManualQualityStarted, MetadataFromPlayerResponse
+    ReturnToAutoStarted, ManualQualityStarted, MetadataFromPlayerResponse, CompatibleStreamsFound, NativePlaybackEnded
 }
 
 public sealed class PlaybackTiming
 {
-    private readonly PlaybackTimingFile file;
+    private readonly PlaybackTimingFile? file;
+    private readonly PlaybackStartup? startup;
     private readonly Guid attempt = Guid.NewGuid();
     private readonly long start = Stopwatch.GetTimestamp();
     private static readonly Lazy<PlaybackTimingFile?> localFile = new(() =>
@@ -41,14 +42,22 @@ public sealed class PlaybackTiming
     });
 
     internal PlaybackTiming(PlaybackTimingFile file) => this.file = file;
+    private PlaybackTiming(PlaybackTimingFile? file, PlaybackStartup startup) => (this.file, this.startup) = (file, startup);
     public static PlaybackTiming? StartIfEnabled() => localFile.Value is { } file ? new(file) : null;
+    public static PlaybackTiming StartForStartup() => new(localFile.Value, new PlaybackStartup());
+    public bool IsRecordingFile => file is not null;
+    private long ElapsedMs => Stopwatch.GetElapsedTime(start).Ticks / TimeSpan.TicksPerMillisecond;
+    public PlaybackStartupSnapshot? ReadStartup() => startup?.Read(ElapsedMs);
+    public void ObserveStartupClock(TimeSpan? playingPosition, double rate = 1) => startup?.ObserveClock(playingPosition, ElapsedMs, rate);
+    public void FailStartup() => startup?.Fail(ElapsedMs);
 
     public void Mark(PlaybackTimingStage stage, long? positionMs = null, uint? bitrateBps = null,
         uint? previousBitrateBps = null, int? height = null, int? reasonCode = null)
     {
         if (!Enum.IsDefined(stage)) return;
-        file.Enqueue(new(attempt, DateTimeOffset.UtcNow, Stopwatch.GetElapsedTime(start).Ticks / TimeSpan.TicksPerMillisecond,
-            stage.ToString(), positionMs, bitrateBps, previousBitrateBps, height, reasonCode));
+        var elapsed = ElapsedMs;
+        startup?.Record(stage, elapsed);
+        file?.Enqueue(new(attempt, DateTimeOffset.UtcNow, elapsed, stage.ToString(), positionMs, bitrateBps, previousBitrateBps, height, reasonCode));
     }
 }
 

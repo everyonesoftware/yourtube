@@ -9,7 +9,7 @@ public sealed class LibraryFixtureTests
     // Synthetic public-shaped provider fixtures; never captured authenticated responses.
     [Theory][InlineData(true, "complete")][InlineData(false, "complete")]
     [InlineData(true, "wrong_id")][InlineData(true, "invalid_duration")][InlineData(true, "missing_description")][InlineData(true, "empty_description")]
-    [InlineData(true, "malformed_description")][InlineData(true, "expired_description")]
+    [InlineData(true, "malformed_description")][InlineData(true, "expired_description")][InlineData(true, "missing_audio")]
     public async Task ActualPinnedLibraryResolvesMetadataStreamsAndValidityRedirect(bool includeLength, string scenario)
     {
         byte[] full = [..IndexTests.Header(), ..new byte[100]];
@@ -22,7 +22,7 @@ public sealed class LibraryFixtureTests
             new { itag=134, url=video.AbsoluteUri, mimeType="video/mp4; codecs=\"avc1.64001f\"", bitrate=1000000, contentLength=includeLength ? full.Length.ToString() : null, width=640, height=360, qualityLabel="360p" },
             new { itag=140, url=audio.AbsoluteUri, mimeType="audio/mp4; codecs=\"mp4a.40.2\"", bitrate=128000, contentLength=includeLength ? fullAudio.Length.ToString() : null, width=0, height=0, qualityLabel="" }
         };
-        string Player(string id, string duration, string? description) => JsonSerializer.Serialize(new { playabilityStatus = new { status="OK" }, videoDetails = new { videoId=id, title="Synthetic fixture title", author="Fixture author", channelId="UCaaaaaaaaaaaaaaaaaaaaaa", lengthSeconds=duration, shortDescription=description }, microformat = new { playerMicroformatRenderer = new { uploadDate="2020-01-01" } }, streamingData = new { adaptiveFormats=streams } });
+        string Player(string id, string duration, string? description) => JsonSerializer.Serialize(new { playabilityStatus = new { status="OK" }, videoDetails = new { videoId=id, title="Synthetic fixture title", author="Fixture author", channelId="UCaaaaaaaaaaaaaaaaaaaaaa", lengthSeconds=duration, shortDescription=description }, microformat = new { playerMicroformatRenderer = new { uploadDate="2020-01-01" } }, streamingData = new { adaptiveFormats=scenario == "missing_audio" ? streams[..^1] : streams } });
         var watchPlayer = Player("jNQXAC9IVRw", "1", "Fixture description");
         var streamPlayer = Player(scenario == "wrong_id" ? "abcdefghijk" : "jNQXAC9IVRw", scenario == "invalid_duration" ? "0" : "1",
             scenario switch { "missing_description" or "expired_description" => null, "empty_description" => "", _ => "Fixture description" });
@@ -53,7 +53,14 @@ public sealed class LibraryFixtureTests
             return new(HttpStatusCode.OK) { Content = new ByteArrayContent(source[start..(end+1)]) };
         });
         using var resolver = new PlaybackResolver(handler); PlaybackMedia? media = null; string? error = null;
-        try { media = await resolver.ResolveAsync("jNQXAC9IVRw"); } catch (PlaybackException e) { error=e.Code; }
+        var timing = PlaybackTiming.StartForStartup();
+        try { media = await resolver.ResolveAsync("jNQXAC9IVRw", CancellationToken.None, timing); } catch (PlaybackException e) { error=e.Code; timing.FailStartup(); }
+        if (scenario == "missing_audio")
+        {
+            Assert.Null(media); Assert.Equal("unsupported_media", error);
+            Assert.True(timing.ReadStartup() is { Completed: 0, Failed: true });
+            return;
+        }
         if (scenario == "wrong_id")
         {
             Assert.Null(media); Assert.Equal("unavailable", error);
