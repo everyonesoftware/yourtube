@@ -12,11 +12,13 @@ public sealed class ReachabilityConcurrencyTests
 
     [Theory]
     [InlineData(1)]
+    [InlineData(1, true)]
     [InlineData(2)]
     [InlineData(3)]
-    public async Task PinnedLibraryOverlapsOnlyTheConfiguredWindowAndKeepsTheFullOrderedCatalog(int limit)
+    [InlineData(4, true)]
+    public async Task PinnedLibraryOverlapsOnlyTheConfiguredWindowAndKeepsTheFullOrderedCatalog(int limit, bool repeatFormatId = false)
     {
-        using var fixture = new ProbeFixture();
+        using var fixture = new ProbeFixture(repeatFormatId: repeatFormatId);
         using var resolver = new PlaybackResolver(fixture) { MaxConcurrentStreamChecks = limit };
         var timing = PlaybackTiming.StartForStartup();
         var resolve = resolver.ResolveAsync(VideoId, CancellationToken.None, timing);
@@ -44,16 +46,19 @@ public sealed class ReachabilityConcurrencyTests
             Assert.Equal(limit == 1 ? ReachabilityFallback.ConfiguredSequential : ReachabilityFallback.None, diagnostics.Fallback);
             Assert.Equal((4, 0, 0, 0, 0, 0), (diagnostics.TailRequests, diagnostics.SizeRequests, diagnostics.OtherRequests,
                 diagnostics.RedirectHops, diagnostics.ProbeRetries, diagnostics.PlayerRetries));
+            Assert.Equal(limit == 1 ? 0 : 4, diagnostics.PrefetchedTailRequests);
+            Assert.Equal(limit == 1 ? (int?)null : repeatFormatId ? 1 : 0, diagnostics.RepeatedFormatEntriesInPlan);
             Assert.NotNull(diagnostics.FinalQuarterMs);
             Assert.True(diagnostics.MedianCheckMs >= 0 && diagnostics.SlowestCheckMs >= diagnostics.MedianCheckMs);
             Assert.Equal(new[] { 0, 1, 2, 3 }, fixture.Calls.Order());
             Assert.Equal(limit, fixture.Peak);
 
-            using var serialFixture = new ProbeFixture();
+            using var serialFixture = new ProbeFixture(repeatFormatId: repeatFormatId);
             serialFixture.ReleaseAll();
             using var serial = new PlaybackResolver(serialFixture);
             Assert.Equal(1, serial.MaxConcurrentStreamChecks);
             var baseline = await serial.ResolveAsync(VideoId).WaitAsync(Deadline);
+            Assert.Equal(new[] { 0, 1, 2, 3 }, serialFixture.Calls);
             Assert.True(baseline.Manifest.AsSpan().SequenceEqual(media.Manifest), "DASH output changed with concurrency.");
         }
         finally
@@ -61,6 +66,35 @@ public sealed class ReachabilityConcurrencyTests
             fixture.ReleaseAll();
             await Task.WhenAny(resolve, Task.Delay(Deadline));
         }
+    }
+
+    [Fact]
+    public async Task RepeatedFormatPlanFallsBackWhenFirstRequestDoesNotMatch()
+    {
+        using var fixture = new ProbeFixture(repeatFormatId: true);
+        using var transport = new PublicTransport(fixture);
+        using var http = new HttpClient(transport);
+        using var deadline = new CancellationTokenSource(Deadline);
+        var token = deadline.Token;
+        var timing = PlaybackTiming.StartForStartup();
+        fixture.ReleaseAll();
+        await transport.DiscoverAsync(VideoId, timing, 4, token, async () =>
+        {
+            using var player = await http.PostAsync("https://www.youtube.com/youtubei/v1/player", null, token);
+            foreach (int i in new[] { 1, 0, 2, 3 })
+            {
+                using var probe = await http.GetAsync(fixture.TailUri(i), token);
+                Assert.Equal(HttpStatusCode.OK, probe.StatusCode);
+            }
+            return true;
+        });
+        Assert.Equal(new[] { 1, 0, 2, 3 }, fixture.Calls);
+        var discovery = timing.ReadStartup()!.Discovery;
+        Assert.Equal(new StreamCheckProgress(4, 4), discovery.ReachabilityProgress);
+        var diagnostics = Assert.IsType<StreamReachabilityDiagnostics>(discovery.ReachabilityDiagnostics);
+        Assert.Equal((ReachabilityFallback.RequestMismatch, 1, 4, 0, (int?)1),
+            (diagnostics.Fallback, diagnostics.PeakInFlight, diagnostics.TailRequests,
+                diagnostics.PrefetchedTailRequests, diagnostics.RepeatedFormatEntriesInPlan));
     }
 
     [Fact]
@@ -231,7 +265,7 @@ public sealed class ReachabilityConcurrencyTests
     }
 
     private sealed class ProbeFixture(bool unsafeRedirect = false, bool abandonFirstSecondProbe = false, bool timeout = false,
-        bool holdFirstProbeUntilCanceled = false, bool existingLanguage = false) : HttpMessageHandler
+        bool holdFirstProbeUntilCanceled = false, bool existingLanguage = false, bool repeatFormatId = false) : HttpMessageHandler
     {
         internal TaskCompletionSource[] Entered { get; } = Signals();
         internal TaskCompletionSource[] Exited { get; } = Signals();
@@ -270,7 +304,7 @@ public sealed class ReachabilityConcurrencyTests
                 int[] widths = [1280, 640, 256, 0];
                 int[] bitrates = [2_000_000, 1_000_000, 250_000, 128_000];
                 var streams = Enumerable.Range(0, 4).Select(i => new {
-                    itag = 134 + i, url = StreamUrl(i),
+                    itag = repeatFormatId && i == 1 ? 134 : 134 + i, url = StreamUrl(i),
                     mimeType = i == 3 ? "audio/mp4; codecs=\"mp4a.40.2\"" : "video/mp4; codecs=\"avc1.64001f\"",
                     contentLength = (i == 3 ? audio : video).Length.ToString(),
                     bitrate = bitrates[i], height = heights[i], width = widths[i], qualityLabel = $"{heights[i]}p"

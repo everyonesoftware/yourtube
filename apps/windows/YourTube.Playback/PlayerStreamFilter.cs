@@ -17,10 +17,11 @@ internal static class PlayerStreamFilter
     internal const int MaxWidth = 1920;
 
     internal static byte[] Filter(byte[] original, bool measure, bool prefetch,
-        out HashSet<string>? candidates, out Uri[]? probes, out ReachabilityFallback fallback)
+        out HashSet<string>? candidates, out Uri[]? probes, out ReachabilityFallback fallback, out int repeatedFormatEntries)
     {
         candidates = null;
         probes = null;
+        repeatedFormatEntries = 0;
         fallback = ReachabilityFallback.NoStreamList;
         try
         {
@@ -47,7 +48,7 @@ internal static class PlayerStreamFilter
                 if (prefetch && direct is not null)
                 {
                     if (root["playabilityStatus"] is JsonObject status && Text(status["status"]) == "OK")
-                        probes = DirectTailProbes(streaming, direct.Count, ref fallback);
+                        probes = DirectTailProbes(streaming, direct.Count, ref fallback, out repeatedFormatEntries);
                     else
                         fallback = ReachabilityFallback.PlayerNotConfirmedPlayable;
                 }
@@ -60,8 +61,9 @@ internal static class PlayerStreamFilter
 
     // Only prefetch the pinned library's predictable direct-URL, known-length
     // tail checks. HEAD discovery, alternate providers and deciphering stay serial.
-    private static Uri[]? DirectTailProbes(JsonObject streaming, int count, ref ReachabilityFallback fallback)
+    private static Uri[]? DirectTailProbes(JsonObject streaming, int count, ref ReachabilityFallback fallback, out int repeatedFormatEntries)
     {
+        repeatedFormatEntries = 0;
         if (count is < 2 or > 128) { fallback = ReachabilityFallback.CandidateCountOutsideWindow; return null; }
         var probes = new List<Uri>(count);
         var itags = new HashSet<int>();
@@ -74,7 +76,8 @@ internal static class PlayerStreamFilter
                 if (Text(entry["url"]) is not { Length: > 0 } url) { fallback = ReachabilityFallback.MissingDirectUrl; return null; }
                 if (entry["itag"] is not JsonValue value || !value.TryGetValue<int>(out var itag) || itag <= 0)
                 { fallback = ReachabilityFallback.InvalidFormatId; return null; }
-                if (!itags.Add(itag)) { fallback = ReachabilityFallback.DuplicateFormatId; return null; }
+                // Candidate URLs are already distinct. Replay matches exact requests in order, not format labels.
+                if (!itags.Add(itag)) repeatedFormatEntries++;
                 if (!long.TryParse(Text(entry["contentLength"]), NumberStyles.None, CultureInfo.InvariantCulture, out var length) || length < 2)
                 {
                     fallback = entry["contentLength"] is null ? ReachabilityFallback.MissingLength : ReachabilityFallback.InvalidLength;

@@ -19,7 +19,11 @@ public enum ReachabilityFallback
 }
 public sealed record StreamReachabilityDiagnostics(int PeakInFlight, ReachabilityMode Mode, ReachabilityFallback Fallback,
     int TailRequests, int SizeRequests, int OtherRequests, int RedirectHops, int ProbeRetries, int PlayerRetries,
-    long? MedianCheckMs, long? SlowestCheckMs, long? FinalQuarterMs);
+    long? MedianCheckMs, long? SlowestCheckMs, long? FinalQuarterMs)
+{
+    public int PrefetchedTailRequests { get; init; }
+    public int? RepeatedFormatEntriesInPlan { get; init; }
+}
 public sealed record StreamDiscoverySnapshot(StreamDiscoveryStep? Current, IReadOnlyList<long?> Durations)
 {
     public const int StepCount = 3;

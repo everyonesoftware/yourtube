@@ -24,11 +24,12 @@ internal sealed class PublicTransport(HttpMessageHandler handler, TimeSpan? requ
         private HashSet<string>? remaining;
         private int total;
         private int probing;
-        internal void BeginPlayerResponse(HashSet<string>? candidates, Uri[]? probes, ReachabilityFallback fallback)
+        internal void BeginPlayerResponse(HashSet<string>? candidates, Uri[]? probes, ReachabilityFallback fallback, int repeatedFormatEntries)
         {
             Fallback = fallback;
             remaining = candidates;
             total = candidates?.Count ?? 0;
+            Meter?.RecordPlan(probes is not null ? repeatedFormatEntries : null);
             PublishProgress(total > 0 ? new(0, total) : null);
             if (probes is not null) Window = new(probes, limit, probeBudget, token);
         }
@@ -278,8 +279,8 @@ internal sealed class PublicTransport(HttpMessageHandler handler, TimeSpan? requ
                     {
                         if (capture is not null) capture.Latest = PlayerMetadata.Read(original, capture.Id);
                         bytes = PlayerStreamFilter.Filter(original, capture?.MeasuresProgress == true, capture?.CanPrefetch == true,
-                            out var candidates, out var probes, out var fallback);
-                        capture?.BeginPlayerResponse(candidates, probes, fallback);
+                            out var candidates, out var probes, out var fallback, out var repeatedFormatEntries);
+                        capture?.BeginPlayerResponse(candidates, probes, fallback, repeatedFormatEntries);
                     }
                     if (cdn && !cancellationToken.IsCancellationRequested) capture?.ObserveProbe(origin, request.Method, response);
                     var content = new ByteArrayContent(bytes);

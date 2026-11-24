@@ -61,6 +61,10 @@ internal static class PlaybackProgressSummary
             }));
         lines.Add(FormattableString.Invariant($"CDN requests: {diagnostics.TailRequests} tail · {diagnostics.SizeRequests} size · {diagnostics.OtherRequests} other · {diagnostics.RedirectHops} redirect hops"));
         lines.Add(FormattableString.Invariant($"Retries: {diagnostics.ProbeRetries} probe · {diagnostics.PlayerRetries} player"));
+        var prefetch = FormattableString.Invariant($"Prefetched tail requests: {diagnostics.PrefetchedTailRequests}");
+        if (diagnostics.RepeatedFormatEntriesInPlan is int repeated)
+            prefetch += FormattableString.Invariant($" · Repeated format entries in latest plan: {repeated}");
+        lines.Add(prefetch);
         var samples = new List<string>(2);
         if (diagnostics.MedianCheckMs is long median) samples.Add(FormattableString.Invariant($"Median check: {median} ms"));
         if (diagnostics.SlowestCheckMs is long slowest) samples.Add(FormattableString.Invariant($"Slowest check: {slowest} ms"));

@@ -10,6 +10,8 @@ internal sealed class ReachabilityMeter(PlaybackTiming timing, int limit, TimePr
     private int active, peak, tails, sizes, other, redirects, probeRetries, playerRequests, sampleCount;
     private bool usedSerial;
     private ReachabilityFallback reason;
+    private int prefetchedTails;
+    private int? repeatedFormatEntriesInPlan;
     private long? threeQuartersAt, finalQuarter;
 
     internal static bool IsTail(Uri uri) => uri.Query.StartsWith("?range=", StringComparison.Ordinal) ||
@@ -22,6 +24,7 @@ internal sealed class ReachabilityMeter(PlaybackTiming timing, int limit, TimePr
             if (method == HttpMethod.Head) sizes++;
             else if (tail) tails++;
             else other++;
+            if (speculative && tail) prefetchedTails++;
             if (retry) probeRetries++;
             if (!speculative)
             {
@@ -67,6 +70,11 @@ internal sealed class ReachabilityMeter(PlaybackTiming timing, int limit, TimePr
         }
     }
 
+    internal void RecordPlan(int? repeatedFormatEntries)
+    {
+        lock (gate) repeatedFormatEntriesInPlan = repeatedFormatEntries;
+    }
+
     private long SampleAt(int index)
     {
         foreach (var (elapsed, count) in samples)
@@ -85,6 +93,10 @@ internal sealed class ReachabilityMeter(PlaybackTiming timing, int limit, TimePr
         timing.RecordReachabilityDiagnostics(new(peak, mode, reason, tails, sizes, other, redirects,
             probeRetries, Math.Max(0, playerRequests - 1),
             hasSamples ? (SampleAt((sampleCount - 1) / 2) + SampleAt(sampleCount / 2)) / 2 : null,
-            hasSamples ? samples.Last().Key : null, finalQuarter));
+            hasSamples ? samples.Last().Key : null, finalQuarter)
+        {
+            PrefetchedTailRequests = prefetchedTails,
+            RepeatedFormatEntriesInPlan = repeatedFormatEntriesInPlan
+        });
     }
 }

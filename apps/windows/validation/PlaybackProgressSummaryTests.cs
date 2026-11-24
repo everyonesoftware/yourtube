@@ -13,7 +13,7 @@ internal static class PlaybackProgressSummaryTests
             var version = new Version(1, 2, 3, 456);
             var settings = new PlaybackStartupSettings(720, 8);
             var diagnostics = new StreamReachabilityDiagnostics(4, ReachabilityMode.Mixed, ReachabilityFallback.MissingLength,
-                19, 3, 1, 2, 1, 1, 84, 315, 123);
+                19, 3, 1, 2, 1, 1, 84, 315, 123) { PrefetchedTailRequests = 12, RepeatedFormatEntriesInPlan = 2 };
             var discovery = new StreamDiscoverySnapshot(null, [450, 1000, 50])
             {
                 ReachabilityProgress = new(20, 20),
@@ -36,6 +36,7 @@ internal static class PlaybackProgressSummaryTests
                   Fallback reason: Missing stream length
                   CDN requests: 19 tail · 3 size · 1 other · 2 redirect hops
                   Retries: 1 probe · 1 player
+                  Prefetched tail requests: 12 · Repeated format entries in latest plan: 2
                   Median check: 84 ms · Slowest check: 315 ms
                   Final quarter: 123 ms
                 Prepare stream data: 0.180 s
