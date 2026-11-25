@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { affectsWindowsWorkflow } from '../scripts/release-tools.mjs';
 const yaml=readFileSync(new URL('../.github/workflows/ci.yml',import.meta.url),'utf8');
 test('final publisher checks out complete Git history before enriching the retained Windows artifacts',()=>{
  const release=yaml.slice(yaml.indexOf('  release:'));
@@ -32,6 +33,30 @@ test('installer smoke gates release upload independently of live YouTube',()=>{
  assert.match(windows,/uses: actions\/checkout@v4\s+with:\s+fetch-depth: 0/);
  const uploadStep=windows.slice(windows.lastIndexOf('      - uses:',upload),upload);
  assert.doesNotMatch(uploadStep,/continue-on-error|\bif:/);
+});
+
+test('Android uses one pinned, read-only common build and never hands an unsigned APK to publication',()=>{
+ assert.equal((yaml.match(/^  android:$/gm)??[]).length,1);
+ const android=yaml.match(/^  android:\r?\n((?: {4}[^\n]*\r?\n)+)/m)?.[1]??'';
+ assert.match(android,/needs: validate/);
+ assert.match(android,/if: needs.validate.outputs.android == 'true'/);
+ assert.match(android,/uses: everyonesoftware\/workflows-common\/\.github\/workflows\/build-android-v1\.yml@[0-9a-f]{40}/);
+ assert.match(android,/permissions:\s+contents: read/);
+ assert.match(android,/build-script: scripts\/build-android\.sh/);
+ assert.match(android,/artifact-name: android-unsigned-\$\{\{ github.sha \}\}/);
+ assert.match(android,/signing-enabled: false/);
+ assert.doesNotMatch(android,/secrets:/);
+ const release=yaml.slice(yaml.indexOf('\n  release:\n'));
+ assert.doesNotMatch(release,/android/);
+});
+
+test('only explicitly Android-owned workflow edits can preserve Windows binaries',()=>{
+ const androidOnly=yaml.replace('signing-enabled: false', 'signing-enabled: true');
+ assert.notEqual(yaml,androidOnly);
+ assert.equal(affectsWindowsWorkflow(yaml,androidOnly),false);
+ assert.equal(affectsWindowsWorkflow(yaml,androidOnly.replace('runs-on: windows-2022','runs-on: windows-2025')),true);
+ assert.equal(affectsWindowsWorkflow(yaml,androidOnly.replace('jobs:\n','env:\n  FLAG: changed\njobs:\n')),true);
+ assert.equal(affectsWindowsWorkflow(yaml,androidOnly.replace('  android:\n','  "android":\n')),true);
 });
 
 test('live playback probe is manual, retains failure evidence, and has no release authority',()=>{

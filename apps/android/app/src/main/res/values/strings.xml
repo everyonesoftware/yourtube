@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">YourTube</string>
+    <string name="development_status">Android development build · YouTube browsing and sign-in are not connected yet.</string>
+    <string name="open_video">Open a video file</string>
+    <string name="playback_error">Couldn’t play this video. Try opening it again or choose a different file.</string>
+    <string name="picker_error">No file picker is available.</string>
+</resources>

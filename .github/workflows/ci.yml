@@ -11,8 +11,12 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     outputs:
       windows: ${{ steps.select.outputs.windows }}
+      android: ${{ steps.android.outputs.android }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,6 +29,22 @@ jobs:
         run: node scripts/select-windows.mjs
         env:
           GH_TOKEN: ${{ github.token }}
+      - id: android
+        run: node scripts/select-android.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+  android:
+    needs: validate
+    if: needs.validate.outputs.android == 'true'
+    uses: everyonesoftware/workflows-common/.github/workflows/build-android-v1.yml@df37f65a36289c97101bf31e06602deec683e54f
+    permissions:
+      contents: read
+    with:
+      build-script: scripts/build-android.sh
+      version: 0.1.${{ github.run_number }}
+      artifact-name: android-unsigned-${{ github.sha }}
+      artifact-path: artifacts/android-ci
+      signing-enabled: false
   windows:
     needs: validate
     if: needs.validate.outputs.windows == 'true'

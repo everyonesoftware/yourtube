@@ -3,8 +3,27 @@ import { createHash } from 'node:crypto';
 export const manifestName = 'yourtube-windows.json';
 export const maxManifestBytes = 1024 * 1024;
 
+const androidTools = ['scripts/build-android.sh', 'scripts/select-android.mjs'];
+const androidFixtures = 'apps/windows/YourTube.Playback.NativeValidation/Fixtures/';
+export function selectsAndroid(paths) {
+  return paths.some(path => path.startsWith('apps/android/') || androidTools.includes(path) ||
+    ['.github/workflows/ci.yml', 'scripts/release-tools.mjs'].includes(path) ||
+    ['manifest.mpd', 'audio.mp4', 'video.mp4'].some(name => path === androidFixtures + name));
+}
+
+// Ignore only the exact Android CI wiring. Compare every other workflow byte,
+// so unknown layouts, shared settings and changes to Windows still rebuild.
+export function affectsWindowsWorkflow(before, after) {
+  const withoutAndroid = text => text
+    .replace(/^(jobs:\n  validate:\n    runs-on: ubuntu-latest\n)    permissions:\n      contents: read\n      actions: read\n(    outputs:\n      windows: \$\{\{ steps\.select\.outputs\.windows \}\}\n)      android: \$\{\{ steps\.android\.outputs\.android \}\}\n/m, '$1$2')
+    .replace(/^      - id: android\n        run: node scripts\/select-android\.mjs\n        env:\n          GH_TOKEN: \$\{\{ github\.token \}\}\n(?=  android:\n)/m, '')
+    .replace(/^  android:\n    needs: validate\n    if: needs\.validate\.outputs\.android == 'true'\n    uses: everyonesoftware\/workflows-common\/\.github\/workflows\/build-android-v1\.yml@[0-9a-f]{40}\n    permissions:\n      contents: read\n    with:\n      build-script: scripts\/build-android\.sh\n      version: 0\.1\.\$\{\{ github\.run_number \}\}\n      artifact-name: android-unsigned-\$\{\{ github\.sha \}\}\n      artifact-path: artifacts\/android-ci\n      signing-enabled: (?:true|false)\n(?=  windows:\n)/m, '');
+  return withoutAndroid(before) !== withoutAndroid(after);
+}
+
 export function selectsWindows(paths) {
   return paths.some(path => {
+    if (path.startsWith('apps/android/') || androidTools.includes(path)) return false;
     if (/^apps\/windows\/YourTube\.(Playback|Settings)\.NativeValidation\//.test(path) ||
         ['scripts/test-windows-playback.ps1', 'scripts/test-windows-settings.ps1'].includes(path)) return false;
     if (path.startsWith('apps/windows/') || ['global.json', '.github/workflows/ci.yml', 'scripts/build-windows.ps1', 'scripts/test-windows-native.ps1'].includes(path)) return true;

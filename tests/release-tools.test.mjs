@@ -52,6 +52,24 @@ test('real Git publication baseline keeps docs/table changes from rebuilding nat
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 
+test('real Git publication baseline excludes Android-only inputs from Windows', () => {
+ const dir=mkdtempSync(join(tmpdir(),'yourtube-android-selection-'));
+ const git=(...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8'}).trim();
+ const commitInput=(path)=>{
+  mkdirSync(join(dir,path,'..'),{recursive:true}); writeFileSync(join(dir,path),'input');
+  git('add',path); git('commit','-m',path);
+ };
+ try {
+  git('init','--initial-branch=main'); git('config','user.email','test@example.invalid'); git('config','user.name','Fixture');
+  git('commit','--allow-empty','-m','published baseline'); const base=git('rev-parse','HEAD');
+  const paths=()=>git('diff','--name-only','--no-renames',`${base}..HEAD`).split('\n');
+  commitInput('apps/android/app/src/main/AndroidManifest.xml');
+  assert.equal(selectsWindows(paths()),false);
+  commitInput('apps/windows/YourTube.App/MainWindow.cs');
+  assert.equal(selectsWindows(paths()),true);
+ } finally { rmSync(dir,{recursive:true,force:true}); }
+});
+
 const valid = () => ({schemaVersion:1, platform:'windows', packageId:'YourTubeWindows', channel:'win-x64', version:'0.1.1', tag:'v0.1.1', sourceSha:'a'.repeat(40), assets:[{name:'YourTubeWindows-win-x64-Setup.exe',sha256:sha256(Buffer.from('setup'))},{name:'YourTubeWindows-0.1.1-win-x64-full.nupkg',sha256:sha256(Buffer.from('package'))},{name:'releases.win-x64.json',sha256:sha256(Buffer.from('feed'))}]});
 
 test('only exact canonical complete publication manifests are trusted', () => {

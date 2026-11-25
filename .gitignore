@@ -8,3 +8,6 @@ core
 *.dmp
 *.user
 .vs/
+/apps/android/.gradle/
+/apps/android/**/build/
+/apps/android/local.properties
