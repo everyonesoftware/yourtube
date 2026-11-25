@@ -806,7 +806,7 @@ internal sealed partial class MainWindow : Window
             }
             else PreviewSeekHover(args);
         };
-        hitArea.SizeChanged += (_, _) => { UpdateChapterMarks(); HideSeekPreview(); };
+        hitArea.SizeChanged += (_, _) => { UpdateChapterTrack(); HideSeekPreview(); };
         C<Border>("PlayerSeekPreview").SizeChanged += (_, _) => PositionSeekPreview();
         hitArea.PointerEntered += (_, args) => PreviewSeekHover(args);
         hitArea.PointerExited += (_, _) => { if (seekPointer is null) HideSeekPreview(); };
@@ -819,8 +819,10 @@ internal sealed partial class MainWindow : Window
         };
         hitArea.PointerCaptureLost += (_, args) => FinishScrub(args.Pointer.PointerId, commit: false);
         hitArea.PointerCanceled += (_, args) => FinishScrub(args.Pointer.PointerId, commit: false);
+        seek.RegisterPropertyChangedCallback(UIElement.FocusStateProperty, (_, _) => UpdateChapterFocus());
         seek.ValueChanged += (_, args) =>
         {
+            UpdateChapterProgress(args.NewValue);
             if (updatingTransport || InteractivePlayer is not { } active) return;
             if (seekPointer is null) Seek(active, args.NewValue);
         };
@@ -1094,7 +1096,7 @@ internal sealed partial class MainWindow : Window
         if (!ready)
         {
             CancelScrub();
-            UpdateChapterMarks();
+            UpdateChapterTrack();
             watchProgress.BreakSegment();
             playerRunning = false;
             if (playback.Selected is null)
@@ -1140,7 +1142,7 @@ internal sealed partial class MainWindow : Window
                     double position = Math.Clamp(view.Position.TotalSeconds, 0, duration);
                     bool durationChanged = seek.Maximum != Math.Max(duration, 1);
                     seek.Maximum = Math.Max(duration, 1);
-                    if (seekabilityChanged || durationChanged) UpdateChapterMarks();
+                    if (seekabilityChanged || durationChanged) UpdateChapterTrack();
                     // WinUI's Slider snaps user input to StepFrequency.
                     seek.Value = position;
                     var time = C<TextBlock>("PlayerTime");

@@ -170,7 +170,13 @@
             <TextBlock x:Name="PlayerQualityStatus" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" Foreground="{StaticResource Muted}" Visibility="Collapsed"/>
             <Grid>
               <Slider x:Name="PlayerSeek" Minimum="0" Maximum="1" StepFrequency="0.1" SmallChange="5" LargeChange="10" IsThumbToolTipEnabled="False" IsHitTestVisible="False" AutomationProperties.Name="Playback position"/>
-              <Canvas x:Name="PlayerChapterMarks" Height="10" VerticalAlignment="Center" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
+              <Border x:Name="PlayerChapterFocus" Visibility="Collapsed" BorderBrush="{ThemeResource TextFillColorPrimaryBrush}"
+                      BorderThickness="1" CornerRadius="3" Margin="-4,0" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
+              <Canvas x:Name="PlayerChapterTrack" Height="14" VerticalAlignment="Center" Visibility="Collapsed"
+                      IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw">
+                <Canvas x:Name="PlayerChapterSegments"/>
+                <Ellipse x:Name="PlayerChapterThumb" Width="14" Height="14" Fill="{StaticResource AccentFillColorDefaultBrush}"/>
+              </Canvas>
               <Border x:Name="PlayerSeekHitArea" Background="Transparent" ManipulationMode="None" AutomationProperties.AccessibilityView="Raw"/>
             </Grid>
             <Grid ColumnSpacing="4">

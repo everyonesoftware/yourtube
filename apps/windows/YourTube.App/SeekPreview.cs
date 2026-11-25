@@ -11,6 +11,8 @@ namespace YourTube.App;
 internal sealed partial class MainWindow
 {
     private IReadOnlyList<VideoChapter> seekChapters = [];
+    private readonly List<(ChapterTrackLayout.Segment Span, Border Played)> chapterSegments = [];
+    private double chapterTrackScale;
     private double seekPreviewFraction;
     private double seekPreviewSeconds;
     private SeekStoryboardState? seekStoryboard;
@@ -42,29 +44,62 @@ internal sealed partial class MainWindow
     {
         seekChapters = VideoChapters.Parse(description, duration);
         if (closed) return;
-        UpdateChapterMarks();
+        UpdateChapterTrack();
         if (C<Border>("PlayerSeekPreview").Visibility == Visibility.Visible)
             UpdateSeekPreviewLabel();
     }
 
-    private void UpdateChapterMarks()
+    private void UpdateChapterTrack()
     {
-        var marks = C<Canvas>("PlayerChapterMarks");
-        marks.Children.Clear();
+        var track = C<Canvas>("PlayerChapterTrack");
+        var segments = C<Canvas>("PlayerChapterSegments");
+        segments.Children.Clear();
+        chapterSegments.Clear();
         var slider = C<Slider>("PlayerSeek");
         double width = C<Border>("PlayerSeekHitArea").ActualWidth;
-        if (InteractivePlayer is null || !slider.IsEnabled || width <= 2) return;
-        for (int i = 1; i < seekChapters.Count; i++)
+        var layout = InteractivePlayer is not null && slider.IsEnabled
+            ? ChapterTrackLayout.Create(seekChapters, slider.Maximum, width) : [];
+        bool segmented = layout.Length > 0;
+        // Keep the Slider in the layout and automation tree; only swap its visuals.
+        slider.Opacity = segmented ? 0 : 1;
+        if (segmented) slider.UseSystemFocusVisuals = false;
+        else slider.ClearValue(UIElement.UseSystemFocusVisualsProperty);
+        track.Visibility = ToVisibility(segmented);
+        UpdateChapterFocus();
+        if (!segmented) return;
+
+        chapterTrackScale = width / slider.Maximum;
+        var accent = C<Microsoft.UI.Xaml.Shapes.Ellipse>("PlayerChapterThumb").Fill;
+        foreach (var span in layout)
         {
-            double fraction = seekChapters[i].StartSeconds / slider.Maximum;
-            if (fraction >= 1) break;
-            var mark = new Border { Width = 2, Height = 8, Background = slider.Foreground,
-                BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Black), BorderThickness = new Thickness(.5) };
-            Canvas.SetLeft(mark, Math.Clamp(fraction * width - 1, 0, width - 2));
-            Canvas.SetTop(mark, 1);
-            marks.Children.Add(mark);
+            var remaining = new Border { Width = span.Width, Height = 8, Background = slider.Foreground, Opacity = .36 };
+            var played = new Border { Width = 0, Height = 8, Background = accent };
+            foreach (var part in new[] { remaining, played })
+            {
+                Canvas.SetLeft(part, span.Left);
+                Canvas.SetTop(part, 3);
+                segments.Children.Add(part);
+            }
+            chapterSegments.Add((span, played));
         }
+        UpdateChapterProgress(slider.Value);
     }
+
+    private void UpdateChapterProgress(double seconds)
+    {
+        if (chapterSegments.Count == 0) return;
+        double x = seconds * chapterTrackScale;
+        foreach (var (span, played) in chapterSegments)
+        {
+            double width = span.PlayedWidth(x);
+            if (played.Width != width) played.Width = width;
+        }
+        var thumb = C<Microsoft.UI.Xaml.Shapes.Ellipse>("PlayerChapterThumb");
+        Canvas.SetLeft(thumb, x - thumb.Width / 2);
+    }
+
+    private void UpdateChapterFocus() => C<Border>("PlayerChapterFocus").Visibility = ToVisibility(
+        C<Canvas>("PlayerChapterTrack").Visibility == Visibility.Visible && C<Slider>("PlayerSeek").FocusState == FocusState.Keyboard);
 
     private void PreviewSeekHover(PointerRoutedEventArgs args)
     {

@@ -147,12 +147,19 @@ internal static class WiringTests
         var slider = Named("PlayerSeek");
         StateTests.Verify(hitArea is not null && hitArea.Parent == slider.Parent && hitArea.ElementsBeforeSelf().Contains(slider) &&
             (string?)slider.Attribute("IsHitTestVisible") == "False", "pointer scrubs do not reach the native slider template before capture");
-        StateTests.Verify(names.ContainsKey("PlayerChapterMarks") && Named("PlayerChapterMarks").Parent == slider.Parent &&
-            (string?)Named("PlayerChapterMarks").Attribute("IsHitTestVisible") == "False" &&
+        StateTests.Verify(!names.ContainsKey("PlayerChapterMarks") && names.ContainsKey("PlayerChapterTrack") &&
+            Named("PlayerChapterTrack").Parent == slider.Parent &&
+            (string?)Named("PlayerChapterTrack").Attribute("IsHitTestVisible") == "False" &&
+            (string?)Named("PlayerChapterTrack").Attribute("AutomationProperties.AccessibilityView") == "Raw" &&
+            (string?)Named("PlayerChapterTrack").Attribute("Visibility") == "Collapsed" &&
             names.ContainsKey("PlayerSeekPreview") && Named("PlayerSeekPreview").Ancestors().Contains(overlay!) &&
             (string?)Named("PlayerSeekPreview").Attribute("IsHitTestVisible") == "False" &&
             (string?)Named("PlayerSeekPreview").Attribute("Visibility") == "Collapsed",
-            "chapter marks and an initially hidden seek preview are rendered without intercepting transport input");
+            "a segmented chapter track replaces tick marks without intercepting input or altering the hidden preview");
+        StateTests.Verify(seekCode.Contains("ChapterTrackLayout.Create(seekChapters, slider.Maximum, width)") &&
+            seekCode.Contains("slider.Opacity = segmented ? 0 : 1") &&
+            Regex.IsMatch(code, @"seek\.ValueChanged \+= [^\r\n]*\s*\{\s*UpdateChapterProgress\(args\.NewValue\);\s*if \(updatingTransport"),
+            "only chaptered videos replace the native visuals, and segmented progress follows playback, scrubbing and native keyboard input");
         StateTests.Verify(code.Contains("hitArea.PointerEntered +=") && code.Contains("hitArea.PointerExited +=") &&
             code.Contains("else PreviewSeekHover(args);") && code.Contains("SetSeekChapters(description, catalog.Duration);") &&
             code.Contains("SetSeekChapters(catalog?.Description, catalog?.Duration ?? TimeSpan.Zero);"),

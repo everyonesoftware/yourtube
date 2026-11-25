@@ -4,6 +4,7 @@
   <ItemGroup><Compile Include="../YourTube.App/BrowseView.cs" Link="BrowseView.cs" /><Compile Include="../YourTube.App/AutoStartupPreference.cs" Link="AutoStartupPreference.cs" /><Compile Include="../YourTube.App/PlayerAudioState.cs" Link="PlayerAudioState.cs" /></ItemGroup>
   <ItemGroup><Compile Include="../YourTube.App/PlayerControlsVisibility.cs" Link="PlayerControlsVisibility.cs" /></ItemGroup>
   <ItemGroup><Compile Include="../YourTube.App/PlayerStageLayout.cs" Link="PlayerStageLayout.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../YourTube.App/ChapterTrackLayout.cs" Link="ChapterTrackLayout.cs" /></ItemGroup>
   <ItemGroup><Compile Include="../YourTube.App/WatchProgress.cs" Link="WatchProgress.cs" /></ItemGroup>
   <ItemGroup><Compile Include="../YourTube.App/ReachabilityPreference.cs" Link="ReachabilityPreference.cs" /></ItemGroup>
   <ItemGroup><Compile Include="../YourTube.App/PlaybackProgressSummary.cs" Link="PlaybackProgressSummary.cs" /></ItemGroup>
