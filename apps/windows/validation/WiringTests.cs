@@ -317,17 +317,14 @@ internal static class WiringTests
             (string?)shelfCards.Attribute("ScrollViewer.VerticalScrollMode") == "Disabled" && shelfCards.Descendants().Any(e =>
                 e.Name.LocalName == "ItemsWrapGrid" && (string?)e.Attribute("Orientation") == "Vertical" && (string?)e.Attribute("MaximumRowsOrColumns") == "1"),
             "each Home shelf renders shared native cards in a single horizontal scroll row");
-        var bindShelf = Regex.Match(libraryCode, @"private void RenderHomeShelf\([^\r\n]*\)[\s\S]*?\r?\n    \}").Value;
-        StateTests.Verify(bindShelf.Contains("WireHomeShelfWheel(feed)") &&
-            libraryCode.Contains("scroller.Content is not UIElement wheelSurface") &&
-            libraryCode.Contains("wheelSurface.AddHandler(UIElement.PointerWheelChangedEvent, handler, handledEventsToo: true)") &&
-            libraryCode.Contains("wheelSurface.RemoveHandler(UIElement.PointerWheelChangedEvent, handler)"),
-            "Home intercepts the wheel below the shelf scroller before it can scroll, without accumulating handlers");
-        var shelfWheel = Regex.Match(libraryCode, @"private void ForwardHomeShelfWheel\([^\r\n]*\)[\s\S]*?\r?\n    \}").Value;
-        StateTests.Verify(Regex.IsMatch(shelfWheel, @"args\.Handled = true;\s*if \(\(args\.KeyModifiers & VirtualKeyModifiers\.Shift\) != 0\)") &&
-            shelfWheel.Contains("scroller.ChangeView(offset, null, null, disableAnimation: true)") &&
-            shelfWheel.Contains("outer.ChangeView(null, vertical, null, disableAnimation: true)"),
-            "Home wheel input is consumed once: Shift scrolls the row, otherwise a vertical wheel scrolls only the feed");
+        StateTests.Verify((string?)shelfCards?.Attribute("ScrollViewer.HorizontalScrollBarVisibility") == "Hidden" &&
+            libraryCode.Contains("arrows.Bind(feed, () => homeScroller)") && libraryCode.Contains("shelfArrows.SetTitle(shelf?.Title)") &&
+            !libraryCode.Contains("ForwardHomeShelfWheel"),
+            "Home shelves hide the scrollbar and use shared arrows and wheel routing, relabeled on recycle");
+        StateTests.Verify((string?)Named("PlayerQueue").Attribute("ScrollViewer.HorizontalScrollBarVisibility") == "Hidden" &&
+            code.Contains("playerQueueArrows.Bind(C<ListView>(\"PlayerQueue\"),") &&
+            code.Contains("playerQueueArrows.SetTitle(playback.Queue.Count == 0 ? null : \"Up next\")"),
+            "Theater's Up next shelf uses the shared controls and hides arrows for an empty queue");
         StateTests.Verify(code.Contains("RenderHomeShelves(signedIn && home ? controller.HomeShelves : [])") &&
             libraryCode.Contains("header.Text = shelf.Title") && libraryCode.Contains("feed.ItemsSource = shelf.Videos") &&
             libraryCode.Contains("homeShelves.Add(shelves[i])") && Regex.IsMatch(libraryCode, @"if \(!keepsPrefix\)\s*\{[^}]*homeShelves\.Clear\(\)"),

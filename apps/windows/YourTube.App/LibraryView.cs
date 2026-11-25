@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using EveryoneSoftware.WindowsCommon;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -220,7 +221,7 @@ internal sealed partial class MainWindow
     private void RenderHomeShelf(ContainerContentChangingEventArgs args)
     {
         if (args.ItemContainer.ContentTemplateRoot is not Grid host ||
-            host.Children[0] is not TextBlock header || host.Children[1] is not GridView feed) return;
+            host.Children[0] is not ContentControl headerHost || host.Children[1] is not GridView feed) return;
         var shelf = !closed && !args.InRecycleQueue ? args.Item as HomeShelf : null;
         if (ReferenceEquals(feed.Tag, shelf)) return;
 
@@ -229,7 +230,23 @@ internal sealed partial class MainWindow
         CancelLibraryImages(feed);
         feed.ContainerContentChanging -= RenderShelfCard;
         feed.ItemClick -= OpenHomeVideoAsync;
+        if (host.Tag is not ValueTuple<TextBlock, HorizontalShelf> binding)
+        {
+            var heading = new TextBlock
+            {
+                Margin = new Thickness(6, 0, 0, 0), FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center
+            };
+            AutomationProperties.SetHeadingLevel(heading, AutomationHeadingLevel.Level2);
+            var arrows = new HorizontalShelf(heading);
+            arrows.Bind(feed, () => homeScroller);
+            headerHost.Content = arrows.Header;
+            binding = (heading, arrows);
+            host.Tag = binding;
+        }
+        var (header, shelfArrows) = binding;
         header.Text = "";
+        shelfArrows.SetTitle(shelf?.Title);
         AutomationProperties.SetName(feed, "");
         if (shelf is null) return;
 
@@ -238,11 +255,7 @@ internal sealed partial class MainWindow
         feed.Tag = shelf;
         feed.ContainerContentChanging += RenderShelfCard;
         feed.ItemClick += OpenHomeVideoAsync;
-        if (host.Tag is null)
-        {
-            host.Tag = true;
-            WireHomeShelfWheel(feed);
-        }
+
         feed.ItemsSource = shelf.Videos;
         args.Handled = true;
     }
@@ -258,44 +271,6 @@ internal sealed partial class MainWindow
         return null;
     }
 
-    private void WireHomeShelfWheel(GridView feed)
-    {
-        Action? detach = null;
-        void Attach()
-        {
-            detach?.Invoke();
-            detach = null;
-            feed.ApplyTemplate();
-            if (FindFeedScroller(feed) is not { } scroller || scroller.Content is not UIElement wheelSurface) return;
-            // Intercept below the inner ScrollViewer, before native wheel-to-horizontal conversion.
-            scroller.HorizontalSnapPointsType = SnapPointsType.None;
-            PointerEventHandler handler = (_, args) => ForwardHomeShelfWheel(feed, scroller, args);
-            wheelSurface.AddHandler(UIElement.PointerWheelChangedEvent, handler, handledEventsToo: true);
-            detach = () => wheelSurface.RemoveHandler(UIElement.PointerWheelChangedEvent, handler);
-        }
-        feed.Loaded += (_, _) => Attach();
-        feed.Unloaded += (_, _) => { detach?.Invoke(); detach = null; };
-        if (feed.IsLoaded) Attach();
-    }
-
-    private void ForwardHomeShelfWheel(GridView feed, ScrollViewer scroller, PointerRoutedEventArgs args)
-    {
-        if (closed || feed.Tag is not HomeShelf) return;
-        var wheel = args.GetCurrentPoint(feed).Properties;
-        var delta = wheel.MouseWheelDelta / 120.0 * 48;
-        if (delta == 0) return;
-        args.Handled = true;
-        if ((args.KeyModifiers & VirtualKeyModifiers.Shift) != 0)
-        {
-            var offset = Math.Clamp(scroller.HorizontalOffset + (wheel.IsHorizontalMouseWheel ? delta : -delta), 0, scroller.ScrollableWidth);
-            if (offset != scroller.HorizontalOffset) scroller.ChangeView(offset, null, null, disableAnimation: true);
-        }
-        else if (!wheel.IsHorizontalMouseWheel && homeScroller is { } outer)
-        {
-            var vertical = Math.Clamp(outer.VerticalOffset - delta, 0, outer.ScrollableHeight);
-            if (vertical != outer.VerticalOffset) outer.ChangeView(null, vertical, null, disableAnimation: true);
-        }
-    }
 
     private void RenderShelfCard(ListViewBase sender, ContainerContentChangingEventArgs args) => RenderLibraryCard((GridView)sender, args, resize: false);
 

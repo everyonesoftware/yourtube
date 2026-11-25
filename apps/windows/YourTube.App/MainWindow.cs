@@ -25,6 +25,8 @@ internal sealed partial class MainWindow : Window
     private const string PlayGlyph = "\uE768";
     private const string PauseGlyph = "\uE769";
     private readonly Grid root;
+    private readonly HorizontalShelf playerQueueArrows;
+    private readonly TextBlock playerQueueLabel;
     private readonly NativeTitleBar titleBar;
     private readonly HttpClient http = new(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }) { Timeout = TimeSpan.FromSeconds(45) };
     private readonly WindowsUpdatesPanel updatesPanel;
@@ -122,6 +124,14 @@ internal sealed partial class MainWindow : Window
             SyncPlaybackContext();
             if (playback.Selected is { } video && BrowserPolicy.VideoUri(video.VideoId) is { } uri) await LaunchExplicitAsync(uri);
         };
+        playerQueueLabel = new TextBlock
+        {
+            FontSize = 19, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center
+        };
+        playerQueueArrows = new HorizontalShelf(playerQueueLabel);
+        C<ContentControl>("PlayerQueueHeader").Content = playerQueueArrows.Header;
+        playerQueueArrows.Bind(C<ListView>("PlayerQueue"), () => C<ScrollViewer>("TheaterPanel"));
         C<ListView>("PlayerQueue").ContainerContentChanging += (_, args) => RenderHistoryRow(args);
         C<ListView>("PlayerQueue").ItemClick += async (_, args) =>
         {
@@ -697,7 +707,8 @@ internal sealed partial class MainWindow : Window
             BrowseView.Subscriptions => "subscriptions",
             _ => "history"
         };
-        C<TextBlock>("PlayerQueueLabel").Text = playback.Queue.Count == 0 ? $"No other videos loaded in {label}" : $"Up next · from your loaded {label}";
+        playerQueueLabel.Text = playback.Queue.Count == 0 ? $"No other videos loaded in {label}" : $"Up next · from your loaded {label}";
+        playerQueueArrows.SetTitle(playback.Queue.Count == 0 ? null : "Up next");
         C<ListView>("PlayerQueue").ItemsSource = playback.Queue;
         UpdatePlayerOverlay();
         if (playerProgressOpen) RenderPlaybackProgress();

@@ -37,7 +37,7 @@
     <Content Include="../../../THIRD-PARTY-NOTICES.md" Link="THIRD-PARTY-NOTICES.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <ProjectReference Include="../YourTube.Update/YourTube.Update.csproj" />
     <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="1.8.260803003" />
-    <PackageReference Include="EveryoneSoftware.WindowsCommon" Version="[0.1.4]" />
+    <PackageReference Include="EveryoneSoftware.WindowsCommon" Version="[0.1.5]" />
     <PackageReference Include="Velopack" Version="1.2.161" />
     <EmbeddedResource Include="Shell.xaml" LogicalName="YourTube.App.Shell.xaml" />
   </ItemGroup>

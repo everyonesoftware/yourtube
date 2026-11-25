@@ -5,7 +5,7 @@ const source = readFileSync(new URL('../YourTube.App/WindowsUpdatesPanel.cs', im
 test('the shipping app and native fixture use the published Windows Common panel', () => {
   for (const project of ['YourTube.App', 'YourTube.Settings.NativeValidation']) {
     const csproj = readFileSync(new URL(`../${project}/${project}.csproj`, import.meta.url), 'utf8');
-    assert.match(csproj, /PackageReference Include="EveryoneSoftware\.WindowsCommon" Version="\[0\.1\.4\]"/);
+    assert.match(csproj, /PackageReference Include="EveryoneSoftware\.WindowsCommon" Version="\[0\.1\.5\]"/);
   }
   assert.match(source, /using SharedUpdatesPanel = EveryoneSoftware\.WindowsCommon\.WindowsUpdatesPanel;/);
   assert.match(source, /new SharedUpdatesPanel\("YourTube", version/);
