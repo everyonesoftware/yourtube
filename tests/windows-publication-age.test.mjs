@@ -13,3 +13,13 @@ test('Home shelves and library cards share the inline publication age and exact-
   assert.match(renderer, /labels\.Children\.Add\(metadata\)/);
   assert.match(renderer, /var description = [^\n]+publication/);
 });
+
+test('History enriches missing ages in the shared card without replacing the bound video', () => {
+  const renderer = library.split('private void RenderLibraryCard(')[1].split('private async Task LoadLibraryImageAsync(')[0];
+  assert.match(renderer, /BrowseView\.History/);
+  assert.match(renderer, /historyPublicationDates\.LoadAsync\(video\.VideoId, request\.Token\)/);
+  assert.match(renderer, /ReferenceEquals\(identity, controller\?\.SelectedAccount\)/);
+  assert.match(renderer, /ReferenceEquals\(request, current\.Request\)/);
+  assert.match(renderer, /SetPublication\(HistoryPublicationDates\.FormatAge\(/);
+  assert.doesNotMatch(renderer, /video with|ItemsSource\s*=/);
+});

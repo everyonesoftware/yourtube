@@ -17,6 +17,7 @@ namespace YourTube.App;
 internal sealed partial class MainWindow
 {
     private readonly LibraryThumbnails libraryThumbnails = new();
+    private readonly HistoryPublicationDates historyPublicationDates = new();
     private readonly Dictionary<SelectorItem, (GridView Feed, CancellationTokenSource Request)> libraryImages = new();
     private readonly ObservableCollection<HomeShelf> homeShelves = new();
     private ScrollViewer? homeScroller;
@@ -371,45 +372,80 @@ internal sealed partial class MainWindow
             MaxLines = 2, TextTrimming = TextTrimming.CharacterEllipsis
         });
         var metadata = new Grid { HorizontalAlignment = HorizontalAlignment.Left };
-        var channelLabel = new TextBlock { Text = video.Channel, FontSize = 12, Foreground = muted, TextTrimming = TextTrimming.CharacterEllipsis };
-        string? publication = null;
-        if (video.PublishedAge is { } age)
+        var hasChannel = !string.IsNullOrWhiteSpace(video.Channel);
+        var ageLabel = new TextBlock { FontSize = 12, Foreground = muted, Visibility = Visibility.Collapsed };
+        var separator = new TextBlock { Text = "·", FontSize = 12, Foreground = muted, Margin = new Thickness(5, 0, 5, 0), Visibility = Visibility.Collapsed };
+        if (hasChannel)
         {
-            publication = $"{(age.StartsWith("Streamed ", StringComparison.OrdinalIgnoreCase) || age.StartsWith("Premiered ", StringComparison.OrdinalIgnoreCase) ? "" : "Published ")}{age}";
-            var ageLabel = new TextBlock { Text = age, FontSize = 12, Foreground = muted };
-            if (video.PublishedDate is { } date)
-            {
-                var exact = $"Published {date:D}";
-                ToolTipService.SetToolTip(ageLabel, exact);
-                publication += $" ({exact})";
-            }
-            if (!string.IsNullOrWhiteSpace(video.Channel))
-            {
-                metadata.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                metadata.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                metadata.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                metadata.Children.Add(channelLabel);
-                var separator = new TextBlock { Text = "·", FontSize = 12, Foreground = muted, Margin = new Thickness(5, 0, 5, 0) };
-                Grid.SetColumn(separator, 1);
-                metadata.Children.Add(separator);
-                Grid.SetColumn(ageLabel, 2);
-            }
-            metadata.Children.Add(ageLabel);
+            metadata.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            metadata.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            metadata.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            metadata.Children.Add(new TextBlock { Text = video.Channel, FontSize = 12, Foreground = muted, TextTrimming = TextTrimming.CharacterEllipsis });
+            Grid.SetColumn(separator, 1);
+            metadata.Children.Add(separator);
+            Grid.SetColumn(ageLabel, 2);
         }
-        else if (!string.IsNullOrWhiteSpace(video.Channel)) metadata.Children.Add(channelLabel);
+        metadata.Children.Add(ageLabel);
         labels.Children.Add(metadata);
         host.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         host.RowDefinitions.Add(new RowDefinition { Height = new GridLength(64) });
         host.Children.Add(cover);
         Grid.SetRow(labels, 1);
         host.Children.Add(labels);
-        var description = string.Join(", ", new[] { video.Title, video.Channel, publication, video.Duration, progress is int value ? $"{Math.Clamp(value, 0, 100)}% watched" : "" }.Where(part => !string.IsNullOrWhiteSpace(part)));
-        AutomationProperties.SetName(container, $"{description}. Play video.");
+        var identity = resize && controller?.View == BrowseView.History ? controller.SelectedAccount : null;
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        SetPublication(video.PublishedAge ?? (identity is not null && video.PublishedDate is { } date ? HistoryPublicationDates.FormatAge(date, today) : null), video.PublishedDate);
         args.Handled = true;
 
         var request = new CancellationTokenSource();
         libraryImages.Add(container, (feed, request));
-        _ = LoadLibraryImageAsync(container, image, video.VideoId, request);
+        _ = LoadCardDetailsAsync();
+
+        void SetPublication(string? age, DateOnly? date)
+        {
+            string? publication = null;
+            if (age is not null)
+            {
+                ageLabel.Text = age;
+                ageLabel.Visibility = Visibility.Visible;
+                if (hasChannel) separator.Visibility = Visibility.Visible;
+                publication = $"{(age.StartsWith("Streamed ", StringComparison.OrdinalIgnoreCase) || age.StartsWith("Premiered ", StringComparison.OrdinalIgnoreCase) ? "" : "Published ")}{age}";
+                if (date is { } published)
+                {
+                    var exact = $"Published {published:D}";
+                    ToolTipService.SetToolTip(ageLabel, exact);
+                    publication += $" ({exact})";
+                }
+            }
+            var description = string.Join(", ", new[] { video.Title, video.Channel, publication, video.Duration, progress is int value ? $"{Math.Clamp(value, 0, 100)}% watched" : "" }.Where(part => !string.IsNullOrWhiteSpace(part)));
+            AutomationProperties.SetName(container, $"{description}. Play video.");
+        }
+
+        async Task LoadCardDetailsAsync()
+        {
+            try
+            {
+                var thumbnail = LoadLibraryImageAsync(container, image, video.VideoId, request);
+                // History can lack the age even for public videos. Never use the watch date as a fallback.
+                var publication = identity is not null && video.PublishedAge is null && video.PublishedDate is null
+                    ? LoadPublicationAsync() : Task.CompletedTask;
+                await Task.WhenAll(thumbnail, publication);
+            }
+            catch (OperationCanceledException) { }
+            finally
+            {
+                if (libraryImages.TryGetValue(container, out var current) && ReferenceEquals(request, current.Request)) libraryImages.Remove(container);
+                request.Dispose();
+            }
+        }
+
+        async Task LoadPublicationAsync()
+        {
+            var date = await historyPublicationDates.LoadAsync(video.VideoId, request.Token);
+            if (date is { } published && !closed && !request.IsCancellationRequested && controller?.View == BrowseView.History &&
+                ReferenceEquals(identity, controller?.SelectedAccount) && libraryImages.TryGetValue(container, out var current) && ReferenceEquals(request, current.Request))
+                SetPublication(HistoryPublicationDates.FormatAge(published, DateOnly.FromDateTime(DateTime.Today)), published);
+        }
     }
 
     private async Task LoadLibraryImageAsync(SelectorItem container, Image image, string videoId, CancellationTokenSource request)
@@ -422,13 +458,7 @@ internal sealed partial class MainWindow
             if (!closed && !request.IsCancellationRequested && libraryImages.TryGetValue(container, out var current) && ReferenceEquals(request, current.Request))
                 image.Source = bitmap;
         }
-        catch (OperationCanceledException) { }
         catch (System.Runtime.InteropServices.COMException) { } // An unavailable or undecodable image leaves the placeholder.
-        finally
-        {
-            if (libraryImages.TryGetValue(container, out var current) && ReferenceEquals(request, current.Request)) libraryImages.Remove(container);
-            request.Dispose();
-        }
     }
 
     private static async Task<BitmapImage> DecodeImageAsync(byte[] bytes, int width)
@@ -457,5 +487,6 @@ internal sealed partial class MainWindow
     {
         CancelLibraryImages();
         libraryThumbnails.Dispose();
+        historyPublicationDates.Dispose();
     }
 }
