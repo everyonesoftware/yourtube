@@ -4,6 +4,8 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Markup;
 using System.Reflection;
 using YourTube.Update;
+using SharedUpdatesPanel = EveryoneSoftware.WindowsCommon.WindowsUpdatesPanel;
+using SharedUpdatePhase = EveryoneSoftware.WindowsCommon.UpdatePhase;
 
 namespace YourTube.App;
 
@@ -11,21 +13,7 @@ namespace YourTube.App;
 public sealed class WindowsUpdatesPanel : IDisposable
 {
     private const string Markup = """
-    <StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Spacing="16" MaxWidth="760" HorizontalAlignment="Stretch">
-      <Grid ColumnSpacing="16">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-        <TextBlock x:Name="CurrentVersion" FontSize="20" VerticalAlignment="Center" TextWrapping="Wrap"/>
-        <Button x:Name="Check" Grid.Column="1" Content="Check for updates" VerticalAlignment="Center"/>
-      </Grid>
-      <Border Padding="20" BorderThickness="1" CornerRadius="8" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-        <StackPanel Spacing="12">
-          <Grid ColumnSpacing="16">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <TextBlock x:Name="Title" FontSize="20" FontWeight="SemiBold" TextWrapping="Wrap"/>
-            <TextBlock x:Name="OfferedVersion" Grid.Column="1" VerticalAlignment="Center" TextWrapping="Wrap"/>
-          </Grid>
-          <TextBlock x:Name="Status" TextWrapping="Wrap"/>
-          <Expander x:Name="Notes" Header="What’s new" IsExpanded="False" Visibility="Collapsed" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+          <Expander xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" x:Name="Notes" Header="What’s new" IsExpanded="False" Visibility="Collapsed" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
             <StackPanel Spacing="8">
               <TextBlock x:Name="NotesStatus" TextWrapping="Wrap" Visibility="Collapsed"/>
               <Button x:Name="RetryNotes" Content="Retry changelog" Visibility="Collapsed"/>
@@ -99,24 +87,16 @@ public sealed class WindowsUpdatesPanel : IDisposable
               </StackPanel>
             </StackPanel>
           </Expander>
-          <ProgressBar x:Name="Progress" Visibility="Collapsed"/>
-          <StackPanel x:Name="Actions" Orientation="Horizontal" Spacing="12" Visibility="Collapsed">
-            <Button x:Name="Download" Content="Download update" Visibility="Collapsed"/>
-            <Button x:Name="Restart" Content="Restart and install" Visibility="Collapsed"/>
-          </StackPanel>
-        </StackPanel>
-      </Border>
-    </StackPanel>
     """;
-    public FrameworkElement View { get; }
+    public FrameworkElement View => panel.View;
     internal bool HasUpdate { get; private set; }
     internal event Action? UpdateAvailabilityChanged;
     private readonly WindowsUpdateFlow flow;
     private readonly DispatcherQueue dispatcher;
-    private readonly TextBlock currentVersion, title, status, offeredVersion, notesStatus;
-    private readonly Button check, download, restart, retryNotes;
-    private readonly StackPanel actions, notesContent;
-    private readonly ProgressBar progress;
+    private readonly SharedUpdatesPanel panel;
+    private readonly TextBlock notesStatus;
+    private readonly Button retryNotes;
+    private readonly StackPanel notesContent;
     private readonly Expander notes;
     private bool disposed;
     private Version? renderedOffer;
@@ -130,55 +110,49 @@ public sealed class WindowsUpdatesPanel : IDisposable
 
     internal WindowsUpdatesPanel(Action? beforeRestart, IWindowsUpdateBackend? backend)
     {
-        View = (FrameworkElement)XamlReader.Load(Markup);
-        dispatcher = View.DispatcherQueue;
-        currentVersion = Control<TextBlock>("CurrentVersion");
-        title = Control<TextBlock>("Title"); status = Control<TextBlock>("Status");
-        offeredVersion = Control<TextBlock>("OfferedVersion");
-        check = Control<Button>("Check"); download = Control<Button>("Download"); restart = Control<Button>("Restart");
-        actions = Control<StackPanel>("Actions"); progress = Control<ProgressBar>("Progress"); notes = Control<Expander>("Notes");
+        notes = (Expander)XamlReader.Load(Markup);
         notesStatus = Control<TextBlock>("NotesStatus"); notesContent = Control<StackPanel>("NotesContent");
         retryNotes = Control<Button>("RetryNotes");
         // Reading the app assembly does not initialize the native Velopack locator.
         var assembly = typeof(WindowsUpdatesPanel).Assembly;
         string? version = assembly.GetName().Version?.ToString(3);
-        currentVersion.Text = $"Current Version: {version ?? "unavailable"}";
+        panel = new SharedUpdatesPanel("YourTube", version ?? "unavailable");
+        View.MaxWidth = 760;
+        dispatcher = View.DispatcherQueue;
         string? info = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
         string? installedSourceSha = version is not null && info?.StartsWith(version + "+", StringComparison.Ordinal) == true
             ? info[(version.Length + 1)..] : null;
         flow = new WindowsUpdateFlow(backend ?? new WindowsUpdateBackend(installedSourceSha: installedSourceSha), beforeRestart);
         flow.Changed += Changed;
-        check.Click += CheckClicked; download.Click += DownloadClicked; restart.Click += RestartClicked;
+        panel.CheckRequested += CheckRequested;
+        panel.DownloadRequested += DownloadRequested;
+        panel.RestartRequested += RestartRequested;
         retryNotes.Click += RetryNotesClicked;
         Render();
     }
-    private T Control<T>(string name) where T : FrameworkElement => (T)View.FindName(name);
+    private T Control<T>(string name) where T : FrameworkElement => (T)notes.FindName(name);
     internal Task CheckOnStartupAsync() => flow.CheckOnStartupAsync();
-    private async void CheckClicked(object sender, RoutedEventArgs e) => await flow.CheckAsync();
+    private async void CheckRequested(object? sender, EventArgs e) => await flow.CheckAsync();
     private async void RetryNotesClicked(object sender, RoutedEventArgs e) => await flow.RetryNotesAsync();
-    private async void DownloadClicked(object sender, RoutedEventArgs e) => await flow.DownloadAsync();
-    private async void RestartClicked(object sender, RoutedEventArgs e) => await flow.RestartAsync();
+    private async void DownloadRequested(object? sender, EventArgs e) => await flow.DownloadAsync();
+    private async void RestartRequested(object? sender, EventArgs e) => await flow.RestartAsync();
     private void Changed() => dispatcher.TryEnqueue(() => { if (!disposed) Render(); });
     private static Visibility Visible(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
     private void Render()
     {
         var state = flow.State;
-        title.Text = state.Phase switch
+        var phase = state.Phase switch
         {
-            UpdatePhase.Idle => "Not checked yet",
-            UpdatePhase.Checking => "Checking for updates",
-            UpdatePhase.Current => "Up to date",
-            UpdatePhase.Available => "Update available",
-            UpdatePhase.Downloading => "Downloading update",
-            UpdatePhase.Ready => "Ready to install",
-            UpdatePhase.Restarting => "Restarting",
-            UpdatePhase.NotInstalled => "Updates unavailable",
-            _ => "Update failed"
+            UpdatePhase.Idle => SharedUpdatePhase.Idle,
+            UpdatePhase.Checking => SharedUpdatePhase.Checking,
+            UpdatePhase.Current => SharedUpdatePhase.Current,
+            UpdatePhase.Available => SharedUpdatePhase.Available,
+            UpdatePhase.Downloading => SharedUpdatePhase.Downloading,
+            UpdatePhase.Ready => SharedUpdatePhase.Ready,
+            UpdatePhase.Restarting => SharedUpdatePhase.Restarting,
+            UpdatePhase.NotInstalled => SharedUpdatePhase.NotInstalled,
+            _ => SharedUpdatePhase.Error
         };
-        status.Text = state.Phase == UpdatePhase.Downloading && state.Progress < 100 ? $"{state.Message} {state.Progress}%" : state.Message;
-        status.Visibility = Visible(state.Phase != UpdatePhase.Available);
-        offeredVersion.Text = state.Version is { } version ? $"YourTube {version}" : "";
-        offeredVersion.Visibility = Visible(state.Version is not null);
         if (renderedOffer != state.Version || renderedLoading != state.NotesLoading || !ReferenceEquals(renderedChanges, state.Changelog))
         {
             if (renderedOffer != state.Version) notes.IsExpanded = false;
@@ -189,16 +163,9 @@ public sealed class WindowsUpdatesPanel : IDisposable
         }
         notes.Visibility = Visible(state.Version is not null);
         retryNotes.IsEnabled = state.Phase == UpdatePhase.Available;
-        bool busy = state.Phase is UpdatePhase.Checking or UpdatePhase.Downloading or UpdatePhase.Restarting;
-        check.Content = state.Phase == UpdatePhase.Checking ? "Checking…" : "Check for updates";
-        check.IsEnabled = !busy && state.Phase is not (UpdatePhase.Ready or UpdatePhase.NotInstalled);
-        actions.Visibility = Visible(state.Phase is UpdatePhase.Available or UpdatePhase.Ready);
-        download.Visibility = Visible(state.Phase == UpdatePhase.Available);
-        restart.Visibility = Visible(state.Phase == UpdatePhase.Ready);
-        download.IsEnabled = !busy; restart.IsEnabled = !busy;
-        progress.Visibility = Visible(busy);
-        progress.IsIndeterminate = state.Phase is UpdatePhase.Checking or UpdatePhase.Restarting || state.Phase == UpdatePhase.Downloading && state.Progress >= 100;
-        progress.Value = state.Progress;
+        // The shared panel owns Check/Download/Restart and their default enablement policy.
+        panel.Render(new(phase, state.Message, state.Version, state.Progress),
+            restartAllowed: state.Phase == UpdatePhase.Ready, changelog: notes);
         bool hasUpdate = state.Version is not null;
         if (HasUpdate != hasUpdate)
         {
@@ -268,7 +235,7 @@ public sealed class WindowsUpdatesPanel : IDisposable
     {
         if (disposed) return;
         disposed = true;
-        check.Click -= CheckClicked; download.Click -= DownloadClicked; restart.Click -= RestartClicked;
+        panel.Dispose();
         retryNotes.Click -= RetryNotesClicked;
         flow.Changed -= Changed;
         flow.Dispose();

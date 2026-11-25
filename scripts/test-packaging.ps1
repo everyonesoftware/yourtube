@@ -9,7 +9,7 @@ foreach($function in $functions){Invoke-Expression $function.Extent.Text}
 $root=Join-Path ([IO.Path]::GetTempPath()) ('yourtube-packaging-'+[guid]::NewGuid())
 $null=New-Item -ItemType Directory $root
 try {
- $names=@('YourTube.exe','YourTube.dll','YourTube.Core.dll','YourTube.Update.dll','YourTube.Playback.dll','YoutubeExplode.dll','THIRD-PARTY-NOTICES.md','Microsoft.UI.Xaml.dll','Microsoft.WindowsAppRuntime.dll','coreclr.dll','resources.pri')
+ $names=@('YourTube.exe','YourTube.dll','YourTube.Core.dll','YourTube.Update.dll','YourTube.Playback.dll','EveryoneSoftware.WindowsCommon.dll','YoutubeExplode.dll','THIRD-PARTY-NOTICES.md','Microsoft.UI.Xaml.dll','Microsoft.WindowsAppRuntime.dll','coreclr.dll','resources.pri')
  foreach($name in $names){[IO.File]::WriteAllText((Join-Path $root $name),'fixture-not-binary')}
  $rejected=$false; try {Assert-NativePayload $root}catch{$rejected=$true}
  if(-not $rejected){throw 'Missing runtime icon accepted'}
@@ -17,10 +17,10 @@ try {
  $null=New-Item -ItemType Directory $assets
  [IO.File]::WriteAllText((Join-Path $assets 'YourTube.ico'),'fixture-not-binary')
  Assert-NativePayload $root
- foreach($name in @('YourTube.Playback.dll','YoutubeExplode.dll','THIRD-PARTY-NOTICES.md')) {
+ foreach($name in @('YourTube.Playback.dll','EveryoneSoftware.WindowsCommon.dll','YoutubeExplode.dll','THIRD-PARTY-NOTICES.md')) {
   Remove-Item (Join-Path $root $name)
   $rejected=$false;try{Assert-NativePayload $root}catch{$rejected=$true}
-  if(-not $rejected){throw "Missing playback dependency or notice accepted: $name"}
+  if(-not $rejected){throw "Missing application dependency or notice accepted: $name"}
   [IO.File]::WriteAllText((Join-Path $root $name),'fixture-not-binary')
  }
  [IO.File]::WriteAllText((Join-Path $assets 'YourTube.ico'),'')

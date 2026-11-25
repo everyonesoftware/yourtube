@@ -18,6 +18,8 @@ node --test apps/windows/YourTube.Update.Tests/panel-contracts.test.mjs
 
 The packaging script requires clean committed inputs and an empty output directory. It restores pinned Velopack 1.2.161, builds a native self-contained WinUI application, checks native/.NET/PRI payloads, then generates the Setup installer, full nupkg, feed, checksums and exact-source manifest. It refuses Linux packaging. The copied/adapted Music installer smoke requires a disposable interactive account, verifies a responsive visible installed window, retains a screenshot, closes, uninstalls and independently checks cleanup. It never signs in to Google.
 
+The pinned `EveryoneSoftware.WindowsCommon` NuGet package supplies the native title bar setup and Settings update panel. YourTube owns its branding and fullscreen layout, as well as its Velopack feed, startup check, update lifecycle and cached changelog. The shared library does not provide YourTube's browsing, account or playback UI.
+
 ## Compile-only on Linux
 
 ```sh

@@ -58,20 +58,25 @@ internal sealed partial class SettingsSmokeApplication(string evidence, string s
             window.AppWindow.Resize(new Windows.Graphics.SizeInt32(1120, 760));
             window.Activate();
 
-            var check = (Button)panel.View.FindName("Check");
-            var notes = (Expander)panel.View.FindName("Notes");
-            var content = (StackPanel)panel.View.FindName("NotesContent");
+            IEnumerable<Button> Buttons(string label) => Realized<Button>(panel.View).Where(button => button.Content as string == label);
+            IEnumerable<TextBlock> VersionHeadings() => Realized<TextBlock>(panel.View).Where(text => text.Text.StartsWith("Current Version:", StringComparison.Ordinal));
+            bool HasText(string label) => Realized<TextBlock>(panel.View).Any(text => text.Text == label);
+            IEnumerable<Expander> Changelogs() => Realized<Expander>(panel.View).Where(expander => expander.Header as string == "What’s new · 2 changes");
+
             stage = "initial-state";
-            await Until(() => IsRealized(check));
-            Require(fixture.Checks == 0 && fixture.NotesLoads == 0 && notes.Visibility == Visibility.Collapsed);
-            Require(((TextBlock)panel.View.FindName("CurrentVersion")).Text == "Current Version: 0.1.3");
+            await Until(() => Buttons("Check for updates").Any() && VersionHeadings().Any());
+            var check = Buttons("Check for updates").Single();
+            Require(check.IsEnabled && fixture.Checks == 0 && fixture.NotesLoads == 0 && !Realized<Expander>(panel.View).Any());
+            Require(VersionHeadings().Single().Text == "Current Version: 0.1.4");
 
             stage = "check-fixture-offer";
             (Peer(check) as IInvokeProvider
                 ?? throw new InvalidOperationException()).Invoke();
-            await Until(() => IsRealized(notes) && notes.Header as string == "What’s new · 2 changes");
-            Require(((TextBlock)panel.View.FindName("Title")).Text == "Update available");
-            Require(((TextBlock)panel.View.FindName("OfferedVersion")).Text == "YourTube 0.1.9");
+            await Until(() => Changelogs().Any() && HasText("Update available") && HasText("YourTube 0.1.9") && Buttons("Download update").Any());
+            var notes = Changelogs().Single();
+            var content = (StackPanel)notes.FindName("NotesContent");
+            Require(Buttons("Download update").Single().IsEnabled);
+            Require(!Buttons("Restart and install").Any());
             Require(fixture.Checks == 1 && fixture.NotesLoads == 1 && !notes.IsExpanded);
             var details = content.Children.OfType<Expander>().Single();
             Require(details.Header as string == "Commit details" && !details.IsExpanded);
@@ -158,6 +163,12 @@ internal sealed partial class SettingsSmokeApplication(string evidence, string s
         ?? throw new InvalidOperationException();
     private static IExpandCollapseProvider Disclosure(Expander expander) => Peer(expander) as IExpandCollapseProvider
         ?? throw new InvalidOperationException();
+    private static IEnumerable<T> Realized<T>(DependencyObject root) where T : FrameworkElement
+    {
+        if (root is T element && IsRealized(element)) yield return element;
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+            foreach (var child in Realized<T>(VisualTreeHelper.GetChild(root, i))) yield return child;
+    }
     private static bool IsRealized(FrameworkElement element)
     {
         if (!element.IsLoaded || element.XamlRoot is null || element.ActualWidth <= 0 || element.ActualHeight <= 0)

@@ -16,7 +16,8 @@ public sealed class PanelLayoutTests
         var named = root.DescendantsAndSelf().Where(e => e.Attribute(x + "Name") is not null).ToDictionary(e => e.Attribute(x + "Name")!.Value);
         foreach (Match match in Regex.Matches(source, "Control<(?<type>\\w+)>\\(\"(?<name>\\w+)\"\\)"))
             Assert.Equal(match.Groups["type"].Value, named[match.Groups["name"].Value].Name.LocalName);
-        Assert.Equal(named["CurrentVersion"].Parent, named["Check"].Parent);
+        Assert.Same(root, named["Notes"]);
+        Assert.DoesNotContain(root.Descendants(), e => e.Name.LocalName == "Button" && e != named["RetryNotes"]);
         Assert.Equal("Collapsed", named["Notes"].Attribute("Visibility")?.Value);
         Assert.Equal("What’s new", named["Notes"].Attribute("Header")?.Value);
         Assert.Equal("False", named["Notes"].Attribute("IsExpanded")?.Value);

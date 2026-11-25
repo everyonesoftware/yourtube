@@ -170,6 +170,13 @@ internal static class WiringTests
         StateTests.Verify(code.Contains("controller.View == BrowseView.Subscriptions") && code.Contains("!settingsVisible") && code.Contains("controller.Videos.Any(v => ReferenceEquals(v, video))"), "explicit video activation is bound to the visible current feed");
         StateTests.Verify(code.Contains("new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }"), "OAuth transport refuses redirects and does not retain cookies");
         var historySwitch = Named("WatchHistorySync");
+        var settingsHost = Named("SettingsHost");
+        var settingsSections = Named("SettingsPanel").Element(ns + "StackPanel");
+        var settingsHeading = settingsSections?.Elements(ns + "TextBlock").Single(e => (string?)e.Attribute("Text") == "Settings");
+        StateTests.Verify(settingsHeading?.ElementsAfterSelf().FirstOrDefault() == settingsHost &&
+            settingsHost.ElementsAfterSelf().Any(section => historySwitch.Ancestors().Contains(section)) &&
+            code.Contains("C<ContentControl>(\"SettingsHost\").Content = updatesPanel.View;"),
+            "the current version and updates panel is the first section under the Settings heading, before Playback");
         StateTests.Verify(historySwitch.Ancestors().Contains(Named("SettingsPanel")) &&
             (string?)historySwitch.Attribute("Header") == "Update YouTube History" && (string?)historySwitch.Attribute("IsOn") == "True",
             "Update YouTube History starts on in Playback settings");
@@ -279,9 +286,7 @@ internal static class WiringTests
         StateTests.Verify(!names.ContainsKey("ShellHeader") && brand.Parent == titleBar &&
             (string?)brand.Attribute("HorizontalAlignment") == "Left" &&
             brand.Descendants().Any(e => e.Name.LocalName == "FontIcon") &&
-            brand.Elements().Any(e => (string?)e.Attribute("Text") == "YourTube") &&
-            code.Contains("AppWindow.TitleBar.LeftInset / xamlRoot.RasterizationScale") &&
-            code.Contains("AppWindow.TitleBar.RightInset / xamlRoot.RasterizationScale"),
+            brand.Elements().Any(e => (string?)e.Attribute("Text") == "YourTube"),
             "the app has no separate top bar; its brand is left aligned in the native title bar");
         var accountFooter = Named("ShellFooter");
         var accountButton = Named("AccountButton");
@@ -324,7 +329,10 @@ internal static class WiringTests
         foreach (var button in new[] { "SignInButton", "OpenActivationButton", "CancelButton", "RefreshButton", "FeedRetryButton", "SettingsButton" })
             StateTests.Verify(code.Contains($"C<Button>(\"{button}\").Click +="), "native action wired: " + button);
         StateTests.Verify(code.Contains("await current.SelectAccountAsync(account)") && code.Contains("current.SignOut()"), "account menu uses the existing identity and sign-out boundaries");
-        StateTests.Verify(code.Contains("SetTitleBar(C<Border>(\"TitleBar\"))") && code.Contains("ExtendsContentIntoTitleBar = true"), "Music native titlebar APIs wired");
+        StateTests.Verify(Regex.IsMatch(code, @"Content = root;\s*var captionBackground = [^;]+;\s*titleBar = new NativeTitleBar\(this, C<Border>\(""TitleBar""\),") &&
+            fullscreenChange.Contains("if (!enabled) titleBar.RefreshInsets();") && code.Contains("titleBar.Dispose();") &&
+            !code.Contains("AppWindow.TitleBar.") && !code.Contains("ExtendsContentIntoTitleBar"),
+            "the shared native title bar owns caption styling and insets; fullscreen exit and close keep their lifecycle wiring");
         StateTests.Verify(code.Contains("SettingsHost\").Content = updatesPanel.View") && code.Contains("updatesPanel.Dispose()"), "Settings updater integration and disposal");
         StateTests.Verify(Regex.IsMatch(code, @"root\.Loaded\s*\+=\s*async[^;]*if \(initialized \|\| closed\) return;\s*initialized\s*=\s*true;\s*_\s*=\s*updatesPanel\.CheckOnStartupAsync\(\);[^;]*;\s*await InitializeServicesAsync\(\);"),
             "startup discovery is scheduled once without awaiting it or depending on account restoration");

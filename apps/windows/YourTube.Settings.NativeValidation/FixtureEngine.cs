@@ -18,7 +18,7 @@ internal sealed class FixtureEngine : IWindowsUpdateEngine
     public int Downloads { get; private set; }
     public int Applies { get; private set; }
     public bool IsInstalled => true;
-    public Version CurrentVersion => new(0, 1, 3);
+    public Version CurrentVersion => new(0, 1, 4);
     public Task<UpdateOffer?> CheckAsync()
     {
         Checks++;

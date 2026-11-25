@@ -1,4 +1,5 @@
 using System.Reflection;
+using EveryoneSoftware.WindowsCommon;
 using Microsoft.UI;
 using DispatcherQueueTimer = Microsoft.UI.Dispatching.DispatcherQueueTimer;
 using Microsoft.UI.Windowing;
@@ -23,6 +24,7 @@ internal sealed partial class MainWindow : Window
     private const string PlayGlyph = "\uE768";
     private const string PauseGlyph = "\uE769";
     private readonly Grid root;
+    private readonly NativeTitleBar titleBar;
     private readonly HttpClient http = new(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }) { Timeout = TimeSpan.FromSeconds(45) };
     private readonly WindowsUpdatesPanel updatesPanel;
     private readonly PlaybackResolver playbackResolver = new();
@@ -85,15 +87,11 @@ internal sealed partial class MainWindow : Window
         Title = "YourTube";
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "YourTube.ico"));
         Content = root;
-        ExtendsContentIntoTitleBar = true;
-        SetTitleBar(C<Border>("TitleBar"));
-        root.Loaded += (_, _) => UpdateTitleBarInsets();
-        root.SizeChanged += (_, _) => UpdateTitleBarInsets();
+        var captionBackground = ColorHelper.FromArgb(255, 28, 33, 31);
+        titleBar = new NativeTitleBar(this, C<Border>("TitleBar"), new Thickness(16, 0, 12, 0),
+            new TitleBarColors(captionBackground, ColorHelper.FromArgb(255, 237, 240, 233),
+                captionBackground, ColorHelper.FromArgb(255, 172, 184, 174)));
         AppWindow.Resize(new Windows.Graphics.SizeInt32(1120, 800));
-        AppWindow.TitleBar.ButtonBackgroundColor = ColorHelper.FromArgb(255, 28, 33, 31);
-        AppWindow.TitleBar.ButtonForegroundColor = ColorHelper.FromArgb(255, 237, 240, 233);
-        AppWindow.TitleBar.ButtonInactiveBackgroundColor = ColorHelper.FromArgb(255, 28, 33, 31);
-        AppWindow.TitleBar.ButtonInactiveForegroundColor = ColorHelper.FromArgb(255, 172, 184, 174);
 
         // Integration point: updater owns its native view and transport, never auth.
         updatesPanel = new WindowsUpdatesPanel();
@@ -190,6 +188,7 @@ internal sealed partial class MainWindow : Window
         Closed += (_, _) =>
         {
             closed = true;
+            titleBar.Dispose();
             search.Dispose();
 
             RenderAccountAvatar(null);
@@ -325,14 +324,6 @@ internal sealed partial class MainWindow : Window
         C<Ellipse>("SettingsUpdateDot").Visibility = ToVisibility(showDot);
         string accessibleName = showDot ? "Settings, update available" : "Settings";
         AutomationProperties.SetName(C<Button>("SettingsButton"), settingsVisible ? label : accessibleName);
-    }
-
-    private void UpdateTitleBarInsets()
-    {
-        if (closed || fullscreen || root.XamlRoot is not { } xamlRoot) return;
-        double left = AppWindow.TitleBar.LeftInset / xamlRoot.RasterizationScale;
-        double right = AppWindow.TitleBar.RightInset / xamlRoot.RasterizationScale;
-        C<Border>("TitleBar").Padding = new Thickness(left + 16, 0, right + 12, 0);
     }
 
     private void PopulateAccountMenu(MenuFlyout menu)
@@ -894,7 +885,7 @@ internal sealed partial class MainWindow : Window
         // Resize Theater in place: moving the stage disconnects the live player and its focused controls.
         var chromeVisibility = ToVisibility(!enabled);
         C<Border>("TitleBar").Visibility = chromeVisibility;
-        if (!enabled) UpdateTitleBarInsets();
+        if (!enabled) titleBar.RefreshInsets();
         C<Grid>("BrowseAndSettings").Visibility = ToVisibility(!enabled && (playback.Selected is null || settingsVisible));
         RenderStatus();
         C<StackPanel>("TheaterDetails").Visibility = chromeVisibility;

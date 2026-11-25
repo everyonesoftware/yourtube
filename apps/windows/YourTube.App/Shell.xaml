@@ -133,6 +133,7 @@
     <ScrollViewer x:Name="SettingsPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
       <StackPanel Spacing="20">
         <TextBlock Text="Settings" FontSize="24" FontWeight="SemiBold"/>
+        <ContentControl x:Name="SettingsHost" HorizontalContentAlignment="Stretch"/>
         <StackPanel Spacing="8">
           <TextBlock Text="Playback" FontSize="18" FontWeight="SemiBold"/>
           <ComboBox x:Name="StartupQualityChooser" Header="Auto startup quality" MinWidth="180"/>
@@ -145,7 +146,6 @@
           <TextBlock x:Name="WatchHistoryHelp" Text="On each time the app opens. Reports playback starts and watched progress to the selected YouTube account. YouTube decides what appears in History." Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
           <TextBlock x:Name="WatchHistoryStatus" Foreground="{StaticResource Muted}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
         </StackPanel>
-        <ContentControl x:Name="SettingsHost" HorizontalContentAlignment="Stretch"/>
       </StackPanel>
     </ScrollViewer>
   </Grid>

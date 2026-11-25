@@ -2,16 +2,29 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 const source = readFileSync(new URL('../YourTube.App/WindowsUpdatesPanel.cs', import.meta.url), 'utf8');
+test('the shipping app and native fixture use the published Windows Common panel', () => {
+  for (const project of ['YourTube.App', 'YourTube.Settings.NativeValidation']) {
+    const csproj = readFileSync(new URL(`../${project}/${project}.csproj`, import.meta.url), 'utf8');
+    assert.match(csproj, /PackageReference Include="EveryoneSoftware\.WindowsCommon" Version="\[0\.1\.4\]"/);
+  }
+  assert.match(source, /using SharedUpdatesPanel = EveryoneSoftware\.WindowsCommon\.WindowsUpdatesPanel;/);
+  assert.match(source, /new SharedUpdatesPanel\("YourTube", version/);
+  assert.match(source, /panel\.Render\([\s\S]*?restartAllowed: state\.Phase == UpdatePhase\.Ready, changelog: notes\)/);
+  assert.doesNotMatch(source, /AllowRecheckDuringDownloadOrReady|<Button[^>]+x:Name="(?:Check|Download|Restart)"/);
+  for (const script of ['build-windows', 'test-packaging']) {
+    assert.match(readFileSync(new URL(`../../../scripts/${script}.ps1`, import.meta.url), 'utf8'), /'EveryoneSoftware\.WindowsCommon\.dll'/);
+  }
+});
 test('native Settings smoke can inject its backend without changing the production default', () => {
   assert.match(source, /public WindowsUpdatesPanel\(Action\? beforeRestart = null\)\s*:\s*this\(beforeRestart, null\)/);
   assert.match(source, /internal WindowsUpdatesPanel\(Action\? beforeRestart, IWindowsUpdateBackend\? backend\)/);
   assert.match(source, /new WindowsUpdateFlow\(backend \?\? new WindowsUpdateBackend\(installedSourceSha: installedSourceSha\), beforeRestart\)/);
 });
 test('compact native header and explicit update actions, honest notes', () => {
-  assert.match(source, /Current Version:/);
-  assert.match(source, /Check for updates/);
-  assert.match(source, /Download update/);
-  assert.match(source, /Restart and install/);
+  for (const [request, action] of [['Check','Check'], ['Download','Download'], ['Restart','Restart']]) {
+    assert.match(source, new RegExp(`panel\\.${request}Requested \\+= ${request}Requested;`));
+    assert.match(source, new RegExp(`${request}Requested\\([^\\n]+=> await flow\\.${action}Async\\(\\)`));
+  }
   assert.match(source, /What’s new/);
   assert.match(source, /Changelog unavailable/);
   assert.doesNotMatch(source, /release\.Body|releaseBody|WebView|Process\.Start/);
@@ -19,6 +32,7 @@ test('compact native header and explicit update actions, honest notes', () => {
   assert.match(source, /flow\.DownloadAsync\(\)/);
   assert.match(source, /flow\.RestartAsync\(\)/);
   assert.match(source, /flow\.Dispose\(\)/);
+  assert.match(source, /panel\.Dispose\(\)/);
   assert.match(source, /if \(!disposed\) Render\(\)/);
 });
 
