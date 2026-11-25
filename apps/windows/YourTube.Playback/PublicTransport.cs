@@ -15,6 +15,7 @@ internal sealed class PublicTransport(HttpMessageHandler handler, TimeSpan? requ
     {
         internal string Id { get; } = id;
         internal PlayerMetadata? Latest { get; set; }
+        internal Storyboard? Storyboard { get; set; }
         internal bool MeasuresProgress => timing?.TracksStartup == true;
         internal bool CanPrefetch => limit > 1;
         internal ProbeWindow? Window { get; private set; }
@@ -150,7 +151,7 @@ internal sealed class PublicTransport(HttpMessageHandler handler, TimeSpan? requ
     private sealed class SpeculativeBodyTooLargeException : Exception { }
     private readonly AsyncLocal<DiscoveryCapture?> discoveryCapture = new();
 
-    internal async Task<(T Result, PlayerMetadata? Metadata)> DiscoverAsync<T>(string videoId, PlaybackTiming? timing,
+    internal async Task<(T Result, PlayerMetadata? Metadata, Storyboard? Storyboard)> DiscoverAsync<T>(string videoId, PlaybackTiming? timing,
         int limit, CancellationToken token, Func<ValueTask<T>> discover)
     {
         var previous = discoveryCapture.Value;
@@ -162,7 +163,7 @@ internal sealed class PublicTransport(HttpMessageHandler handler, TimeSpan? requ
             await capture.DrainAsync();
             token.ThrowIfCancellationRequested();
             capture.Finish();
-            return (result, capture.Latest);
+            return (result, capture.Latest, capture.Storyboard);
         }
         finally
         {
@@ -170,6 +171,9 @@ internal sealed class PublicTransport(HttpMessageHandler handler, TimeSpan? requ
             finally { discoveryCapture.Value = previous; }
         }
     }
+    internal Task<byte[]?> ReadStoryboardSheetAsync(Storyboard storyboard, int sheet, CancellationToken token) =>
+        StoryboardSheet.ReadAsync(inner, storyboard, sheet, token);
+
     internal static bool IsCdn(Uri u) => u.IsAbsoluteUri && u.Scheme == "https" && u.IsDefaultPort && u.UserInfo.Length == 0 && u.Fragment.Length == 0 && u.Host.EndsWith(".googlevideo.com", StringComparison.OrdinalIgnoreCase);
     private static bool IsYouTube(Uri u) => u.IsAbsoluteUri && u.Scheme == "https" && u.IsDefaultPort && u.UserInfo.Length == 0 && u.Fragment.Length == 0 && u.Host is "www.youtube.com" or "youtube.com";
     internal static PlaybackException Unsafe() => new("unsafe_resource", "The playback resource is not permitted.");
@@ -277,7 +281,11 @@ internal sealed class PublicTransport(HttpMessageHandler handler, TimeSpan? requ
                     var bytes = original;
                     if (publicPlayer)
                     {
-                        if (capture is not null) capture.Latest = PlayerMetadata.Read(original, capture.Id);
+                        if (capture is not null)
+                        {
+                            capture.Latest = PlayerMetadata.Read(original, capture.Id, out var storyboard);
+                            capture.Storyboard = storyboard;
+                        }
                         bytes = PlayerStreamFilter.Filter(original, capture?.MeasuresProgress == true, capture?.CanPrefetch == true,
                             out var candidates, out var probes, out var fallback, out var repeatedFormatEntries);
                         capture?.BeginPlayerResponse(candidates, probes, fallback, repeatedFormatEntries);

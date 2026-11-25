@@ -54,12 +54,26 @@ public sealed class LibraryFixtureTests
         var streamPlayer = Player(scenario == "wrong_id" ? "abcdefghijk" : "jNQXAC9IVRw", scenario == "invalid_duration" ? "0" : "1",
             scenario switch { "missing_description" or "expired_description" => null, "empty_description" => "", _ => "Fixture description" });
         if (scenario == "malformed_description") streamPlayer = streamPlayer.Replace("Fixture description", "\\uD800", StringComparison.Ordinal);
+        if (scenario is "complete" or "invalid_duration")
+            streamPlayer = streamPlayer[..^1] + ",\"storyboards\":{\"playerStoryboardSpecRenderer\":{\"spec\":\"https://i.ytimg.com/sb/jNQXAC9IVRw/storyboard3_L$L/$N.jpg?sqp=fixture|80#45#3#2#2#5000#M$M#rs$test\"}}}";
         var clock = new FixtureClock();
         var timing = PlaybackTiming.StartForStartup();
-        int heads=0, tails=0, redirects=0, decoyRequests=0, watches=0;
+        int heads=0, tails=0, redirects=0, decoyRequests=0, watches=0, sheets=0;
+        CancellationTokenSource? cancelSheetOnDispatch = null;
         var probeSnapshots = new List<StreamDiscoverySnapshot>();
         var handler = new Handler(r => {
             var u = r.RequestUri!;
+            if (u.Host == "i.ytimg.com")
+            {
+                Interlocked.Increment(ref sheets);
+                Assert.Equal(HttpMethod.Get, r.Method);
+                Assert.Equal("/sb/jNQXAC9IVRw/storyboard3_L0/M0.jpg", u.AbsolutePath);
+                Assert.Equal("?sqp=fixture&sigh=rs$test", u.Query);
+                Assert.Null(r.Headers.Authorization);
+                Assert.False(r.Headers.Contains("Cookie"));
+                cancelSheetOnDispatch?.Cancel();
+                return StoryboardTests.ImageResponse();
+            }
             if (u.Host == "www.youtube.com")
             {
                 Assert.Null(r.Headers.Authorization);
@@ -144,6 +158,26 @@ public sealed class LibraryFixtureTests
         bool missing = scenario is "missing_description" or "malformed_description" or "expired_description";
         Assert.Equal(missing || scenario == "empty_description" ? "" : "Fixture description", media.Description);
         Assert.Single(media.Qualities); Assert.Equal(2, tails); Assert.Equal(4, redirects); Assert.Equal(includeLength ? 0 : 2, heads);
+        var storyboard = await resolver.GetStoryboardAsync(media, CancellationToken.None);
+        Assert.Equal(0, sheets);
+        if (scenario is "complete" or "invalid_duration")
+        {
+            Assert.NotNull(storyboard);
+            Assert.Same(storyboard, await resolver.GetStoryboardAsync(resolver.ForQuality(media, 360), CancellationToken.None));
+            Assert.Null(await resolver.GetStoryboardSheetAsync(storyboard, 1, CancellationToken.None));
+            using var other = new PlaybackResolver(new Handler(_ => throw new InvalidOperationException()));
+            Assert.Null(await other.GetStoryboardAsync(media, CancellationToken.None));
+            Assert.Null(await other.GetStoryboardSheetAsync(storyboard, 0, CancellationToken.None));
+            Assert.Equal(StoryboardTests.Jpeg, await resolver.GetStoryboardSheetAsync(storyboard, 0, CancellationToken.None));
+            Assert.Equal(1, sheets);
+            using var sheetCancellation = new CancellationTokenSource();
+            cancelSheetOnDispatch = sheetCancellation;
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => resolver.GetStoryboardSheetAsync(storyboard, 0, sheetCancellation.Token));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => resolver.GetStoryboardSheetAsync(storyboard, 0, sheetCancellation.Token));
+            Assert.Equal(2, sheets); // No publication after cancellation and no pre-canceled dispatch.
+            cancelSheetOnDispatch = null;
+        }
+        else Assert.Null(storyboard);
         // The existing filter leaves unrewritable JSON untouched. Invalid optional
         // text must not make resolution fail or relax final codec selection.
         if (scenario != "malformed_description") Assert.Equal(0, decoyRequests);

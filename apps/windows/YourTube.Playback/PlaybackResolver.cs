@@ -38,11 +38,14 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
     private const ulong InitialHeaderRead = 16 * 1024;
     private const ulong HeaderRead = 1024 * 1024;
     private static readonly XNamespace Dash = "urn:mpeg:dash:schema:mpd:2011";
-    private sealed record OwnedSource(XDocument Manifest, Dictionary<string, MediaTrack> Tracks, bool NeedsDescription = false);
+    private sealed record OwnedSource(XDocument Manifest, Dictionary<string, MediaTrack> Tracks, bool NeedsDescription = false, Storyboard? Storyboard = null);
     private readonly PublicTransport transport;
     private readonly HttpClient http;
     private readonly YoutubeClient client;
     private readonly ConditionalWeakTable<PlaybackMedia, OwnedSource> ownership = new();
+    private sealed record StoryboardLifetime(DateTimeOffset ExpiresAt);
+    private readonly ConditionalWeakTable<Storyboard, StoryboardLifetime> storyboards = new();
+    private readonly SemaphoreSlim sheetSlots = new(2);
     private bool disposed;
     public PlaybackResolver() : this(CreatePublicHandler()) { }
     internal static HttpClientHandler CreatePublicHandler() => new() { AllowAutoRedirect = false, UseCookies = false, UseDefaultCredentials = false, AutomaticDecompression = DecompressionMethods.None };
@@ -56,6 +59,41 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
     public Task<PlaybackMedia> ResolveAsync(string videoId, CancellationToken cancellationToken = default) =>
         ResolveAsync(videoId, cancellationToken, null);
 
+    /// <summary>Returns optional storyboard data from the existing player response without sending a request.</summary>
+    public Task<Storyboard?> GetStoryboardAsync(PlaybackMedia catalog, CancellationToken token)
+    {
+        if (token.IsCancellationRequested) return Task.FromCanceled<Storyboard?>(token);
+        return Task.FromResult(!disposed && catalog is not null && catalog.ExpiresAt > DateTimeOffset.UtcNow &&
+            ownership.TryGetValue(catalog, out var source) ? source.Storyboard : null);
+    }
+
+    /// <summary>Downloads one bounded JPEG for a storyboard issued by this resolver, or returns null when unavailable.</summary>
+    public async Task<byte[]?> GetStoryboardSheetAsync(Storyboard storyboard, int sheet, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        if (disposed || storyboard is null || !storyboards.TryGetValue(storyboard, out var lifetime) ||
+            lifetime.ExpiresAt <= DateTimeOffset.UtcNow || storyboard.SheetUri(sheet) is null) return null;
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
+        budget.CancelAfter(TimeSpan.FromSeconds(5));
+        try
+        {
+            await sheetSlots.WaitAsync(budget.Token);
+            try
+            {
+                if (disposed || lifetime.ExpiresAt <= DateTimeOffset.UtcNow) return null;
+                var bytes = await transport.ReadStoryboardSheetAsync(storyboard, sheet, budget.Token);
+                budget.Token.ThrowIfCancellationRequested();
+                return !disposed && lifetime.ExpiresAt > DateTimeOffset.UtcNow ? bytes : null;
+            }
+            finally { sheetSlots.Release(); }
+        }
+        catch (Exception e) when (e is HttpRequestException or IOException or OperationCanceledException or InvalidOperationException)
+        {
+            token.ThrowIfCancellationRequested();
+            return null;
+        }
+    }
+
     public async Task<PlaybackMedia> ResolveAsync(string videoId, CancellationToken cancellationToken, PlaybackTiming? timing)
     {
         int streamCheckLimit = MaxConcurrentStreamChecks;
@@ -64,7 +102,7 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
             CheckDisposed();
             if (!Regex.IsMatch(videoId ?? "", "\\A[A-Za-z0-9_-]{11}\\z", RegexOptions.CultureInvariant)) throw new PlaybackException("invalid_video", "The video identity is invalid.");
             timing?.Mark(PlaybackTimingStage.StreamManifestStarted);
-            var (manifest, metadata) = await transport.DiscoverAsync(videoId!, timing, streamCheckLimit, cancellationToken, () =>
+            var (manifest, metadata, storyboard) = await transport.DiscoverAsync(videoId!, timing, streamCheckLimit, cancellationToken, () =>
                 client.Videos.Streams.GetManifestAsync(videoId!, cancellationToken));
             timing?.Mark(PlaybackTimingStage.StreamManifestCompleted);
             var videos = manifest.GetVideoOnlyStreams().Where(s => s.Container.Name == "mp4" && Regex.IsMatch(s.VideoCodec, PlayerStreamFilter.AvcPattern) && s.VideoResolution.Height is > 0 and <= PlayerStreamFilter.MaxHeight && s.VideoResolution.Width <= PlayerStreamFilter.MaxWidth).OrderBy(s => s.VideoResolution.Height).ThenBy(s => s.Bitrate.BitsPerSecond).ToArray();
@@ -84,7 +122,7 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
             var tracks = videos.Select(s => new MediaTrack(new Uri(s.Url), checked((ulong)s.Size.Bytes), s.VideoCodec, checked((uint)s.Bitrate.BitsPerSecond), s.VideoResolution.Width, s.VideoResolution.Height)).ToList();
             tracks.Add(new(new Uri(audio.Url), checked((ulong)audio.Size.Bytes), audio.AudioCodec, checked((uint)audio.Bitrate.BitsPerSecond), 0, 0));
             return await AssembleAsync(videoId!, metadata.Title, metadata.Author, metadata.Description ?? "", metadata.Duration,
-                tracks, cancellationToken, timing, needsDescription);
+                tracks, cancellationToken, timing, needsDescription, storyboard);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (PlaybackException) { throw; }
@@ -110,7 +148,7 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
         catch (Exception) { return null; } // Optional text must not fail or interrupt playback.
     }
 
-    internal async Task<PlaybackMedia> AssembleAsync(string id, string title, string author, string description, TimeSpan duration, IReadOnlyList<MediaTrack> tracks, CancellationToken token = default, PlaybackTiming? timing = null, bool needsDescription = false)
+    internal async Task<PlaybackMedia> AssembleAsync(string id, string title, string author, string description, TimeSpan duration, IReadOnlyList<MediaTrack> tracks, CancellationToken token = default, PlaybackTiming? timing = null, bool needsDescription = false, Storyboard? storyboard = null)
     {
         CheckDisposed();
         if (duration <= TimeSpan.Zero || tracks.Count > 33) throw Unsupported();
@@ -148,7 +186,8 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
         if (!video.HasElements || !audio.HasElements) throw Unsupported();
         var mpd = new XDocument(new XElement(ns + "MPD", new XAttribute("type", "static"), new XAttribute("profiles", "urn:mpeg:dash:profile:isoff-on-demand:2011"), new XAttribute("mediaPresentationDuration", XmlConvert.ToString(duration)), new XAttribute("minBufferTime", "PT1.5S"), new XElement(ns + "Period", new XAttribute("start", "PT0S"), new XAttribute("duration", XmlConvert.ToString(duration)), video, audio)));
         var media = new PlaybackMedia(id, title, author, description, duration, expiry, Serialize(mpd), new("https://www.youtube.com/yourtube-playback.mpd"), qualities.AsReadOnly());
-        ownership.Add(media, new(mpd, owned, needsDescription));
+        ownership.Add(media, new(mpd, owned, needsDescription, storyboard));
+        if (storyboard is not null) storyboards.Add(storyboard, new(expiry));
         timing?.Mark(PlaybackTimingStage.DashAssemblyCompleted);
         return media;
     }
@@ -176,7 +215,7 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
         var qualities = Array.AsReadOnly(new[] { new PlaybackQuality(height.Value, (uint)selected.Attribute("bandwidth")!) });
         var projected = new PlaybackMedia(media.VideoId, media.Title, media.Author, media.Description, media.Duration,
             media.ExpiresAt, Serialize(mpd), media.ManifestUri, qualities);
-        ownership.Add(projected, new(mpd, tracks));
+        ownership.Add(projected, new(mpd, tracks, Storyboard: source.Storyboard));
         return projected;
     }
 
@@ -233,5 +272,5 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
     private static PlaybackException InvalidRange() => new("invalid_range", "The media byte range is invalid or exceeds the read limit.");
     private static PlaybackException Expired() => new("expired", "The public media has expired. Retry playback to resolve it again.");
     private void CheckDisposed() { if (disposed) throw new PlaybackException("disposed", "The playback resolver has been closed."); }
-    public void Dispose() { if (disposed) return; disposed = true; ownership.Clear(); client.Dispose(); http.Dispose(); }
+    public void Dispose() { if (disposed) return; disposed = true; ownership.Clear(); storyboards.Clear(); client.Dispose(); http.Dispose(); }
 }

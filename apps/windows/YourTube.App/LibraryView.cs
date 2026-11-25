@@ -469,7 +469,8 @@ internal sealed partial class MainWindow
         await writer.StoreAsync();
         writer.DetachStream();
         stream.Seek(0);
-        var bitmap = new BitmapImage { DecodePixelWidth = width };
+        var bitmap = new BitmapImage();
+        if (width > 0) bitmap.DecodePixelWidth = width;
         await bitmap.SetSourceAsync(stream);
         return bitmap;
     }

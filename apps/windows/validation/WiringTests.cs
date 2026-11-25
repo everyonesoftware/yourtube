@@ -14,6 +14,7 @@ internal static class WiringTests
         var code = File.ReadAllText(Path.Combine(app, "MainWindow.cs"));
         var libraryCode = File.ReadAllText(Path.Combine(app, "LibraryView.cs"));
         var searchCode = File.ReadAllText(Path.Combine(app, "SearchView.cs"));
+        var seekCode = File.ReadAllText(Path.Combine(app, "SeekPreview.cs"));
         StateTests.Verify(names.TryGetValue("TheaterPlayer", out var playerType) && playerType == "MediaPlayerElement", "Theater uses a genuine native MediaPlayerElement");
         XElement Named(string name) => xml.Descendants().Single(e => (string?)e.Attribute(x + "Name") == name);
         var player = Named("TheaterPlayer");
@@ -146,10 +147,32 @@ internal static class WiringTests
         var slider = Named("PlayerSeek");
         StateTests.Verify(hitArea is not null && hitArea.Parent == slider.Parent && hitArea.ElementsBeforeSelf().Contains(slider) &&
             (string?)slider.Attribute("IsHitTestVisible") == "False", "pointer scrubs do not reach the native slider template before capture");
+        StateTests.Verify(names.ContainsKey("PlayerChapterMarks") && Named("PlayerChapterMarks").Parent == slider.Parent &&
+            (string?)Named("PlayerChapterMarks").Attribute("IsHitTestVisible") == "False" &&
+            names.ContainsKey("PlayerSeekPreview") && Named("PlayerSeekPreview").Ancestors().Contains(overlay!) &&
+            (string?)Named("PlayerSeekPreview").Attribute("IsHitTestVisible") == "False" &&
+            (string?)Named("PlayerSeekPreview").Attribute("Visibility") == "Collapsed",
+            "chapter marks and an initially hidden seek preview are rendered without intercepting transport input");
+        StateTests.Verify(code.Contains("hitArea.PointerEntered +=") && code.Contains("hitArea.PointerExited +=") &&
+            code.Contains("else PreviewSeekHover(args);") && code.Contains("SetSeekChapters(description, catalog.Duration);") &&
+            code.Contains("SetSeekChapters(catalog?.Description, catalog?.Duration ?? TimeSpan.Zero);"),
+            "hover previews without seeking, and both initial and deferred descriptions supply the active chapter list");
+        StateTests.Verify(names.ContainsKey("PlayerSeekThumbnail") && Named("PlayerSeekThumbnail").Ancestors().Contains(Named("PlayerSeekPreview")) &&
+            (string?)Named("PlayerSeekThumbnail").Attribute("Visibility") == "Collapsed" &&
+            code.Contains("ResetSeekStoryboard(catalog);") && seekCode.Contains("UpdateSeekThumbnail();") &&
+            seekCode.Contains("playbackResolver.GetStoryboardSheetAsync(") && seekCode.Contains("OwnsSeekStoryboard(state)") &&
+            seekCode.Contains("state.Board?.FrameAt(seekPreviewSeconds)"),
+            "only the current seek target gets a storyboard frame, in an optional image slot inside the text preview");
         StateTests.Verify(code.Contains("hitArea.CapturePointer(args.Pointer)") && code.Contains("hitArea.PointerMoved +=") &&
             code.Contains("hitArea.PointerReleased +=") && code.Contains("if (commit && active is not null"), "captured drag previews on the hit surface and commits only on release");
         foreach (var edge in new[] { "PointerCaptureLost", "PointerCanceled" })
             StateTests.Verify(code.Split('\n').Single(line => line.Contains($"hitArea.{edge} +=")).Contains("commit: false"), "interrupted scrub cancels: " + edge);
+        var scrub = Regex.Match(code, @"private void PreviewScrub\([^\r\n]*\)[\s\S]*?\r?\n    \}").Value;
+        var sizing = Regex.Match(code, @"stage\.SizeChanged \+= [\s\S]*?(?=C<Button>\(""PlayerPlay""\))").Value;
+        StateTests.Verify(code.Contains("if (!canSeek) CancelScrub();") &&
+            Regex.IsMatch(scrub, @"!seek\.IsEnabled[^\r\n]*ReferenceEquals\(seekOwner, InteractivePlayer\)[\s\S]*?CancelScrub\(\);[\s\S]*?return;[\s\S]*?seek\.Value ="),
+            "losing seekability or playback ownership invalidates a captured drag before it can preview or commit");
+        StateTests.Verify(sizing.Contains("HideSeekPreview();"), "height-only stage resize invalidates the old preview geometry");
         StateTests.Verify(Regex.IsMatch(code, @"active\.Prepare\(\);\s+ApplyPlayerAudio\(active\);\s+active\.Open\(\);") &&
             code.Contains("playerAudio.ToggleMute()"),
             "new videos inherit window volume and mute before they can play");
@@ -218,7 +241,7 @@ internal static class WiringTests
             code.Contains("if (!ReferenceEquals(watchStatusIdentity, watchIdentity))") &&
             code.ReplaceLineEndings("\n").Contains("watchStatusIdentity = watchIdentity;\n            ResetWatchStatus();"),
             "watch status resets on account changes or sign-out, not when the same account opens Settings");
-        foreach (Match lookup in Regex.Matches(code + libraryCode + searchCode, "C<(?<type>\\w+)>\\(\"(?<name>[^\"]+)\"\\)"))
+        foreach (Match lookup in Regex.Matches(code + libraryCode + searchCode + seekCode, "C<(?<type>\\w+)>\\(\"(?<name>[^\"]+)\"\\)"))
             StateTests.Verify(names.TryGetValue(lookup.Groups["name"].Value, out var type) && type == lookup.Groups["type"].Value, "typed native control lookup matches XML: " + lookup.Groups["name"].Value);
         var library = Named("HistoryList");
         StateTests.Verify(Regex.IsMatch(libraryCode, @"var progress = .*BrowseView\.Subscriptions.*video\.PercentWatched") &&

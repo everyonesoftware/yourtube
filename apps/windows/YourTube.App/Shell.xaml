@@ -170,6 +170,7 @@
             <TextBlock x:Name="PlayerQualityStatus" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" Foreground="{StaticResource Muted}" Visibility="Collapsed"/>
             <Grid>
               <Slider x:Name="PlayerSeek" Minimum="0" Maximum="1" StepFrequency="0.1" SmallChange="5" LargeChange="10" IsThumbToolTipEnabled="False" IsHitTestVisible="False" AutomationProperties.Name="Playback position"/>
+              <Canvas x:Name="PlayerChapterMarks" Height="10" VerticalAlignment="Center" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
               <Border x:Name="PlayerSeekHitArea" Background="Transparent" ManipulationMode="None" AutomationProperties.AccessibilityView="Raw"/>
             </Grid>
             <Grid ColumnSpacing="4">
@@ -187,6 +188,18 @@
               </StackPanel>
             </Grid>
             </StackPanel>
+            <Canvas IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw">
+              <Border x:Name="PlayerSeekPreview" Visibility="Collapsed" IsHitTestVisible="False" Width="200"
+                      Background="{ThemeResource SolidBackgroundFillColorBaseBrush}" CornerRadius="6" Padding="6">
+                <StackPanel Spacing="4">
+                  <Canvas x:Name="PlayerSeekThumbnail" Visibility="Collapsed" HorizontalAlignment="Center">
+                    <Image x:Name="PlayerSeekSheet" Stretch="Fill"/>
+                  </Canvas>
+                  <TextBlock x:Name="PlayerSeekPreviewLabel" FontSize="13" Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                             TextAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+              </Border>
+            </Canvas>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="12" Spacing="7">
               <StackPanel.Resources>
                 <ResourceDictionary>

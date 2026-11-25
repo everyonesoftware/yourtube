@@ -26,6 +26,12 @@ Header requests are capped at 1 MiB; every read and every buffered response is c
 
 Expiry is the earliest included stream's provider `expire` timestamp minus 60 seconds. Expired reads fail with `expired`; callers can explicitly re-resolve. There is no disk cache, browser fallback, background retry loop or fabricated source. Exceptions are fixed safe messages without provider inner exceptions. The application's generation/cancellation logic and Windows adaptive-source runtime acceptance remain separate responsibilities.
 
+## Optional storyboard previews
+
+`GetStoryboardAsync` returns metadata already captured from the bounded, credential-free player JSON for a resolver-owned playback catalog. This is best-effort and adds no requests to startup or discovery. Missing/unsupported specifications return null; the resolver does not request a separate watch page to find previews. `Storyboard.FrameAt(seconds)` returns a sheet index and grid coordinates for the highest-resolution usable timed level. No signature or image URL is exposed.
+
+`GetStoryboardSheetAsync` is an explicit in-memory read of one resolver-owned sheet. It uses exact HTTPS `i.ytimg.com` storyboard paths bound to the video, no cookies or credentials, no redirects, a five-second budget, at most two in-flight reads per resolver and a 2 MiB JPEG limit. Response type, JPEG markers and pixel dimensions are checked; native image decoding/painting is the caller's responsibility. Unavailable results return null; caller cancellation propagates. Keep signed data and images out of logs and persistent storage.
+
 ## Verification
 
 ```sh

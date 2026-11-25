@@ -48,7 +48,7 @@ internal sealed partial class MainWindow : Window
     private long watchStatusGeneration;
     private CancellationTokenSource? watchRequest;
     private DispatcherQueueTimer? playerClock;
-    private Storyboard? playerTapFade;
+    private Microsoft.UI.Xaml.Media.Animation.Storyboard? playerTapFade;
     private bool playerRunning;
     private Windows.Foundation.Point? playerMousePosition;
     private long? lastPlayerActivity;
@@ -711,13 +711,19 @@ internal sealed partial class MainWindow : Window
         previous?.Cancel();
         previous?.Dispose();
         if (!closed) C<TextBlock>("PlayerDescription").Text = catalog?.Description ?? "";
+        SetSeekChapters(catalog?.Description, catalog?.Duration ?? TimeSpan.Zero);
+        ResetSeekStoryboard(catalog);
     }
 
     private async Task LoadDescriptionAsync(PlaybackMedia catalog, CancellationToken token)
     {
         var description = await playbackResolver.GetDeferredDescriptionAsync(catalog, token);
         if (!closed && !token.IsCancellationRequested && description is not null && catalog.ExpiresAt > DateTimeOffset.UtcNow &&
-            ReferenceEquals(playback.Active?.Catalog, catalog)) C<TextBlock>("PlayerDescription").Text = description;
+            ReferenceEquals(playback.Active?.Catalog, catalog))
+        {
+            C<TextBlock>("PlayerDescription").Text = description;
+            SetSeekChapters(description, catalog.Duration);
+        }
     }
 
     private static string QualityLabel(int? height) => height is int value ? $"{value}p" : "Auto";
@@ -746,7 +752,10 @@ internal sealed partial class MainWindow : Window
         var theater = C<ScrollViewer>("TheaterPanel");
         theater.SizeChanged += (_, args) => ResizePlayerStage(args.NewSize.Width, args.NewSize.Height);
         stage.SizeChanged += (_, args) =>
+        {
             C<Slider>("PlayerVolume").Visibility = ToVisibility(args.NewSize.Width >= 450);
+            HideSeekPreview();
+        };
         C<Button>("PlayerPlay").Click += (_, _) => TogglePlayerPlayback();
         C<Border>("PlayerVideoHitArea").Tapped += (_, args) =>
         {
@@ -790,10 +799,17 @@ internal sealed partial class MainWindow : Window
         };
         hitArea.PointerMoved += (_, args) =>
         {
-            if (seekPointer != args.Pointer.PointerId) return;
-            PreviewScrub(args);
-            args.Handled = true;
+            if (seekPointer == args.Pointer.PointerId)
+            {
+                PreviewScrub(args);
+                args.Handled = true;
+            }
+            else PreviewSeekHover(args);
         };
+        hitArea.SizeChanged += (_, _) => { UpdateChapterMarks(); HideSeekPreview(); };
+        C<Border>("PlayerSeekPreview").SizeChanged += (_, _) => PositionSeekPreview();
+        hitArea.PointerEntered += (_, args) => PreviewSeekHover(args);
+        hitArea.PointerExited += (_, _) => { if (seekPointer is null) HideSeekPreview(); };
         hitArea.PointerReleased += (_, args) =>
         {
             if (seekPointer != args.Pointer.PointerId) return;
@@ -853,6 +869,7 @@ internal sealed partial class MainWindow : Window
         overlay.Opacity = show ? 1 : 0;
         // A faded control must not intercept a click meant for the video surface.
         overlay.IsHitTestVisible = show;
+        if (!show) HideSeekPreview();
     }
 
     private void TogglePlayerPlayback(bool showFeedback = false)
@@ -888,9 +905,9 @@ internal sealed partial class MainWindow : Window
             fade.KeyFrames.Add(new LinearDoubleKeyFrame { KeyTime = KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(100)), Value = 1 });
             fade.KeyFrames.Add(new LinearDoubleKeyFrame { KeyTime = KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(200)), Value = 1 });
             fade.KeyFrames.Add(new LinearDoubleKeyFrame { KeyTime = KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(450)), Value = 0 });
-            Storyboard.SetTarget(fade, C<Border>("PlayerTapFeedback"));
-            Storyboard.SetTargetProperty(fade, nameof(UIElement.Opacity));
-            playerTapFade = new Storyboard { FillBehavior = FillBehavior.Stop };
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(fade, C<Border>("PlayerTapFeedback"));
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(fade, nameof(UIElement.Opacity));
+            playerTapFade = new() { FillBehavior = FillBehavior.Stop };
             playerTapFade.Children.Add(fade);
         }
         playerTapFade.Begin();
@@ -974,6 +991,7 @@ internal sealed partial class MainWindow : Window
 
     private void CancelScrub()
     {
+        HideSeekPreview();
         if (seekPointer is null) return;
         seekPointer = null;
         seekOwner = null;
@@ -984,13 +1002,20 @@ internal sealed partial class MainWindow : Window
     {
         var hitArea = C<Border>("PlayerSeekHitArea");
         var seek = C<Slider>("PlayerSeek");
+        if (!seek.IsEnabled || seekOwner is null || !ReferenceEquals(seekOwner, InteractivePlayer))
+        {
+            CancelScrub();
+            return;
+        }
         double width = hitArea.ActualWidth;
         if (width <= 0) return;
         updatingTransport = true;
         try
         {
-            seek.Value = seek.Maximum * Math.Clamp(args.GetCurrentPoint(hitArea).Position.X / width, 0, 1);
+            double fraction = Math.Clamp(args.GetCurrentPoint(hitArea).Position.X / width, 0, 1);
+            seek.Value = seek.Maximum * fraction;
             C<TextBlock>("PlayerTime").Text = $"{FormatTime(seek.Value)} / {FormatTime(seek.Maximum)}";
+            ShowSeekPreview(seek.Value, fraction);
         }
         finally { updatingTransport = false; }
     }
@@ -1068,6 +1093,8 @@ internal sealed partial class MainWindow : Window
         C<StackPanel>("PlayerTransport").Visibility = ToVisibility(ready);
         if (!ready)
         {
+            CancelScrub();
+            UpdateChapterMarks();
             watchProgress.BreakSegment();
             playerRunning = false;
             if (playback.Selected is null)
@@ -1104,11 +1131,16 @@ internal sealed partial class MainWindow : Window
                 ObserveWatchProgress(view);
                 var seek = C<Slider>("PlayerSeek");
                 double duration = Math.Max(0, view.NaturalDuration.TotalSeconds);
-                seek.IsEnabled = enabled && view.CanSeek && duration > 0;
+                bool canSeek = enabled && view.CanSeek && duration > 0;
+                bool seekabilityChanged = seek.IsEnabled != canSeek;
+                seek.IsEnabled = canSeek;
+                if (!canSeek) CancelScrub();
                 if (seekPointer is null)
                 {
                     double position = Math.Clamp(view.Position.TotalSeconds, 0, duration);
+                    bool durationChanged = seek.Maximum != Math.Max(duration, 1);
                     seek.Maximum = Math.Max(duration, 1);
+                    if (seekabilityChanged || durationChanged) UpdateChapterMarks();
                     // WinUI's Slider snaps user input to StepFrequency.
                     seek.Value = position;
                     var time = C<TextBlock>("PlayerTime");

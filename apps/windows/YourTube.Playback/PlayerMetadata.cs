@@ -11,8 +11,9 @@ internal sealed class PlayerMetadata(string title, string author, string? descri
     internal string? Description { get; } = description;
     internal TimeSpan Duration { get; } = duration;
 
-    internal static PlayerMetadata? Read(byte[] body, string expectedId)
+    internal static PlayerMetadata? Read(byte[] body, string expectedId, out Storyboard? storyboard)
     {
+        storyboard = null;
         try
         {
             using var document = JsonDocument.Parse(body);
@@ -21,6 +22,7 @@ internal sealed class PlayerMetadata(string title, string author, string? descri
             var id = Text(details, "videoId");
             if (id is not null && id != expectedId)
                 throw new PlaybackException("unavailable", "The player response does not match the requested video.");
+            storyboard = Storyboard.Read(root, expectedId);
             if (id is null || !Object(root, "playabilityStatus", out var playability) || Text(playability, "status") != "OK" ||
                 IsTrue(details, "isLiveContent") || IsTrue(details, "isLive") || IsTrue(details, "isUpcoming")) return null;
             var title = Text(details, "title");
