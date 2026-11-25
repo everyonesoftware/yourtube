@@ -164,6 +164,17 @@ internal static class WiringTests
             code.Contains("else PreviewSeekHover(args);") && code.Contains("SetSeekChapters(description, catalog.Duration);") &&
             code.Contains("SetSeekChapters(catalog?.Description, catalog?.Duration ?? TimeSpan.Zero);"),
             "hover previews without seeking, and both initial and deferred descriptions supply the active chapter list");
+        StateTests.Verify(seekCode.Contains("ShowSeekPreview(seek.Maximum * fraction, fraction, mouseHover: true);") &&
+            seekCode.Contains("UpdateChapterHover(seekPreviewMouseHover ? chapter : null);") &&
+            Regex.IsMatch(seekCode, @"private void HideSeekPreview\(\)\s*\{\s*if \(closed\) return;\s*seekPreviewMouseHover = false;\s*UpdateChapterHover\(null\);"),
+            "only mouse hover enlarges the chapter named in the preview; hiding the preview restores the track");
+        StateTests.Verify(seekCode.Contains("double seconds = slider.Maximum * seekPreviewFraction;") &&
+            seekCode.Contains("ShowSeekPreview(seconds, seekPreviewFraction, mouseHover: true);") &&
+            seekCode.Contains("SetHeight(index, ChapterHeight * 1.2);") &&
+            seekCode.Contains("remaining.Height = played.Height = height;"),
+            "rebuilding at a new duration remaps stationary hover and both parts of that chapter grow by 20 percent");
+        StateTests.Verify(Regex.IsMatch(seekCode, @"if \(!segmented\)\s*\{[^}]*seekPreviewSeconds != slider\.Maximum \* seekPreviewFraction[^}]*HideSeekPreview\(\);[^}]*return;"),
+            "falling back to the continuous bar clears hover at an obsolete target time");
         StateTests.Verify(names.ContainsKey("PlayerSeekThumbnail") && Named("PlayerSeekThumbnail").Ancestors().Contains(Named("PlayerSeekPreview")) &&
             (string?)Named("PlayerSeekThumbnail").Attribute("Visibility") == "Collapsed" &&
             code.Contains("ResetSeekStoryboard(catalog);") && seekCode.Contains("UpdateSeekThumbnail();") &&

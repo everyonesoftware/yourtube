@@ -11,10 +11,13 @@ namespace YourTube.App;
 internal sealed partial class MainWindow
 {
     private IReadOnlyList<VideoChapter> seekChapters = [];
-    private readonly List<(ChapterTrackLayout.Segment Span, Border Played)> chapterSegments = [];
+    private const double ChapterHeight = 8;
+    private readonly List<(VideoChapter Chapter, ChapterTrackLayout.Segment Span, Border Remaining, Border Played)> chapterSegments = [];
+    private int hoveredChapterIndex = -1;
     private double chapterTrackScale;
     private double seekPreviewFraction;
     private double seekPreviewSeconds;
+    private bool seekPreviewMouseHover;
     private SeekStoryboardState? seekStoryboard;
 
     private sealed class SeekStoryboardState(PlaybackMedia catalog)
@@ -55,6 +58,7 @@ internal sealed partial class MainWindow
         var segments = C<Canvas>("PlayerChapterSegments");
         segments.Children.Clear();
         chapterSegments.Clear();
+        hoveredChapterIndex = -1;
         var slider = C<Slider>("PlayerSeek");
         double width = C<Border>("PlayerSeekHitArea").ActualWidth;
         var layout = InteractivePlayer is not null && slider.IsEnabled
@@ -66,30 +70,62 @@ internal sealed partial class MainWindow
         else slider.ClearValue(UIElement.UseSystemFocusVisualsProperty);
         track.Visibility = ToVisibility(segmented);
         UpdateChapterFocus();
-        if (!segmented) return;
+        if (!segmented)
+        {
+            if (seekPreviewMouseHover && (!slider.IsEnabled || InteractivePlayer is null ||
+                seekPreviewSeconds != slider.Maximum * seekPreviewFraction)) HideSeekPreview();
+            return;
+        }
 
         chapterTrackScale = width / slider.Maximum;
         var accent = C<Microsoft.UI.Xaml.Shapes.Ellipse>("PlayerChapterThumb").Fill;
-        foreach (var span in layout)
+        for (int i = 0; i < layout.Length; i++)
         {
-            var remaining = new Border { Width = span.Width, Height = 8, Background = slider.Foreground, Opacity = .36 };
-            var played = new Border { Width = 0, Height = 8, Background = accent };
+            var span = layout[i];
+            var remaining = new Border { Width = span.Width, Height = ChapterHeight, Background = slider.Foreground, Opacity = .36 };
+            var played = new Border { Width = 0, Height = ChapterHeight, Background = accent };
             foreach (var part in new[] { remaining, played })
             {
                 Canvas.SetLeft(part, span.Left);
-                Canvas.SetTop(part, 3);
+                Canvas.SetTop(part, (track.Height - ChapterHeight) / 2);
                 segments.Children.Add(part);
             }
-            chapterSegments.Add((span, played));
+            chapterSegments.Add((seekChapters[i], span, remaining, played));
         }
         UpdateChapterProgress(slider.Value);
+        if (seekPreviewMouseHover)
+        {
+            // The pointer's fraction is fixed even when the native duration changes.
+            double seconds = slider.Maximum * seekPreviewFraction;
+            if (seconds != seekPreviewSeconds) ShowSeekPreview(seconds, seekPreviewFraction, mouseHover: true);
+            else UpdateChapterHover(VideoChapters.At(seekChapters, seconds));
+        }
+    }
+
+    private void UpdateChapterHover(VideoChapter? chapter)
+    {
+        int index = chapter is null ? -1 : chapterSegments.FindIndex(segment => ReferenceEquals(segment.Chapter, chapter));
+        if (index == hoveredChapterIndex) return;
+        SetHeight(hoveredChapterIndex, ChapterHeight);
+        hoveredChapterIndex = index;
+        SetHeight(index, ChapterHeight * 1.2);
+
+        void SetHeight(int segmentIndex, double height)
+        {
+            if (segmentIndex < 0) return;
+            var (_, _, remaining, played) = chapterSegments[segmentIndex];
+            double top = (C<Canvas>("PlayerChapterTrack").Height - height) / 2;
+            remaining.Height = played.Height = height;
+            Canvas.SetTop(remaining, top);
+            Canvas.SetTop(played, top);
+        }
     }
 
     private void UpdateChapterProgress(double seconds)
     {
         if (chapterSegments.Count == 0) return;
         double x = seconds * chapterTrackScale;
-        foreach (var (span, played) in chapterSegments)
+        foreach (var (_, span, _, played) in chapterSegments)
         {
             double width = span.PlayedWidth(x);
             if (played.Width != width) played.Width = width;
@@ -112,13 +148,14 @@ internal sealed partial class MainWindow
         if (!seek.IsEnabled || width <= 0 || position.X < 0 || position.X > width ||
             position.Y < 0 || position.Y > hitArea.ActualHeight) return;
         double fraction = position.X / width;
-        ShowSeekPreview(seek.Maximum * fraction, fraction);
+        ShowSeekPreview(seek.Maximum * fraction, fraction, mouseHover: true);
     }
 
-    private void ShowSeekPreview(double seconds, double fraction)
+    private void ShowSeekPreview(double seconds, double fraction, bool mouseHover = false)
     {
         seekPreviewFraction = fraction;
         seekPreviewSeconds = seconds;
+        seekPreviewMouseHover = mouseHover;
         UpdateSeekPreviewLabel();
         C<Border>("PlayerSeekPreview").Visibility = Visibility.Visible;
         PositionSeekPreview();
@@ -128,6 +165,7 @@ internal sealed partial class MainWindow
     private void UpdateSeekPreviewLabel()
     {
         var chapter = VideoChapters.At(seekChapters, seekPreviewSeconds);
+        UpdateChapterHover(seekPreviewMouseHover ? chapter : null);
         string timestamp = FormatTime(seekPreviewSeconds);
         var label = C<TextBlock>("PlayerSeekPreviewLabel");
         string text = chapter is null ? timestamp : $"{timestamp} · {chapter.Title}";
@@ -151,6 +189,8 @@ internal sealed partial class MainWindow
     private void HideSeekPreview()
     {
         if (closed) return;
+        seekPreviewMouseHover = false;
+        UpdateChapterHover(null);
         C<Border>("PlayerSeekPreview").Visibility = Visibility.Collapsed;
         ClearSeekThumbnail();
     }
