@@ -398,19 +398,20 @@ public sealed partial class YouTubeClient
         return new YouTubeException("invalid_response", "YouTube returned an unsupported response. History diagnostic: " + string.Join('/', parts));
     }
 
-    private static HistoryPage ParseVideoPage(JsonElement container)
+    private static HistoryPage ParseVideoPage(JsonElement container, bool allowTileStatsFirst = false)
     {
         var items = At(container, "items");
         if (items.ValueKind == JsonValueKind.Undefined) items = At(container, "contents");
         if (items.ValueKind == JsonValueKind.Undefined) items = container; // append arrays and legacy direct-card fixtures
-        var videos = ParseVideoCards(Cards(items));
+        var videos = ParseVideoCards(Cards(items), allowTileStatsFirst: allowTileStatsFirst);
         var next = Find(At(container, "continuations"), "nextContinuationData").Select(n => Required(n, "continuation")).FirstOrDefault();
         next ??= Find(items, "nextContinuationData").Select(n => Required(n, "continuation")).FirstOrDefault();
         next ??= Find(items, "continuationItemRenderer").SelectMany(n => Find(n, "continuationCommand")).Select(n => Required(n, "token")).FirstOrDefault();
         return new HistoryPage(videos, next, videos.Count == 0 ? "No history videos were returned. History may be empty or paused." : null);
     }
 
-    private static List<HistoryVideo> ParseVideoCards(IEnumerable<(string Kind, JsonElement Value)> cards, bool includeShortTiles = false)
+    private static List<HistoryVideo> ParseVideoCards(IEnumerable<(string Kind, JsonElement Value)> cards,
+        bool includeShortTiles = false, bool allowTileStatsFirst = false)
     {
         var videos = new List<HistoryVideo>();
         foreach (var (kind, card) in cards)
@@ -431,19 +432,32 @@ public sealed partial class YouTubeClient
             if (shorts) title = Find(card, "primaryText").Select(Text).FirstOrDefault() ?? "";
             var channel = TextAt(card, "shortBylineText");
             if (channel.Length == 0) channel = TextAt(card, "longBylineText");
-            // Shorts tile metadata may start with a view count or age, not a channel.
-            if (tile && !shortTile) channel = Find(card, "lineItemRenderer").Select(n => TextAt(n, "text")).FirstOrDefault() ?? "";
+            if (tile && !shortTile && !allowTileStatsFirst)
+                channel = Find(card, "lineItemRenderer").Select(n => TextAt(n, "text")).FirstOrDefault() ?? "";
             if (lockup) channel = Find(card, "metadataParts").SelectMany(n => n.EnumerateArray()).Select(n => TextAt(n, "text")).FirstOrDefault() ?? "";
             var percent = Find(card, "percentDurationWatched").FirstOrDefault();
             if (lockup) percent = Find(card, "startPercent").FirstOrDefault();
             var duration = tile ? Find(card, "thumbnailOverlayTimeStatusRenderer").Select(n => TextAt(n, "text")).FirstOrDefault() ?? "" : TextAt(card, "lengthText");
             if (lockup) duration = Find(card, "thumbnailBadgeViewModel").Select(n => TextAt(n, "text")).FirstOrDefault() ?? "";
             var age = PublicationAge(ReadPublicationText(At(card, "publishedTimeText")));
-            if (age is null && tile)
-                age = ArrayItems(At(card, "metadata", "tileMetadataRenderer", "lines")).Skip(shortTile ? 0 : 1)
-                    .SelectMany(row => ArrayItems(At(row, "lineRenderer", "items")))
-                    .Select(part => PublicationAge(ReadPublicationText(At(part, "lineItemRenderer", "text"))))
-                    .FirstOrDefault(value => value is not null);
+            if (tile)
+            {
+                var rows = ArrayItems(At(card, "metadata", "tileMetadataRenderer", "lines"));
+                if (!shortTile)
+                {
+                    // A selected channel grid can start with stats, but an age-like
+                    // label alone does not distinguish stats from a channel byline.
+                    var firstText = allowTileStatsFirst
+                        ? TileLineText(rows.FirstOrDefault()).FirstOrDefault(text => !string.IsNullOrWhiteSpace(text)) : null;
+                    var startsWithStats = firstText is not null && IsTileViewCount(firstText);
+                    if (!startsWithStats)
+                    {
+                        if (channel.Length == 0) channel = firstText ?? "";
+                        rows = rows.Skip(1);
+                    }
+                }
+                age ??= rows.SelectMany(TileLineText).Select(PublicationAge).FirstOrDefault(value => value is not null);
+            }
             if (age is null && lockup)
                 age = ArrayItems(At(card, "metadata", "lockupMetadataViewModel", "metadata", "contentMetadataViewModel", "metadataRows")).Skip(1)
                     .SelectMany(row => ArrayItems(At(row, "metadataParts")))
@@ -458,6 +472,16 @@ public sealed partial class YouTubeClient
             });
         }
         return videos;
+    }
+
+    private static IEnumerable<string> TileLineText(JsonElement row) => ArrayItems(At(row, "lineRenderer", "items"))
+        .Select(part => ReadPublicationText(At(part, "lineItemRenderer", "text")));
+
+    private static bool IsTileViewCount(string value)
+    {
+        var text = value.Trim();
+        return text.Length <= 64 && Regex.IsMatch(text, @"\A(?:No views|[0-9][0-9.,]*[KMB]? (?:views?|watching))\z",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 
     // Optional card text must never make an otherwise usable feed fail to parse.

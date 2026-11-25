@@ -23,3 +23,10 @@ test('History enriches missing ages in the shared card without replacing the bou
   assert.match(renderer, /SetPublication\(HistoryPublicationDates\.FormatAge\(/);
   assert.doesNotMatch(renderer, /video with|ItemsSource\s*=/);
 });
+
+test('Subscription cards can format a supplied date without a public metadata lookup', () => {
+  const renderer = library.split('private void RenderLibraryCard(')[1].split('private async Task LoadLibraryImageAsync(')[0];
+  assert.match(renderer, /SetPublication\(video\.PublishedAge \?\? \(video\.PublishedDate is \{ \} date \? HistoryPublicationDates\.FormatAge\(date, today\) : null\), video\.PublishedDate\)/);
+  assert.match(renderer, /var identity = resize && controller\?\.View == BrowseView\.History/);
+  assert.match(renderer, /var publication = identity is not null && video\.PublishedAge is null && video\.PublishedDate is null/);
+});

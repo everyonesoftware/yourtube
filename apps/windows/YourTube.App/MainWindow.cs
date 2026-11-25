@@ -5,6 +5,7 @@ using DispatcherQueueTimer = Microsoft.UI.Dispatching.DispatcherQueueTimer;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
@@ -67,6 +68,7 @@ internal sealed partial class MainWindow : Window
     private CancellationTokenSource? avatarRequest;
     private IReadOnlyList<HistoryVideo>? displayedVideos;
     private IReadOnlyList<SubscribedChannel>? displayedChannels;
+    private readonly Dictionary<SelectorItem, CancellationTokenSource> channelImages = new();
     private sealed class ChannelChoice(SubscribedChannel? channel)
     {
         public SubscribedChannel? Channel { get; } = channel;
@@ -192,6 +194,7 @@ internal sealed partial class MainWindow : Window
             search.Dispose();
 
             RenderAccountAvatar(null);
+            CancelChannelImages();
             CancelWatchRequest();
             BindWatchSeekSource(null);
             playerClock?.Stop();
@@ -494,6 +497,7 @@ internal sealed partial class MainWindow : Window
         {
             if (!ReferenceEquals(displayedChannels, channels))
             {
+                CancelChannelImages();
                 displayedChannels = channels;
                 list.ItemsSource = new[] { AllSubscriptions }.Concat(channels.Select(c => new ChannelChoice(c))).ToArray();
             }
@@ -509,18 +513,79 @@ internal sealed partial class MainWindow : Window
 
     private void RenderChannelRow(ContainerContentChangingEventArgs args)
     {
-        if (args.ItemContainer.ContentTemplateRoot is not Grid host) return;
+        var container = args.ItemContainer;
+        if (channelImages.Remove(container, out var previous)) previous.Cancel();
+        AutomationProperties.SetName(container, "");
+        if (container.ContentTemplateRoot is not Grid host) return;
         host.Children.Clear();
-        AutomationProperties.SetName(args.ItemContainer, "");
         if (closed || args.InRecycleQueue || args.Item is not ChannelChoice choice) return;
         var channel = choice.Channel;
         var name = channel?.Name ?? "All Subscriptions";
-        var row = new StackPanel { Spacing = 2 };
-        row.Children.Add(new TextBlock { Text = name, FontSize = 14, TextWrapping = TextWrapping.Wrap });
-        if (channel?.HasNewContent == true) row.Children.Add(new TextBlock { Text = "New content", FontSize = 11 });
-        host.Children.Add(row);
-        AutomationProperties.SetName(args.ItemContainer, channel?.HasNewContent == true ? $"{name}, new content" : name);
+        var hasNewVideos = channel?.HasNewContent == true;
+        var row = new Grid { ColumnSpacing = 9 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var label = new TextBlock
+        {
+            Text = name, FontSize = 14, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center,
+            FontWeight = hasNewVideos ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Normal
+        };
+        Ellipse? photo = null;
+        if (channel is not null)
+        {
+            var art = new Grid { Width = 28, Height = 28, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
+            AutomationProperties.SetAccessibilityView(art, AccessibilityView.Raw);
+            art.Children.Add(new Ellipse { Fill = new SolidColorBrush(ColorHelper.FromArgb(255, 74, 93, 78)) });
+            art.Children.Add(new FontIcon { Glyph = "\uE77B", FontSize = 14 });
+            photo = new Ellipse();
+            art.Children.Add(photo);
+            row.Children.Add(art);
+            Grid.SetColumn(label, 1);
+        }
+        row.Children.Add(label);
+        host.Children.Add(new Border
+        {
+            Child = row, Padding = new Thickness(9, 5, 9, 5), MinHeight = 38, CornerRadius = new CornerRadius(6),
+            Background = hasNewVideos ? new SolidColorBrush(ColorHelper.FromArgb(255, 58, 80, 63)) : null
+        });
+        AutomationProperties.SetName(container, hasNewVideos ? $"{name}, new videos" : name);
         args.Handled = true;
+
+        if (photo is not null && channel?.AvatarUri is { } uri)
+        {
+            var request = new CancellationTokenSource();
+            channelImages.Add(container, request);
+            _ = LoadChannelImageAsync(container, photo, uri, request);
+        }
+    }
+
+    private bool OwnsChannelImage(SelectorItem container, CancellationTokenSource request) =>
+        !closed && channelImages.TryGetValue(container, out var current) && ReferenceEquals(request, current);
+
+    private async Task LoadChannelImageAsync(SelectorItem container, Ellipse photo, Uri uri, CancellationTokenSource request)
+    {
+        try
+        {
+            var bytes = await libraryThumbnails.LoadAvatarAsync(uri, request.Token);
+            if (!OwnsChannelImage(container, request) || bytes is null) return;
+            var bitmap = await DecodeImageAsync(bytes, 64);
+            if (!OwnsChannelImage(container, request)) return;
+            photo.Fill = new ImageBrush { ImageSource = bitmap, Stretch = Stretch.UniformToFill };
+        }
+        catch (OperationCanceledException) { }
+        catch (System.Runtime.InteropServices.COMException) { } // Keep the placeholder if decoding fails.
+        finally
+        {
+            if (OwnsChannelImage(container, request)) channelImages.Remove(container);
+            request.Dispose();
+        }
+    }
+
+    private void CancelChannelImages()
+    {
+        var requests = channelImages.Values.ToArray();
+        channelImages.Clear();
+        foreach (var request in requests) request.Cancel();
     }
 
     private void RenderHistoryRow(ContainerContentChangingEventArgs args)

@@ -165,6 +165,16 @@ internal static class WiringTests
         foreach (var button in new[] { "HistoryButton", "SubscriptionsButton" })
             StateTests.Verify(code.Contains($"C<Button>(\"{button}\").Click +="), "native browse navigation wired: " + button);
         StateTests.Verify(code.Contains("controller.NavigateAsync(view)") && code.Contains("controller.Channels") && code.Contains("RenderChannelRow"), "subscriptions navigation and native channel rows use real controller state");
+        var channelRow = code[code.IndexOf("private void RenderChannelRow", StringComparison.Ordinal)..code.IndexOf("private void RenderHistoryRow", StringComparison.Ordinal)];
+        StateTests.Verify(channelRow.Contains("Grid.SetColumn(label, 1)") && channelRow.Contains("channel?.AvatarUri") &&
+            channelRow.Contains("libraryThumbnails.LoadAvatarAsync(uri, request.Token)"), "channel art precedes its label and uses the bounded public avatar loader");
+        StateTests.Verify(channelRow.Contains("channel?.HasNewContent == true") && channelRow.Contains("Child = row") &&
+            channelRow.Contains("Background = hasNewVideos ?") && !channelRow.Contains("Text = \"New content\"") &&
+            channelRow.Contains("{name}, new videos"), "new videos highlight the whole channel row without a visible badge and remain announced");
+        StateTests.Verify(channelRow.Contains("channelImages.Remove(container, out var previous)") &&
+            channelRow.Split("!OwnsChannelImage(container, request)", StringSplitOptions.None).Length == 3 &&
+            code.Split("CancelChannelImages();", StringSplitOptions.None).Length >= 3,
+            "channel art is canceled on recycling, snapshot replacement and shutdown and checked before and after decode");
         var services = File.ReadAllText(Path.Combine(app, "WindowsServices.cs"));
         StateTests.Verify(services.Contains("=> client.GetSubscriptionsAsync(session, account, continuation, cancellationToken)"), "native subscription API forwards to the real core client");
         StateTests.Verify(code.Contains("controller.View == BrowseView.Subscriptions") && code.Contains("!settingsVisible") && code.Contains("controller.Videos.Any(v => ReferenceEquals(v, video))"), "explicit video activation is bound to the visible current feed");

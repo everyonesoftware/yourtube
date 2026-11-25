@@ -18,10 +18,13 @@ public sealed class SubscriptionsTests
     ]}}]}}}}}
     """;
 
+    private static JsonNode ChannelTabs(JsonNode response) =>
+        response["contents"]!["tvBrowseRenderer"]!["content"]!["tvSecondaryNavRenderer"]!["sections"]![0]!["tvSecondaryNavSectionRenderer"]!["tabs"]!;
+
     private static string WithChannelReloads()
     {
         var response = JsonNode.Parse(Initial)!;
-        var tabs = response["contents"]!["tvBrowseRenderer"]!["content"]!["tvSecondaryNavRenderer"]!["sections"]![0]!["tvSecondaryNavSectionRenderer"]!["tabs"]!;
+        var tabs = ChannelTabs(response);
         void AddReload(int index, string renderer, string token)
         {
             var tab = tabs[index]![renderer]!;
@@ -37,6 +40,63 @@ public sealed class SubscriptionsTests
         AddReload(2, "expandableTabRenderer", "channel-second+/=");
         tabs[2]!["expandableTabRenderer"]!["title"] = "Fixture Channel";
         return response.ToJsonString();
+    }
+
+    [Fact]
+    public async Task AvatarsBelongToTheirOwnTvTabEvenWhenChannelNamesMatch()
+    {
+        var response = JsonNode.Parse(WithChannelReloads())!;
+        var tabs = ChannelTabs(response);
+        tabs[1]!["tabRenderer"]!["thumbnail"] = JsonNode.Parse("""
+            {"thumbnails":[{"url":"//yt3.googleusercontent.com/first=s48","width":48,"height":48},
+                           {"url":"//yt3.googleusercontent.com/first=s88","width":88,"height":88}]}
+            """);
+        tabs[2]!["expandableTabRenderer"]!["thumbnail"] = JsonNode.Parse("""
+            {"thumbnails":[null,{"url":42},{"url":"https://not-youtube.example/decoy"},
+                           {"url":"https://yt3.ggpht.com/second"}]}
+            """);
+        using var transport = new Transport(Html, Script, response.ToJsonString());
+        using var http = new HttpClient(transport);
+        var clock = new Clock();
+        var page = await clock.Client(http).GetSubscriptionsAsync(new("fixture-access", "fixture-refresh", clock.Now.AddHours(1)), new("Owner", null, null));
+
+        Assert.Equal(new[] { "Fixture Channel", "Fixture Channel" }, page.Channels.Select(c => c.Name));
+        Assert.Equal(new Uri("https://yt3.googleusercontent.com/first=s48"), page.Channels[0].AvatarUri);
+        Assert.Equal(new Uri("https://yt3.ggpht.com/second"), page.Channels[1].AvatarUri);
+        Assert.DoesNotContain("yt3.googleusercontent.com", page.Channels[0].ToString());
+        Assert.All(page.Channels, c => Assert.True(c.CanLoadVideos));
+        Assert.Equal(3, transport.Requests.Count);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("{\"thumbnails\":{\"url\":\"https://yt3.ggpht.com/wrong-shape\"}}")]
+    [InlineData("{\"thumbnails\":[{\"url\":\"http://yt3.ggpht.com/fixture\"}]}")]
+    [InlineData("{\"thumbnails\":[{\"url\":\"https://yt3.ggpht.com.evil.example/fixture\"}]}")]
+    [InlineData("{\"thumbnails\":[{\"url\":\"https://yt3.ggpht.com:444/fixture\"}]}")]
+    [InlineData("{\"thumbnails\":[{\"url\":\"https://fixture@yt3.ggpht.com/fixture\"}]}")]
+    [InlineData("{\"thumbnails\":[{\"url\":\"https://yt3.ggpht.com/fixture#fragment\"}]}")]
+    public async Task MissingOrInvalidAvatarDoesNotRemoveChannelOrUseNestedThumbnail(string? thumbnail)
+    {
+        var response = JsonNode.Parse(WithChannelReloads())!;
+        var tab = ChannelTabs(response)[1]!["tabRenderer"]!.AsObject();
+        tab.Remove("thumbnail");
+        if (thumbnail is not null) tab["thumbnail"] = JsonNode.Parse(thumbnail);
+        tab["content"]!["thumbnail"] = JsonNode.Parse("""
+            {"thumbnails":[{"url":"https://yt3.ggpht.com/nested-decoy"}]}
+            """);
+        using var transport = new Transport(Html, Script, response.ToJsonString());
+        using var http = new HttpClient(transport);
+        var clock = new Clock();
+        var page = await clock.Client(http).GetSubscriptionsAsync(new("fixture-access", "fixture-refresh", clock.Now.AddHours(1)), new("Owner", null, null));
+
+        Assert.Equal(2, page.Channels.Count);
+        Assert.Null(page.Channels[0].AvatarUri);
+        Assert.True(page.Channels[0].HasNewContent);
+        Assert.True(page.Channels[0].CanLoadVideos);
+        Assert.Equal("aaaaaaaaaaa", Assert.Single(page.Videos).VideoId);
+        Assert.Equal("next-page", page.Continuation);
+        Assert.Equal(3, transport.Requests.Count);
     }
 
     [Fact]

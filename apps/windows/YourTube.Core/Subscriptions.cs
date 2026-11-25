@@ -5,8 +5,11 @@ namespace YourTube.Core;
 
 public sealed record SubscribedChannel(string Name, bool HasNewContent)
 {
+    public Uri? AvatarUri { get; init; }
     internal SubscriptionChannelRoute? Route { get; init; }
     public bool CanLoadVideos => Route is not null;
+
+    public override string ToString() => $"SubscribedChannel {{ Name = {Name}, HasNewContent = {HasNewContent}, CanLoadVideos = {CanLoadVideos} }}";
 }
 public sealed record SubscriptionsPage(IReadOnlyList<SubscribedChannel> Channels, IReadOnlyList<HistoryVideo> Videos, string? Continuation, string? Message);
 
@@ -53,7 +56,7 @@ public sealed partial class YouTubeClient
         await BootstrapAsync(cancellationToken);
         var json = await BrowseSubscriptionsAsync(session, account, "continuation", token, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
-        var page = ParseVideoPage(FilterSubscriptionRows(SubscriptionChannelContainer(json)));
+        var page = ParseVideoPage(FilterSubscriptionRows(SubscriptionChannelContainer(json)), allowTileStatsFirst: true);
         return new SubscriptionsPage([], page.Videos, route.IssueCursor(page.Continuation),
             page.Videos.Count == 0 ? "No videos were returned for this subscribed channel." : null);
     }, cancellationToken);
@@ -88,6 +91,7 @@ public sealed partial class YouTubeClient
             if (name.Length == 0) throw Invalid();
             channels.Add(new(name, TextAt(At(tab, "presentationStyle"), "style") == "NEW_CONTENT")
             {
+                AvatarUri = ReadSubscriptionAvatar(tab),
                 Route = tab.Equals(aggregate) || ChannelReloadToken(tab) is not { } reload ? null : new(this, account, reload)
             });
         }
@@ -110,6 +114,24 @@ public sealed partial class YouTubeClient
         foreach (var key in new[] { "continuationContents", "onResponseReceivedActions", "onResponseReceivedEndpoints" })
             if (response.TryGetProperty(key, out var value)) continuationEnvelope.Add(key, value);
         return HistoryContainer(JsonSerializer.SerializeToElement(continuationEnvelope));
+    }
+
+    private static Uri? ReadSubscriptionAvatar(JsonElement tab)
+    {
+        var thumbnails = At(tab, "thumbnail", "thumbnails");
+        if (thumbnails.ValueKind != JsonValueKind.Array) return null;
+        foreach (var thumbnail in thumbnails.EnumerateArray())
+        {
+            if (At(thumbnail, "url") is not { ValueKind: JsonValueKind.String } url) continue;
+            var candidate = url.GetString()!;
+            if (candidate.StartsWith("//", StringComparison.Ordinal)) candidate = "https:" + candidate;
+            // Match the avatar transport allowlist without broadening video thumbnail hosts.
+            if (Uri.TryCreate(candidate, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps &&
+                uri.IsDefaultPort && uri.UserInfo.Length == 0 && uri.Fragment.Length == 0 &&
+                uri.IdnHost is "lh3.googleusercontent.com" or "yt3.ggpht.com" or "yt3.googleusercontent.com")
+                return uri;
+        }
+        return null;
     }
 
     private static string? ChannelReloadToken(JsonElement tab)

@@ -394,7 +394,7 @@ internal sealed partial class MainWindow
         host.Children.Add(labels);
         var identity = resize && controller?.View == BrowseView.History ? controller.SelectedAccount : null;
         var today = DateOnly.FromDateTime(DateTime.Today);
-        SetPublication(video.PublishedAge ?? (identity is not null && video.PublishedDate is { } date ? HistoryPublicationDates.FormatAge(date, today) : null), video.PublishedDate);
+        SetPublication(video.PublishedAge ?? (video.PublishedDate is { } date ? HistoryPublicationDates.FormatAge(date, today) : null), video.PublishedDate);
         args.Handled = true;
 
         var request = new CancellationTokenSource();

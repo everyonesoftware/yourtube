@@ -15,7 +15,7 @@
       <Setter Property="HorizontalContentAlignment" Value="Left"/>
     </Style>
     <DataTemplate x:Key="HistoryRowTemplate"><Grid Padding="14,10" MinHeight="76"/></DataTemplate>
-    <DataTemplate x:Key="SubscribedChannelRowTemplate"><Grid Padding="10,5" MinHeight="32"/></DataTemplate>
+    <DataTemplate x:Key="SubscribedChannelRowTemplate"><Grid Padding="1,2"/></DataTemplate>
     <DataTemplate x:Key="LibraryCardTemplate"><Grid Padding="6"/></DataTemplate>
     <Style x:Key="LibraryCardContainer" TargetType="GridViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="VerticalContentAlignment" Value="Stretch"/><Setter Property="Margin" Value="0"/></Style>
     <DataTemplate x:Key="HomeShelfTemplate">
