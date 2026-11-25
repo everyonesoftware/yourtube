@@ -17,10 +17,15 @@ internal static class ChapterTrackTests
         var narrow = ChapterTrackLayout.Create(chapters, 100, 5);
         StateTests.Verify(narrow.All(span => span.Width > 0) && narrow[0].Right < narrow[1].Left &&
             narrow[1].Right < narrow[2].Left, "narrow tracks shrink gaps without swallowing chapters");
-        StateTests.Verify(ChapterTrackLayout.Create([], 100, 500).Length == 0 &&
-            ChapterTrackLayout.Create(chapters, 60, 500).Length == 0 &&
-            ChapterTrackLayout.Create(chapters, 100, 0).Length == 0,
-            "no chapters, a stale duration or unmeasured width keep the native track");
+        var continuous = ChapterTrackLayout.Create([], 100, 500);
+        StateTests.Verify(continuous is [{ Left: 0, Right: 500 }] &&
+            continuous[0].PlayedWidth(150) == 150 && continuous[0].PlayedWidth(500) == 500,
+            "a video without chapters uses one full-width custom segment with continuous progress");
+        StateTests.Verify(ChapterTrackLayout.Create(chapters, 60, 500) is [{ Left: 0, Right: 500 }],
+            "chapter data that does not fit the native duration still uses the custom look without gaps");
+        StateTests.Verify(ChapterTrackLayout.Create([], 0, 500).Length == 0 &&
+            ChapterTrackLayout.Create([], 100, 0).Length == 0,
+            "without a duration or a measured width there is no custom track to draw");
         Console.WriteLine("PASS: proportional chapter segments, open gaps and played widths.");
     }
 }

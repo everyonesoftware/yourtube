@@ -12,8 +12,8 @@ internal static class ChapterTrackLayout
 
     internal static Segment[] Create(IReadOnlyList<VideoChapter> chapters, double duration, double width)
     {
-        if (chapters.Count < 2 || !double.IsFinite(width) || width <= 0 ||
-            !double.IsFinite(duration) || duration <= chapters[^1].StartSeconds) return [];
+        if (!double.IsFinite(width) || width <= 0 || !double.IsFinite(duration) || duration <= 0) return [];
+        if (chapters.Count < 2 || duration <= chapters[^1].StartSeconds) return [new(0, width)];
 
         var segments = new Segment[chapters.Count];
         double left = 0;

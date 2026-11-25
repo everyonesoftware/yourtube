@@ -157,24 +157,31 @@ internal static class WiringTests
             (string?)Named("PlayerSeekPreview").Attribute("Visibility") == "Collapsed",
             "a segmented chapter track replaces tick marks without intercepting input or altering the hidden preview");
         StateTests.Verify(seekCode.Contains("ChapterTrackLayout.Create(seekChapters, slider.Maximum, width)") &&
-            seekCode.Contains("slider.Opacity = segmented ? 0 : 1") &&
+            (string?)slider.Attribute("Opacity") == "0" && (string?)slider.Attribute("UseSystemFocusVisuals") == "False" &&
+            !seekCode.Contains("slider.Opacity") &&
             Regex.IsMatch(code, @"seek\.ValueChanged \+= [^\r\n]*\s*\{\s*UpdateChapterProgress\(args\.NewValue\);\s*if \(updatingTransport"),
-            "only chaptered videos replace the native visuals, and segmented progress follows playback, scrubbing and native keyboard input");
+            "seek always uses the custom visuals while the native Slider still controls keyboard and automation input");
         StateTests.Verify(code.Contains("hitArea.PointerEntered +=") && code.Contains("hitArea.PointerExited +=") &&
             code.Contains("else PreviewSeekHover(args);") && code.Contains("SetSeekChapters(description, catalog.Duration);") &&
             code.Contains("SetSeekChapters(catalog?.Description, catalog?.Duration ?? TimeSpan.Zero);"),
             "hover previews without seeking, and both initial and deferred descriptions supply the active chapter list");
         StateTests.Verify(seekCode.Contains("ShowSeekPreview(seek.Maximum * fraction, fraction, mouseHover: true);") &&
-            seekCode.Contains("UpdateChapterHover(seekPreviewMouseHover ? chapter : null);") &&
+            seekCode.Contains("UpdateChapterHover(chapter, seekPreviewMouseHover);") &&
+            seekCode.Contains("chapterSegments.Count == 1 ? 0") &&
+            seekCode.Contains("chapterSegments.Count > 1 ? VideoChapters.At(seekChapters, seekPreviewSeconds) : null;") &&
+            seekCode.Contains("chapter is null ? timestamp :") &&
             Regex.IsMatch(seekCode, @"private void HideSeekPreview\(\)\s*\{\s*if \(closed\) return;\s*seekPreviewMouseHover = false;\s*UpdateChapterHover\(null\);"),
-            "only mouse hover enlarges the chapter named in the preview; hiding the preview restores the track");
+            "mouse hover enlarges the chapter or single continuous segment, without inventing chapter titles");
         StateTests.Verify(seekCode.Contains("double seconds = slider.Maximum * seekPreviewFraction;") &&
             seekCode.Contains("ShowSeekPreview(seconds, seekPreviewFraction, mouseHover: true);") &&
             seekCode.Contains("SetHeight(index, ChapterHeight * 1.2);") &&
             seekCode.Contains("remaining.Height = played.Height = height;"),
             "rebuilding at a new duration remaps stationary hover and both parts of that chapter grow by 20 percent");
-        StateTests.Verify(Regex.IsMatch(seekCode, @"if \(!segmented\)\s*\{[^}]*seekPreviewSeconds != slider\.Maximum \* seekPreviewFraction[^}]*HideSeekPreview\(\);[^}]*return;"),
-            "falling back to the continuous bar clears hover at an obsolete target time");
+        StateTests.Verify(Regex.IsMatch(seekCode, @"if \(layout\.Length == 0\)\s*\{[^}]*HideSeekPreview\(\);[^}]*return;"),
+            "an unavailable seek track clears stale hover rather than exposing the native visuals");
+        StateTests.Verify(Regex.IsMatch(seekCode, @"var layout = C<StackPanel>\(""PlayerTransport""\)\.Visibility == Visibility\.Visible\s*\? ChapterTrackLayout\.Create") &&
+            seekCode.Contains("if (!slider.IsEnabled) HideSeekPreview();") && seekCode.Contains("if (!seek.IsEnabled || width <= 0"),
+            "visible transport keeps the custom track during quality changes, but disabled seeking cannot show a hover preview");
         StateTests.Verify(names.ContainsKey("PlayerSeekThumbnail") && Named("PlayerSeekThumbnail").Ancestors().Contains(Named("PlayerSeekPreview")) &&
             (string?)Named("PlayerSeekThumbnail").Attribute("Visibility") == "Collapsed" &&
             code.Contains("ResetSeekStoryboard(catalog);") && seekCode.Contains("UpdateSeekThumbnail();") &&

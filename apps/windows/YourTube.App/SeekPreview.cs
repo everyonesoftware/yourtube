@@ -12,7 +12,7 @@ internal sealed partial class MainWindow
 {
     private IReadOnlyList<VideoChapter> seekChapters = [];
     private const double ChapterHeight = 8;
-    private readonly List<(VideoChapter Chapter, ChapterTrackLayout.Segment Span, Border Remaining, Border Played)> chapterSegments = [];
+    private readonly List<(VideoChapter? Chapter, ChapterTrackLayout.Segment Span, Border Remaining, Border Played)> chapterSegments = [];
     private int hoveredChapterIndex = -1;
     private double chapterTrackScale;
     private double seekPreviewFraction;
@@ -61,21 +61,17 @@ internal sealed partial class MainWindow
         hoveredChapterIndex = -1;
         var slider = C<Slider>("PlayerSeek");
         double width = C<Border>("PlayerSeekHitArea").ActualWidth;
-        var layout = InteractivePlayer is not null && slider.IsEnabled
+        var layout = C<StackPanel>("PlayerTransport").Visibility == Visibility.Visible
             ? ChapterTrackLayout.Create(seekChapters, slider.Maximum, width) : [];
-        bool segmented = layout.Length > 0;
-        // Keep the Slider in the layout and automation tree; only swap its visuals.
-        slider.Opacity = segmented ? 0 : 1;
-        if (segmented) slider.UseSystemFocusVisuals = false;
-        else slider.ClearValue(UIElement.UseSystemFocusVisualsProperty);
-        track.Visibility = ToVisibility(segmented);
+        track.Visibility = ToVisibility(layout.Length > 0);
+        track.Opacity = slider.IsEnabled ? 1 : .5;
         UpdateChapterFocus();
-        if (!segmented)
+        if (layout.Length == 0)
         {
-            if (seekPreviewMouseHover && (!slider.IsEnabled || InteractivePlayer is null ||
-                seekPreviewSeconds != slider.Maximum * seekPreviewFraction)) HideSeekPreview();
+            HideSeekPreview();
             return;
         }
+        if (!slider.IsEnabled) HideSeekPreview();
 
         chapterTrackScale = width / slider.Maximum;
         var accent = C<Microsoft.UI.Xaml.Shapes.Ellipse>("PlayerChapterThumb").Fill;
@@ -90,7 +86,7 @@ internal sealed partial class MainWindow
                 Canvas.SetTop(part, (track.Height - ChapterHeight) / 2);
                 segments.Children.Add(part);
             }
-            chapterSegments.Add((seekChapters[i], span, remaining, played));
+            chapterSegments.Add((layout.Length > 1 ? seekChapters[i] : null, span, remaining, played));
         }
         UpdateChapterProgress(slider.Value);
         if (seekPreviewMouseHover)
@@ -98,13 +94,14 @@ internal sealed partial class MainWindow
             // The pointer's fraction is fixed even when the native duration changes.
             double seconds = slider.Maximum * seekPreviewFraction;
             if (seconds != seekPreviewSeconds) ShowSeekPreview(seconds, seekPreviewFraction, mouseHover: true);
-            else UpdateChapterHover(VideoChapters.At(seekChapters, seconds));
+            else UpdateSeekPreviewLabel();
         }
     }
 
-    private void UpdateChapterHover(VideoChapter? chapter)
+    private void UpdateChapterHover(VideoChapter? chapter, bool active = false)
     {
-        int index = chapter is null ? -1 : chapterSegments.FindIndex(segment => ReferenceEquals(segment.Chapter, chapter));
+        int index = !active ? -1 : chapterSegments.Count == 1 ? 0 :
+            chapter is null ? -1 : chapterSegments.FindIndex(segment => ReferenceEquals(segment.Chapter, chapter));
         if (index == hoveredChapterIndex) return;
         SetHeight(hoveredChapterIndex, ChapterHeight);
         hoveredChapterIndex = index;
@@ -164,8 +161,8 @@ internal sealed partial class MainWindow
 
     private void UpdateSeekPreviewLabel()
     {
-        var chapter = VideoChapters.At(seekChapters, seekPreviewSeconds);
-        UpdateChapterHover(seekPreviewMouseHover ? chapter : null);
+        var chapter = chapterSegments.Count > 1 ? VideoChapters.At(seekChapters, seekPreviewSeconds) : null;
+        UpdateChapterHover(chapter, seekPreviewMouseHover);
         string timestamp = FormatTime(seekPreviewSeconds);
         var label = C<TextBlock>("PlayerSeekPreviewLabel");
         string text = chapter is null ? timestamp : $"{timestamp} · {chapter.Title}";

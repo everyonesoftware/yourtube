@@ -169,7 +169,8 @@
             <StackPanel.Background><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#00000000" Offset="0"/><GradientStop Color="#E6000000" Offset="0.55"/><GradientStop Color="#F5000000" Offset="1"/></LinearGradientBrush></StackPanel.Background>
             <TextBlock x:Name="PlayerQualityStatus" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" Foreground="{StaticResource Muted}" Visibility="Collapsed"/>
             <Grid>
-              <Slider x:Name="PlayerSeek" Minimum="0" Maximum="1" StepFrequency="0.1" SmallChange="5" LargeChange="10" IsThumbToolTipEnabled="False" IsHitTestVisible="False" AutomationProperties.Name="Playback position"/>
+              <Slider x:Name="PlayerSeek" Minimum="0" Maximum="1" StepFrequency="0.1" SmallChange="5" LargeChange="10" IsThumbToolTipEnabled="False"
+                      Opacity="0" UseSystemFocusVisuals="False" IsHitTestVisible="False" AutomationProperties.Name="Playback position"/>
               <Border x:Name="PlayerChapterFocus" Visibility="Collapsed" BorderBrush="{ThemeResource TextFillColorPrimaryBrush}"
                       BorderThickness="1" CornerRadius="3" Margin="-4,0" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
               <Canvas x:Name="PlayerChapterTrack" Height="14" VerticalAlignment="Center" Visibility="Collapsed"
