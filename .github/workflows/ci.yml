@@ -3,6 +3,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      sign_android:
+        description: Build a signed Android release candidate
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -42,9 +47,14 @@ jobs:
     with:
       build-script: scripts/build-android.sh
       version: 0.1.${{ github.run_number }}
-      artifact-name: android-unsigned-${{ github.sha }}
+      artifact-name: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.sign_android && 'android-signed' || 'android-unsigned' }}-${{ github.sha }}
       artifact-path: artifacts/android-ci
-      signing-enabled: false
+      signing-enabled: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.sign_android }}
+    secrets:
+      keystore-base64: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.sign_android && secrets.ANDROID_KEYSTORE_BASE64 || '' }}
+      keystore-password: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.sign_android && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
+      key-alias: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.sign_android && secrets.ANDROID_KEY_ALIAS || '' }}
+      key-password: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.sign_android && secrets.ANDROID_KEY_PASSWORD || '' }}
   windows:
     needs: validate
     if: needs.validate.outputs.windows == 'true'

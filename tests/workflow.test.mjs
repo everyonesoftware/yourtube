@@ -43,15 +43,18 @@ test('Android uses one pinned, read-only common build and never hands an unsigne
  assert.match(android,/uses: everyonesoftware\/workflows-common\/\.github\/workflows\/build-android-v1\.yml@[0-9a-f]{40}/);
  assert.match(android,/permissions:\s+contents: read/);
  assert.match(android,/build-script: scripts\/build-android\.sh/);
- assert.match(android,/artifact-name: android-unsigned-\$\{\{ github.sha \}\}/);
- assert.match(android,/signing-enabled: false/);
- assert.doesNotMatch(android,/secrets:/);
+ assert.match(yaml,/sign_android:\s+description:[^\n]+\s+type: boolean\s+default: false/);
+ assert.match(android,/signing-enabled: \$\{\{ github.event_name == 'workflow_dispatch' && github.ref == 'refs\/heads\/main' && inputs.sign_android \}\}/);
+ assert.match(android,/artifact-name: .*android-signed.*android-unsigned/);
+ for (const name of ['KEYSTORE_BASE64','KEYSTORE_PASSWORD','KEY_ALIAS','KEY_PASSWORD']) {
+   assert.match(android,new RegExp(`refs/heads/main' && inputs.sign_android && secrets.ANDROID_${name}`));
+ }
  const release=yaml.slice(yaml.indexOf('\n  release:\n'));
  assert.doesNotMatch(release,/android/);
 });
 
 test('only explicitly Android-owned workflow edits can preserve Windows binaries',()=>{
- const androidOnly=yaml.replace('signing-enabled: false', 'signing-enabled: true');
+ const androidOnly=yaml.replace(/(workflows\/build-android-v1.yml@)[0-9a-f]{40}/, '$1'+'a'.repeat(40));
  assert.notEqual(yaml,androidOnly);
  assert.equal(affectsWindowsWorkflow(yaml,androidOnly),false);
  assert.equal(affectsWindowsWorkflow(yaml,androidOnly.replace('runs-on: windows-2022','runs-on: windows-2025')),true);

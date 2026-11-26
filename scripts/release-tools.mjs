@@ -14,7 +14,19 @@ export function selectsAndroid(paths) {
 // Ignore only the exact Android CI wiring. Compare every other workflow byte,
 // so unknown layouts, shared settings and changes to Windows still rebuild.
 export function affectsWindowsWorkflow(before, after) {
+  const signCondition = "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.sign_android";
+  const signedBlock = [
+    `      artifact-name: \${{ ${signCondition} && 'android-signed' || 'android-unsigned' }}-\${{ github.sha }}`,
+    '      artifact-path: artifacts/android-ci',
+    `      signing-enabled: \${{ ${signCondition} }}`,
+    '    secrets:',
+    ...['keystore-base64', 'keystore-password', 'key-alias', 'key-password'].map(name =>
+      `      ${name}: \${{ ${signCondition} && secrets.ANDROID_${name.toUpperCase().replaceAll('-', '_')} || '' }}`),
+    '  windows:',
+  ].join('\n');
   const withoutAndroid = text => text
+    .replace('  workflow_dispatch:\n    inputs:\n      sign_android:\n        description: Build a signed Android release candidate\n        type: boolean\n        default: false\npermissions:', '  workflow_dispatch:\npermissions:')
+    .replace(signedBlock, "      artifact-name: android-unsigned-${{ github.sha }}\n      artifact-path: artifacts/android-ci\n      signing-enabled: false\n  windows:")
     .replace(/^(jobs:\n  validate:\n    runs-on: ubuntu-latest\n)    permissions:\n      contents: read\n      actions: read\n(    outputs:\n      windows: \$\{\{ steps\.select\.outputs\.windows \}\}\n)      android: \$\{\{ steps\.android\.outputs\.android \}\}\n/m, '$1$2')
     .replace(/^      - id: android\n        run: node scripts\/select-android\.mjs\n        env:\n          GH_TOKEN: \$\{\{ github\.token \}\}\n(?=  android:\n)/m, '')
     .replace(/^  android:\n    needs: validate\n    if: needs\.validate\.outputs\.android == 'true'\n    uses: everyonesoftware\/workflows-common\/\.github\/workflows\/build-android-v1\.yml@[0-9a-f]{40}\n    permissions:\n      contents: read\n    with:\n      build-script: scripts\/build-android\.sh\n      version: 0\.1\.\$\{\{ github\.run_number \}\}\n      artifact-name: android-unsigned-\$\{\{ github\.sha \}\}\n      artifact-path: artifacts\/android-ci\n      signing-enabled: (?:true|false)\n(?=  windows:\n)/m, '');

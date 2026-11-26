@@ -60,7 +60,8 @@ esac
 test('Android CI refuses signing, invalid versions, and unexpected destinations before Gradle', () => {
   const safe = {RELEASE_SIGNING_ENABLED: 'false', RELEASE_VERSION: '0.1.42', RELEASE_ARTIFACT_DIR: 'artifacts/android-ci'};
   for (const [overrides, expected] of [
-    [{RELEASE_SIGNING_ENABLED: 'true'}, /must run without signing/],
+    [{RELEASE_SIGNING_ENABLED: 'true', GITHUB_EVENT_NAME: 'push'}, /requires a manual YourTube main run/],
+    [{RELEASE_SIGNING_ENABLED: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/feature'}, /requires a manual YourTube main run/],
     [{RELEASE_VERSION: '0.1.042'}, /Invalid Android build version/],
     [{RELEASE_VERSION: '0.1.9999999999'}, /Invalid Android build version/],
     [{RELEASE_ARTIFACT_DIR: 'artifacts/release'}, /Unexpected Android staging path/],
