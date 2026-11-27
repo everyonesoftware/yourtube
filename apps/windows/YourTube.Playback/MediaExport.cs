@@ -4,6 +4,7 @@ public enum MediaExportFormat { Mp4, WebM, M4a, Mp3 }
 
 public sealed record MediaExportOption(MediaExportFormat Format, int? Height, long SourceBytes)
 {
+    public int? AudioBitrateKbps { get; init; }
     public string Extension => Format switch
     {
         MediaExportFormat.Mp4 => ".mp4",
@@ -37,6 +38,8 @@ public sealed partial class PlaybackResolver
                 yield return new(new(format, video.Height, (long)(video.Size + audio.Size)), video, audio);
         yield return new(new(MediaExportFormat.M4a, null, (long)audio.Size), null, audio);
         yield return new(new(MediaExportFormat.Mp3, null, (long)audio.Size), null, audio);
+        foreach (int bitrate in new[] { 128, 192, 256 })
+            yield return new(new(MediaExportFormat.Mp3, null, (long)audio.Size) { AudioBitrateKbps = bitrate }, null, audio);
     }
 
     /// <summary>Exports to the explicitly selected full path. An existing destination is never replaced.</summary>
@@ -84,7 +87,7 @@ public sealed partial class PlaybackResolver
                     await CopyTrackAsync(selection.Audio, input).ConfigureAwait(false);
 
                 cancellationToken.ThrowIfCancellationRequested();
-                await MediaExportEncoder.RunAsync(ffmpegPath!, option.Format, scratch, cancellationToken).ConfigureAwait(false);
+                await MediaExportEncoder.RunAsync(ffmpegPath!, option, scratch, cancellationToken).ConfigureAwait(false);
             }
 
             cancellationToken.ThrowIfCancellationRequested();

@@ -26,7 +26,10 @@ public sealed class MediaExportTests : IDisposable
             new(MediaExportFormat.WebM, 180, fixture.Size("video") + fixture.Size("audio")),
             new(MediaExportFormat.M4a, null, fixture.Size("audio")),
             new(MediaExportFormat.Mp3, null, fixture.Size("audio"))
-        }, fixture.Resolver.GetExportOptions(media));
+        }, fixture.Resolver.GetExportOptions(media).Where(option => option.AudioBitrateKbps is null));
+        Assert.Equal(new int?[] { 128, 192, 256 }, fixture.Resolver.GetExportOptions(media)
+            .Where(option => option.AudioBitrateKbps is not null && option.Format == MediaExportFormat.Mp3)
+            .Select(option => option.AudioBitrateKbps));
         Assert.Empty(fixture.Resolver.GetExportOptions(Forged(media)));
         Assert.Equal(before, fixture.Requests.Count);
     }
@@ -522,22 +525,26 @@ public sealed class MediaExportTests : IDisposable
         string probe = Environment.GetEnvironmentVariable("YOURTUBE_EXPORT_FFPROBE")!;
         string store = Path.Combine(destination.FullName, "journal");
         var journal = OperatingSystem.IsWindows() ? new DownloadJournal(store) : new(store, new FixtureJournalFiles());
-        foreach (var (format, height, videoCodec, audioCodec, downloaded) in new (MediaExportFormat, int?, string?, string, string[])[]
+        foreach (var (format, height, bitrate, videoCodec, audioCodec, downloaded) in new (MediaExportFormat, int?, int?, string?, string, string[])[]
         {
-            (MediaExportFormat.Mp4, 90, "h264", "aac", ["video-small", "audio"]),
-            (MediaExportFormat.WebM, 180, "vp9", "opus", ["video", "audio"]),
-            (MediaExportFormat.M4a, null, null, "aac", ["audio"]),
-            (MediaExportFormat.Mp3, null, null, "mp3", ["audio"])
+            (MediaExportFormat.Mp4, 90, null, "h264", "aac", ["video-small", "audio"]),
+            (MediaExportFormat.WebM, 180, null, "vp9", "opus", ["video", "audio"]),
+            (MediaExportFormat.M4a, null, null, null, "aac", ["audio"]),
+            (MediaExportFormat.Mp3, null, null, null, "mp3", ["audio"]),
+            (MediaExportFormat.Mp3, null, 128, null, "mp3", ["audio"]),
+            (MediaExportFormat.Mp3, null, 192, null, "mp3", ["audio"]),
+            (MediaExportFormat.Mp3, null, 256, null, "mp3", ["audio"])
         })
         {
             fixture.Requests.Clear();
-            var option = Option(fixture, media, format, height);
-            var path = Path.Combine(destination.FullName, "exported space & video" + option.Extension);
+            var option = Assert.Single(fixture.Resolver.GetExportOptions(media), option =>
+                option.Format == format && option.Height == height && option.AudioBitrateKbps == bitrate);
+            var path = Path.Combine(destination.FullName, $"exported space & media{(bitrate is int rate ? $" {rate}" : "")}" + option.Extension);
             await fixture.Resolver.ExportAsync(media, option, path, encoder, cancellationToken: deadline.Token, journal: journal);
             Assert.Equal(downloaded, fixture.Requests.Select(request => request.Track));
             var start = new ProcessStartInfo(probe) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
             start.Environment.Remove("FFREPORT");
-            foreach (string arg in new[] { "-v", "quiet", "-show_entries", "stream=codec_type,codec_name,height:format=duration", "-of", "json", path })
+            foreach (string arg in new[] { "-v", "quiet", "-show_entries", "stream=codec_type,codec_name,height,bit_rate:format=duration", "-of", "json", path })
                 start.ArgumentList.Add(arg);
             using var process = Process.Start(start)!;
             var output = process.StandardOutput.ReadToEndAsync(deadline.Token);
@@ -551,6 +558,8 @@ public sealed class MediaExportTests : IDisposable
             Assert.Equal(videoCodec is null ? 1 : 2, streams.Length);
             var audio = Assert.Single(streams, stream => stream.GetProperty("codec_type").GetString() == "audio");
             Assert.Equal(audioCodec, audio.GetProperty("codec_name").GetString());
+            if (bitrate is int kbps)
+                Assert.Equal((kbps * 1000).ToString(System.Globalization.CultureInfo.InvariantCulture), audio.GetProperty("bit_rate").GetString());
             if (videoCodec is not null)
             {
                 var video = Assert.Single(streams, stream => stream.GetProperty("codec_type").GetString() == "video");
@@ -560,8 +569,8 @@ public sealed class MediaExportTests : IDisposable
             Assert.InRange(double.Parse(json.RootElement.GetProperty("format").GetProperty("duration").GetString()!,
                 System.Globalization.CultureInfo.InvariantCulture), 17.9, 18.2);
         }
-        Assert.Equal(4, Directory.GetFiles(destination.FullName).Length);
-        Assert.Equal(4, journal.Read().Completed.Count);
+        Assert.Equal(7, Directory.GetFiles(destination.FullName).Length);
+        Assert.Equal(7, journal.Read().Completed.Count);
         Assert.Empty(journal.Read().Cleanup);
         Assert.Empty(Directory.GetDirectories(store));
     }
@@ -580,7 +589,7 @@ public sealed class MediaExportTests : IDisposable
         media.Description, media.Duration, media.ExpiresAt, media.Manifest, media.ManifestUri, media.Qualities);
 
     private static MediaExportOption Option(ExportFixture fixture, PlaybackMedia media, MediaExportFormat format,
-        int? height = null) => Assert.Single(fixture.Resolver.GetExportOptions(media), o => o.Format == format && o.Height == height);
+        int? height = null) => Assert.Single(fixture.Resolver.GetExportOptions(media), o => o.Format == format && o.Height == height && o.AudioBitrateKbps is null);
 
     private sealed class InlineProgress(Action<double> report) : IProgress<double>
     {

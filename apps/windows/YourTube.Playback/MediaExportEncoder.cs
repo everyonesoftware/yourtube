@@ -5,7 +5,7 @@ namespace YourTube.Playback;
 internal static class MediaExportEncoder
 {
     internal static ProcessStartInfo CreateStartInfo(string executable, MediaExportFormat format,
-        string? video, string audio, string staged, bool reservedOutput = false)
+        string? video, string audio, string staged, bool reservedOutput = false, int? audioBitrateKbps = null)
     {
         var start = new ProcessStartInfo(executable)
         {
@@ -34,7 +34,11 @@ internal static class MediaExportEncoder
                     "-c:a", "libopus", "-b:a", "128k", "-f", "webm");
                 break;
             case MediaExportFormat.Mp3:
-                Add("-c:a", "libmp3lame", "-q:a", "2", "-f", "mp3");
+                Add("-c:a", "libmp3lame");
+                if (audioBitrateKbps is int bitrate)
+                    Add("-ar", "44100", "-b:a", bitrate.ToString(System.Globalization.CultureInfo.InvariantCulture) + "k");
+                else Add("-q:a", "2");
+                Add("-f", "mp3");
                 break;
             default: throw new ArgumentOutOfRangeException(nameof(format));
         }
@@ -48,7 +52,7 @@ internal static class MediaExportEncoder
         }
     }
 
-    internal static async Task RunAsync(string executable, MediaExportFormat format, EncoderScratch scratch,
+    internal static async Task RunAsync(string executable, MediaExportOption option, EncoderScratch scratch,
         CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
@@ -56,8 +60,8 @@ internal static class MediaExportEncoder
         {
             scratch.ProtectForEncoding();
             token.ThrowIfCancellationRequested();
-            using var process = Process.Start(CreateStartInfo(executable, format, scratch.Video, scratch.Audio,
-                scratch.Output, scratch.ReservedOutput)) ?? throw EncoderFailed();
+            using var process = Process.Start(CreateStartInfo(executable, option.Format, scratch.Video, scratch.Audio,
+                scratch.Output, scratch.ReservedOutput, option.AudioBitrateKbps)) ?? throw EncoderFailed();
             var discard = Task.WhenAll(process.StandardError.BaseStream.CopyToAsync(Stream.Null, token),
                 process.StandardOutput.BaseStream.CopyToAsync(Stream.Null, token));
             try

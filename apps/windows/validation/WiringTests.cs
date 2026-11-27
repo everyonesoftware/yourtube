@@ -64,21 +64,19 @@ internal static class WiringTests
         var download = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "PlayerDownloadButton");
         var chevron = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "PlayerDownloadOptionsButton");
         StateTests.Verify(download?.Name.LocalName == "Button" && download.Ancestors().Contains(transport) &&
-            download.ElementsAfterSelf().FirstOrDefault() == chevron && chevron?.Name.LocalName == "Button" &&
-            download.Parent?.ElementsAfterSelf().FirstOrDefault() == Named("PlayerSettingsGear") &&
+            chevron is null && download.ElementsAfterSelf().FirstOrDefault() == Named("PlayerSettingsGear") &&
             (string?)download.Attribute("AutomationProperties.Name") == "Download video" &&
-            !download.Descendants(ns + "Flyout").Any() &&
-            chevron.Descendants(ns + "Flyout").Any(e => (string?)e.Attribute("Placement") == "TopEdgeAlignedRight" &&
+            download.Descendants(ns + "Flyout").Any(e => (string?)e.Attribute("Placement") == "TopEdgeAlignedRight" &&
                 (string?)e.Attribute("FlyoutPresenterStyle") == "{StaticResource DownloadFormatsPresenter}"),
             "a native Download flyout is anchored immediately left of the player settings gear");
         var downloadCode = File.ReadAllText(Path.Combine(app, "PlaybackDownload.cs"));
-        StateTests.Verify(downloadCode.Contains("PlayerDownloadButton.Click +=") &&
-            downloadCode.Contains("PlayerDownloadOptionsButton.Click +=") &&
-            downloadCode.Contains("PlayerDownloadFlyout.ShowAt(PlayerDownloadOptionsButton, new FlyoutShowOptions") &&
-            downloadCode.Contains("Placement = FlyoutPlacementMode.TopEdgeAlignedRight") && downloadCode.Contains("new ComboBox") &&
-            downloadCode.Contains("format.SelectionChanged +=") && downloadCode.Contains("resolution.Visibility = ToVisibility(") &&
-            downloadCode.Contains("save.Click +=") && downloadCode.Contains("DownloadCurrentVideoAsync(catalog, option, DownloadFormatLabel(option.Format))"),
-            "the split button opens Save As for its current choice; the flyout selects format and optional resolution independently");
+        StateTests.Verify(!downloadCode.Contains("PlayerDownloadButton.Click +=") &&
+            downloadCode.Contains("AddSection(\"Video + audio\", \"\\uE714\", MediaExportFormat.Mp4, MediaExportFormat.WebM)") &&
+            downloadCode.Contains("AddSection(\"Audio only\", \"\\uE8D6\", MediaExportFormat.M4a, MediaExportFormat.Mp3)") &&
+            downloadCode.Contains("new ComboBox") && downloadCode.Contains("choice.Format == fileFormat") &&
+            downloadCode.Contains("quality.SelectedItem is not ComboBoxItem { Tag: MediaExportOption option }") &&
+            downloadCode.Contains("DownloadCurrentVideoAsync(catalog, option, formatLabel)"),
+            "the icon only opens the flyout; each format owns its quality chooser and Save As action");
         StateTests.Verify(code.Contains("WirePlaybackDownload();") && code.Contains("playerMenuOpen || playerProgressOpen || playerDownloadOpen") &&
             code.Contains("RefreshPlaybackDownloadContext();") &&
             downloadCode.Contains("playbackResolver.GetExportOptions(catalog)") && !downloadCode.Contains("ResolveAsync("),
