@@ -32,6 +32,14 @@ Expiry is the earliest included stream's provider `expire` timestamp minus 60 se
 
 `GetStoryboardSheetAsync` is an explicit in-memory read of one resolver-owned sheet. It uses exact HTTPS `i.ytimg.com` storyboard paths bound to the video, no cookies or credentials, no redirects, a five-second budget, at most two in-flight reads per resolver and a 2 MiB JPEG limit. Response type, JPEG markers and pixel dimensions are checked; native image decoding/painting is the caller's responsibility. Unavailable results return null; caller cancellation propagates. Keep signed data and images out of logs and persistent storage.
 
+## Local export journal
+
+Pass a `DownloadJournal` rooted in an app-private local user-profile directory to `ExportAsync`. Journaled export uses ordinary drive-letter paths on Windows NTFS/ReFS. The destination-side `.part` file is opened exclusively and its GUID-bound ownership record is flushed before any bytes are written to it. Encoder scratch has its own durable record for the directory and reserved audio, video (when needed), and output files. The encoder can write only to the verified, empty scratch reservation; it never receives the destination path. A crash before the first record is committed can leave empty reservations that the journal will not adopt.
+
+The journal stores only local file paths and identities, display titles, format/height, byte counts and save times. It does not store provider IDs, URLs, manifests or credentials. Each journal update replaces one flushed record atomically. A publication intent is durable before the no-replace rename; if the receipt update is interrupted, a later `Read()` can recognize a finished rename by final file identity and length. `AcquireCompleted` checks the receipt and returns a disposable lease that denies write/delete sharing on the file. Hold it through the launch; a receipt stays listed if its file is moved, changed or unavailable.
+
+`RetryCleanup` checks only recorded identities on the recorded volume. On Windows it checks the exclusive handle's identity before marking that same handle for deletion. An active scratch directory is protected by an open handle, and retry never recursively removes scratch. Locked files, unavailable paths and ambiguous or mismatched entries retain their obligations; no search or pathname-delete fallback is used. Completed files are never cleanup targets. Call journal operations off the UI thread; checks of recorded drives do not hold the journal's shared write lock.
+
 ## Verification
 
 ```sh

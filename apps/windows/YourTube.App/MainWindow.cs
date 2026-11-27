@@ -117,6 +117,8 @@ internal sealed partial class MainWindow : Window
         playback.Changed += RenderPlayback;
         WirePlayerOverlay();
         WirePlaybackProgress();
+        WirePlaybackDownload();
+        WireDownloads();
         C<Button>("PlayerCloseButton").Click += (_, _) => CloseVideo();
         C<Button>("PlayerRetryButton").Click += async (_, _) => { SyncPlaybackContext(); await playback.RetryAsync(); };
         C<Button>("PlayerOpenYouTubeButton").Click += async (_, _) =>
@@ -139,7 +141,11 @@ internal sealed partial class MainWindow : Window
             if (args.ClickedItem is HistoryVideo video && playback.Selected is not null && playback.Queue.Any(v => ReferenceEquals(v, video))) await OpenVideoAsync(video);
         };
 
-        C<Button>("SettingsButton").Click += async (_, _) => await NavigateAsync(settingsVisible ? lastBrowseView : BrowseView.Settings);
+        C<Button>("SettingsButton").Click += async (_, _) =>
+        {
+            if (settingsVisible && settingsReturnToDownloads) ShowDownloads();
+            else await NavigateAsync(settingsVisible ? lastBrowseView : BrowseView.Settings);
+        };
         C<Button>("HomeButton").Click += async (_, _) => await NavigateAsync(BrowseView.Home);
         C<Button>("HistoryButton").Click += async (_, _) => await NavigateAsync(BrowseView.History);
         C<Button>("SubscriptionsButton").Click += async (_, _) => await NavigateAsync(BrowseView.Subscriptions);
@@ -153,17 +159,18 @@ internal sealed partial class MainWindow : Window
         };
         C<Button>("RefreshButton").Click += async (_, _) =>
         {
+            if (closed || settingsVisible || downloadsVisible || playback.Selected is not null) return;
             if (controller is { View: BrowseView.Home } && search.Active) await SubmitSearchAsync(search.Query);
             else if (controller is not null) await controller.LoadHistoryAsync();
         };
         C<Button>("FeedRetryButton").Click += async (_, _) =>
         {
-            if (!closed && !settingsVisible && playback.Selected is null && controller is { View: BrowseView.History or BrowseView.Subscriptions, AppendFailed: true } current)
+            if (!closed && !settingsVisible && !downloadsVisible && playback.Selected is null && controller is { View: BrowseView.History or BrowseView.Subscriptions, AppendFailed: true } current)
                 await current.LoadHistoryAsync(append: true);
         };
         C<Button>("HomeRetryButton").Click += async (_, _) =>
         {
-            if (!closed && !settingsVisible && playback.Selected is null && controller is { View: BrowseView.Home, AppendFailed: true } current)
+            if (!closed && !settingsVisible && !downloadsVisible && playback.Selected is null && controller is { View: BrowseView.Home, AppendFailed: true } current)
                 await current.LoadHistoryAsync(append: true);
         };
         var accountMenu = (MenuFlyout)C<Button>("AccountButton").Flyout;
@@ -172,7 +179,7 @@ internal sealed partial class MainWindow : Window
         C<ListView>("ChannelsList").ContainerContentChanging += (_, args) => RenderChannelRow(args);
         C<ListView>("ChannelsList").SelectionChanged += async (sender, _) =>
         {
-            if (syncingChannelSelection || closed || settingsVisible || playback.Selected is not null ||
+            if (syncingChannelSelection || closed || settingsVisible || downloadsVisible || playback.Selected is not null ||
                 controller is not { View: BrowseView.Subscriptions } current ||
                 sender is not ListView { SelectedItem: ChannelChoice choice }) return;
             await current.SelectSubscriptionChannelAsync(choice.Channel);
@@ -183,7 +190,7 @@ internal sealed partial class MainWindow : Window
         WireSearch();
         C<GridView>("HistoryList").ItemClick += async (_, args) =>
         {
-            if (closed || settingsVisible || search.Active || playback.Selected is not null || controller is not { CanPlayFeed: true, View: BrowseView.History or BrowseView.Subscriptions } || args.ClickedItem is not HistoryVideo video ||
+            if (closed || settingsVisible || downloadsVisible || search.Active || playback.Selected is not null || controller is not { CanPlayFeed: true, View: BrowseView.History or BrowseView.Subscriptions } || args.ClickedItem is not HistoryVideo video ||
                 !controller.Videos.Any(v => ReferenceEquals(v, video))) return;
             libraryOrigin = video;
             await OpenVideoAsync(video);
@@ -210,6 +217,7 @@ internal sealed partial class MainWindow : Window
             playerClock?.Stop();
             progressClock?.Stop();
             PlayerProgressFlyout.Hide();
+            RetirePlaybackDownload(closing: true);
             playerTapFade?.Stop();
             CancelScrub();
             ResetDescription(null);
@@ -303,8 +311,8 @@ internal sealed partial class MainWindow : Window
             C<TextBlock>("StatusText").Text = "Windows could not initialize secure account storage. Retry saved login to try again.";
             C<ProgressRing>("BusyRing").IsActive = false;
             C<ProgressRing>("BusyRing").Visibility = Visibility.Collapsed;
-            C<Border>("ShellStatus").Visibility = Visibility.Visible;
-            C<ScrollViewer>("SignInPanel").Visibility = Visibility.Visible;
+            C<Border>("ShellStatus").Visibility = ToVisibility(!downloadsVisible);
+            C<ScrollViewer>("SignInPanel").Visibility = ToVisibility(!downloadsVisible && !settingsVisible);
             C<Button>("SignInButton").IsEnabled = false;
         }
     }
@@ -320,12 +328,14 @@ internal sealed partial class MainWindow : Window
     private async Task NavigateAsync(BrowseView view)
     {
         if (closed) return;
-        if (view != BrowseView.Settings && !settingsVisible && controller?.Phase != SessionPhase.SignedIn) return;
+        if (view != BrowseView.Settings && !settingsVisible && !downloadsVisible && controller?.Phase != SessionPhase.SignedIn) return;
         browserNotice = null;
+        settingsReturnToDownloads = view == BrowseView.Settings && downloadsVisible;
+        downloadsVisible = false;
         playback.Back();
         settingsVisible = view == BrowseView.Settings;
         if (!settingsVisible) lastBrowseView = view;
-        if (controller is not null) await controller.NavigateAsync(view);
+        if (controller is not null && !settingsReturnToDownloads) await controller.NavigateAsync(view);
         Render();
     }
 
@@ -375,7 +385,7 @@ internal sealed partial class MainWindow : Window
     private void RenderStatus()
     {
         if (controller is not { } current) return;
-        var browsing = current.Phase == SessionPhase.SignedIn && !settingsVisible && playback.Selected is null;
+        var browsing = current.Phase == SessionPhase.SignedIn && !settingsVisible && !downloadsVisible && playback.Selected is null;
         var busy = current.Busy;
         var show = busy || !string.IsNullOrWhiteSpace(current.Status);
         C<Grid>("FeedStatus").Visibility = ToVisibility(browsing && show);
@@ -383,7 +393,7 @@ internal sealed partial class MainWindow : Window
         C<ProgressRing>("FeedBusyRing").IsActive = browsing && busy;
         C<ProgressRing>("FeedBusyRing").Visibility = ToVisibility(browsing && busy);
         C<Button>("FeedCancelButton").Visibility = ToVisibility(browsing && busy && !current.Appending);
-        var shared = !fullscreen && !browsing && (browserNotice is not null || (show && current.Phase != SessionPhase.SignedIn));
+        var shared = !fullscreen && !browsing && !downloadsVisible && (browserNotice is not null || (show && current.Phase != SessionPhase.SignedIn));
         C<Border>("ShellStatus").Visibility = ToVisibility(shared);
         C<TextBlock>("StatusText").Text = shared ? browserNotice ?? current.Status : "";
         C<ProgressRing>("BusyRing").IsActive = shared && busy;
@@ -404,18 +414,21 @@ internal sealed partial class MainWindow : Window
         SyncPlaybackContext();
         C<ScrollViewer>("SettingsPanel").Visibility = ToVisibility(settingsVisible);
         RenderSettingsButton();
+        RenderDownloadsRoute();
+        SetLibraryDestination(C<Button>("HomeButton"), "Home", downloadsVisible || controller?.Phase == SessionPhase.SignedIn,
+            !settingsVisible && !downloadsVisible && controller is { Phase: SessionPhase.SignedIn, View: BrowseView.Home });
         if (controller is null)
         {
-            C<ScrollViewer>("SignInPanel").Visibility = ToVisibility(!settingsVisible && initialized);
+            C<ScrollViewer>("SignInPanel").Visibility = ToVisibility(!settingsVisible && !downloadsVisible && initialized);
+            C<Border>("ShellStatus").Visibility = ToVisibility(!downloadsVisible && initialized);
             return;
         }
         {
             var signedIn = controller.Phase == SessionPhase.SignedIn;
             var home = controller.View == BrowseView.Home;
             var subscriptions = controller.View == BrowseView.Subscriptions;
-            SetLibraryDestination(C<Button>("HomeButton"), "Home", signedIn, !settingsVisible && home);
-            SetLibraryDestination(C<Button>("HistoryButton"), "History", signedIn, !settingsVisible && controller.View == BrowseView.History);
-            SetLibraryDestination(C<Button>("SubscriptionsButton"), "Subscriptions", signedIn, !settingsVisible && subscriptions);
+            SetLibraryDestination(C<Button>("HistoryButton"), "History", signedIn, !settingsVisible && !downloadsVisible && controller.View == BrowseView.History);
+            SetLibraryDestination(C<Button>("SubscriptionsButton"), "Subscriptions", signedIn, !settingsVisible && !downloadsVisible && subscriptions);
             C<TextBlock>("ViewHeading").Text = home ? "Home" : subscriptions ? "Subscriptions" : "History";
             C<Border>("SubscriptionRail").Visibility = ToVisibility(subscriptions && controller.SelectedAccount is not null);
             var videosStatus = C<TextBlock>("VideosStatusText");
@@ -424,9 +437,9 @@ internal sealed partial class MainWindow : Window
             C<ListView>("HomeShelvesList").Visibility = ToVisibility(home && !search.Active);
             C<GridView>("HistoryList").Visibility = ToVisibility(!home && !search.Active);
             RenderSearch();
-            C<Grid>("HistoryPanel").Visibility = ToVisibility(!settingsVisible && signedIn && playback.Selected is null);
-            C<ScrollViewer>("SignInPanel").Visibility = ToVisibility(!settingsVisible && controller.Phase == SessionPhase.SignedOut);
-            C<StackPanel>("DevicePanel").Visibility = ToVisibility(!settingsVisible && controller.Phase == SessionPhase.Authorizing);
+            C<Grid>("HistoryPanel").Visibility = ToVisibility(!settingsVisible && !downloadsVisible && signedIn && playback.Selected is null);
+            C<ScrollViewer>("SignInPanel").Visibility = ToVisibility(!settingsVisible && !downloadsVisible && controller.Phase == SessionPhase.SignedOut);
+            C<StackPanel>("DevicePanel").Visibility = ToVisibility(!settingsVisible && !downloadsVisible && controller.Phase == SessionPhase.Authorizing);
 
             C<Button>("SignInButton").IsEnabled = !controller.Busy;
             C<Button>("RestoreButton").IsEnabled = !controller.Busy;
@@ -616,12 +629,12 @@ internal sealed partial class MainWindow : Window
 
     private IReadOnlyList<HistoryVideo> PlaybackFeed => search.Active ? search.Videos : controller?.Videos ?? [];
 
-    private void SyncPlaybackContext() => playback.SetContext(!closed && !settingsVisible && controller is { CanPlayFeed: true }, controller?.SelectedAccount, controller?.View ?? BrowseView.History, PlaybackFeed);
+    private void SyncPlaybackContext() => playback.SetContext(!closed && !settingsVisible && !downloadsVisible && controller is { CanPlayFeed: true }, controller?.SelectedAccount, controller?.View ?? BrowseView.History, PlaybackFeed);
 
     private async Task OpenVideoAsync(HistoryVideo video)
     {
         SyncPlaybackContext();
-        if (closed || settingsVisible || controller is not { CanPlayFeed: true } ||
+        if (closed || settingsVisible || downloadsVisible || controller is not { CanPlayFeed: true } ||
             !PlaybackFeed.Any(v => ReferenceEquals(v, video))) return;
         await playback.SelectAsync(video);
     }
@@ -648,13 +661,13 @@ internal sealed partial class MainWindow : Window
             watchSelection = selected;
             watchAttempted = false;
         }
-        bool showTheater = selected is not null && !settingsVisible;
+        bool showTheater = selected is not null && !settingsVisible && !downloadsVisible;
         if (!showTheater) PlayerProgressFlyout.Hide();
         if (showTheater && theater.Visibility != Visibility.Visible) C<Button>("AccountButton").Flyout.Hide();
         C<Grid>("BrowseAndSettings").Visibility = ToVisibility(!fullscreen && !showTheater);
         theater.Visibility = ToVisibility(showTheater);
         C<Grid>("ShellFooter").Visibility = ToVisibility(!showTheater);
-        C<Grid>("HistoryPanel").Visibility = ToVisibility(selected is null && !settingsVisible && controller?.Phase == SessionPhase.SignedIn);
+        C<Grid>("HistoryPanel").Visibility = ToVisibility(selected is null && !settingsVisible && !downloadsVisible && controller?.Phase == SessionPhase.SignedIn);
         var source = playback.Active;
         if (!ReferenceEquals(source, boundSession))
         {
@@ -663,6 +676,7 @@ internal sealed partial class MainWindow : Window
             BindWatchSeekSource(source);
             playerTapFade?.Stop();
             PlayerMenu.Hide();
+            PlayerDownloadFlyout.Hide();
             CancelScrub();
             if (source is not null && !source.IsOpened)
             {
@@ -689,6 +703,7 @@ internal sealed partial class MainWindow : Window
         C<TextBlock>("PlayerError").Visibility = ToVisibility(playback.Error is not null);
         if (fullscreen && (selected is null || playback.Error is not null || settingsVisible)) SetFullscreen(false, restoreFocus: false);
         RenderStatus();
+        RefreshPlaybackDownloadContext();
         if (playback.QualityBusy)
         {
             playerTapFade?.Stop();
@@ -865,7 +880,7 @@ internal sealed partial class MainWindow : Window
         if (closed) return;
         var overlay = C<Grid>("PlayerOverlay");
         if (overlay.Visibility != Visibility.Visible) return;
-        bool interacting = playerMenuOpen || playerProgressOpen || seekPointer is not null;
+        bool interacting = playerMenuOpen || playerProgressOpen || playerDownloadOpen || downloadPicking || seekPointer is not null;
         if (!interacting && root.XamlRoot is { } xamlRoot &&
             FocusManager.GetFocusedElement(xamlRoot) is Control { FocusState: FocusState.Keyboard } focused)
         {
@@ -940,7 +955,7 @@ internal sealed partial class MainWindow : Window
         shortcut.Invoked += (_, args) =>
         {
             // Escape belongs to the open menu first.
-            if (playerMenuOpen || playerProgressOpen || (!fullscreen && (!toggle || InteractivePlayer is null))) return;
+            if (playerMenuOpen || playerProgressOpen || playerDownloadOpen || downloadPicking || (!fullscreen && (!toggle || InteractivePlayer is null))) return;
             ToggleFullscreen();
             args.Handled = true;
         };
@@ -959,6 +974,7 @@ internal sealed partial class MainWindow : Window
         var theater = C<ScrollViewer>("TheaterPanel");
         PlayerMenu.Hide();
         PlayerProgressFlyout.Hide();
+        PlayerDownloadFlyout.Hide();
         CancelScrub();
         if (enabled)
         {
@@ -1254,10 +1270,13 @@ internal sealed partial class MainWindow : Window
     {
         if (allowWindowClose) return;
         if (drainingWindowWatch) { args.Cancel = true; return; }
-        if (watchRecord is null || (watchProgressWrite is not { IsCompleted: false } && !watchProgress.CanTake(final: true))) return;
+        var transfer = downloadTransfer;
+        RetirePlaybackDownload(closing: true);
+        if (transfer is not { IsCompleted: false } &&
+            (watchRecord is null || (watchProgressWrite is not { IsCompleted: false } && !watchProgress.CanTake(final: true)))) return;
         // Cancel synchronously and finish outside the native Closing callback.
         var budget = new CancellationTokenSource(TimeSpan.FromMilliseconds(1500));
-        if (!DispatcherQueue.TryEnqueue(async () => await FinishWindowCloseAsync(budget)))
+        if (!DispatcherQueue.TryEnqueue(async () => await FinishWindowCloseAsync(budget, transfer)))
         {
             budget.Dispose();
             return;
@@ -1266,13 +1285,14 @@ internal sealed partial class MainWindow : Window
         args.Cancel = drainingWindowWatch = true;
     }
 
-    private async Task FinishWindowCloseAsync(CancellationTokenSource closeBudget)
+    private async Task FinishWindowCloseAsync(CancellationTokenSource closeBudget, Task? transfer)
     {
         using var budget = closeBudget;
+        var exportDrain = DrainClosingExportAsync(transfer);
         try
         {
             if (watchProgressWrite is { IsCompleted: false } pending) await pending.WaitAsync(budget.Token);
-            if (!closed)
+            if (!closed && watchRecord is not null)
             {
                 SendPendingWatchProgress(final: true);
                 if (watchProgressWrite is { IsCompleted: false } remaining) await remaining.WaitAsync(budget.Token);
@@ -1281,9 +1301,26 @@ internal sealed partial class MainWindow : Window
         catch (OperationCanceledException) { }
         finally
         {
-            allowWindowClose = true;
-            if (!closed) Close();
+            try
+            {
+                await exportDrain;
+            }
+            finally
+            {
+                allowWindowClose = true;
+                if (!closed) Close();
+            }
         }
+    }
+
+    private static async Task DrainClosingExportAsync(Task? transfer)
+    {
+        if (transfer is null) return;
+        // Give cancellation time to clean up without letting a stuck filesystem prevent exit.
+        try { await transfer.WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (TimeoutException) { }
+        catch (OperationCanceledException) { }
+        catch (PlaybackException) { } // The download handler owns the error message.
     }
 
     private async Task SendWatchStartAsync(SessionController current, YouTubeAccount account, HistoryVideo video, TimeSpan duration, TimeSpan position, long generation, CancellationToken token)

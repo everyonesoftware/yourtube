@@ -7,6 +7,7 @@
     <SolidColorBrush x:Key="AccentTextFillColorPrimaryBrush" Color="#c0d7ae"/>
     <Style TargetType="TextBlock"><Setter Property="FontFamily" Value="Segoe UI"/><Setter Property="Foreground" Value="#edf0e9"/></Style>
     <Style TargetType="Button"><Setter Property="CornerRadius" Value="5"/></Style>
+    <Style x:Key="DownloadPrimaryAction" TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}"><Setter Property="CornerRadius" Value="5"/></Style>
     <Style x:Key="RailLabel" TargetType="TextBlock"><Setter Property="FontFamily" Value="Segoe UI"/></Style>
     <Style x:Key="RailButton" TargetType="Button">
       <Setter Property="Background" Value="Transparent"/><Setter Property="BorderThickness" Value="0"/>
@@ -50,6 +51,7 @@
         <Button x:Name="HomeButton" Style="{StaticResource RailButton}" IsEnabled="False"><StackPanel Orientation="Horizontal" Spacing="9"><FontIcon Glyph="&#xE80F;" FontSize="15"/><TextBlock Text="Home" Style="{StaticResource RailLabel}"/></StackPanel></Button>
         <Button x:Name="SubscriptionsButton" Style="{StaticResource RailButton}" IsEnabled="False"><StackPanel Orientation="Horizontal" Spacing="9"><FontIcon Glyph="&#xE714;" FontSize="15"/><TextBlock Text="Subscriptions" Style="{StaticResource RailLabel}"/></StackPanel></Button>
         <Button x:Name="HistoryButton" Style="{StaticResource RailButton}" IsEnabled="False"><StackPanel Orientation="Horizontal" Spacing="9"><FontIcon Glyph="&#xE81C;" FontSize="15"/><TextBlock Text="History" Style="{StaticResource RailLabel}"/></StackPanel></Button>
+        <Button x:Name="DownloadsButton" Style="{StaticResource RailButton}" AutomationProperties.Name="Downloads"><StackPanel Orientation="Horizontal" Spacing="9"><FontIcon Glyph="&#xE896;" FontSize="15"/><TextBlock Text="Downloads" Style="{StaticResource RailLabel}"/></StackPanel></Button>
         <Button x:Name="SettingsButton" Style="{StaticResource RailButton}" AutomationProperties.Name="Settings">
           <StackPanel Orientation="Horizontal" Spacing="9">
             <FontIcon Glyph="&#xE713;" FontSize="15"/>
@@ -63,6 +65,37 @@
       </ScrollViewer>
     </Border>
     <Grid x:Name="WorkspaceContent" Grid.Row="1" Grid.Column="1" Margin="19,21,19,0">
+    <ScrollViewer x:Name="DownloadsPanel" Visibility="Collapsed" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
+      <Grid>
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*" MaxWidth="960"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <StackPanel Padding="0,0,8,24" Spacing="14">
+          <StackPanel Spacing="4">
+            <TextBlock x:Name="DownloadsHeading" Text="Downloads" FontSize="29" FontWeight="Bold" AutomationProperties.HeadingLevel="Level1"/>
+            <TextBlock x:Name="DownloadsSummary" Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
+          </StackPanel>
+          <StackPanel x:Name="DownloadActiveGroup" Spacing="7" Visibility="Collapsed">
+            <TextBlock Text="In progress  ·  1" FontWeight="SemiBold" AutomationProperties.HeadingLevel="Level2"/>
+            <ContentControl x:Name="DownloadActiveRow" IsTabStop="False" HorizontalContentAlignment="Stretch"/>
+          </StackPanel>
+          <StackPanel x:Name="DownloadCleanupGroup" Spacing="7" Visibility="Collapsed">
+            <TextBlock x:Name="DownloadCleanupHeading" FontWeight="SemiBold" AutomationProperties.HeadingLevel="Level2"/>
+            <StackPanel x:Name="DownloadCleanupRows" Spacing="6"/>
+          </StackPanel>
+          <StackPanel x:Name="DownloadCompletedGroup" Spacing="7" Visibility="Collapsed">
+            <TextBlock x:Name="DownloadCompletedHeading" FontWeight="SemiBold" AutomationProperties.HeadingLevel="Level2"/>
+            <StackPanel x:Name="DownloadCompletedRows"/>
+          </StackPanel>
+          <Border x:Name="DownloadsEmpty" Visibility="Collapsed" Padding="14,60" CornerRadius="8" BorderThickness="1" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
+            <StackPanel Spacing="6">
+              <FontIcon Glyph="&#xE896;" FontSize="26" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" AutomationProperties.AccessibilityView="Raw"/>
+              <TextBlock Text="No downloads yet" FontSize="18" FontWeight="SemiBold" TextAlignment="Center" AutomationProperties.HeadingLevel="Level2"/>
+              <TextBlock Text="Open a video and choose the download arrow in the player." Foreground="{StaticResource Muted}" TextWrapping="Wrap" TextAlignment="Center"/>
+            </StackPanel>
+          </Border>
+          <TextBlock x:Name="DownloadsFeedback" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
+        </StackPanel>
+      </Grid>
+    </ScrollViewer>
     <Grid x:Name="HistoryPanel" Visibility="Collapsed">
       <Grid x:Name="LibraryContent" RowSpacing="10">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
@@ -168,6 +201,14 @@
             <StackPanel x:Name="PlayerTransport" VerticalAlignment="Bottom" Padding="12,8,12,6" Visibility="Collapsed">
             <StackPanel.Background><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#00000000" Offset="0"/><GradientStop Color="#E6000000" Offset="0.55"/><GradientStop Color="#F5000000" Offset="1"/></LinearGradientBrush></StackPanel.Background>
             <TextBlock x:Name="PlayerQualityStatus" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" Foreground="{StaticResource Muted}" Visibility="Collapsed"/>
+            <StackPanel x:Name="PlayerDownloadFeedback" Visibility="Collapsed" Spacing="3">
+              <Grid ColumnSpacing="8">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <TextBlock x:Name="PlayerDownloadStatus" TextWrapping="Wrap" VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite"/>
+                <Button x:Name="PlayerDownloadCancel" Grid.Column="1" Content="Cancel" AutomationProperties.Name="Cancel download" Visibility="Collapsed"/>
+              </Grid>
+              <ProgressBar x:Name="PlayerDownloadProgress" Minimum="0" Maximum="100" AutomationProperties.Name="Download progress" Visibility="Collapsed"/>
+            </StackPanel>
             <Grid>
               <Slider x:Name="PlayerSeek" Minimum="0" Maximum="1" StepFrequency="0.1" SmallChange="5" LargeChange="10" IsThumbToolTipEnabled="False"
                       Opacity="0" UseSystemFocusVisuals="False" IsHitTestVisible="False" AutomationProperties.Name="Playback position"/>
@@ -190,6 +231,7 @@
                 <TextBlock x:Name="PlayerTime" Grid.Column="3" VerticalAlignment="Center" Text="0:00 / 0:00" Margin="6,0,0,0" TextTrimming="CharacterEllipsis"/>
               </Grid>
               <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
+                <Button x:Name="PlayerDownloadButton" IsEnabled="False" Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Download video" AutomationProperties.Name="Download video"><FontIcon Glyph="&#xE896;" FontSize="18"/><Button.Flyout><MenuFlyout Placement="TopEdgeAlignedRight"/></Button.Flyout></Button>
                 <Button x:Name="PlayerSettingsGear" Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Player settings" AutomationProperties.Name="Player settings"><FontIcon Glyph="&#xE713;" FontSize="18"/><Button.Flyout><MenuFlyout Placement="TopEdgeAlignedRight"/></Button.Flyout></Button>
                 <Button x:Name="PlayerFullscreen" Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Fullscreen" AutomationProperties.Name="Fullscreen"><FontIcon Glyph="&#xE740;" FontSize="18"/></Button>
               </StackPanel>

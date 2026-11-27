@@ -40,7 +40,7 @@ internal sealed partial class MainWindow
         };
     }
 
-    private bool CanSearch() => !closed && !settingsVisible && playback.Selected is null &&
+    private bool CanSearch() => !closed && !settingsVisible && !downloadsVisible && playback.Selected is null &&
         controller is { CanPlayFeed: true, SelectedAccount: not null };
 
     private void ArrangeSearch(double width)
@@ -59,7 +59,7 @@ internal sealed partial class MainWindow
     {
         var current = controller;
         if (search.Bind(current is { Phase: SessionPhase.SignedIn } ? current.SelectedAccount : null,
-            settingsVisible ? BrowseView.Settings : current?.View ?? BrowseView.Home, current?.Videos ?? []))
+            settingsVisible || downloadsVisible ? BrowseView.Settings : current?.View ?? BrowseView.Home, current?.Videos ?? []))
             C<TextBox>("BrowseSearchBox").Text = "";
     }
 
@@ -115,7 +115,7 @@ internal sealed partial class MainWindow
 
     private void ClearSearch()
     {
-        if (closed || settingsVisible || playback.Selected is not null || controller?.SelectedAccount is null) return;
+        if (closed || settingsVisible || downloadsVisible || playback.Selected is not null || controller?.SelectedAccount is null) return;
         search.Clear();
         var box = C<TextBox>("BrowseSearchBox");
         box.Text = "";

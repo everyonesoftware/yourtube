@@ -17,6 +17,16 @@ internal static class WiringTests
         var seekCode = File.ReadAllText(Path.Combine(app, "SeekPreview.cs"));
         StateTests.Verify(names.TryGetValue("TheaterPlayer", out var playerType) && playerType == "MediaPlayerElement", "Theater uses a genuine native MediaPlayerElement");
         XElement Named(string name) => xml.Descendants().Single(e => (string?)e.Attribute(x + "Name") == name);
+        StateTests.Verify(names.TryGetValue("DownloadsButton", out var downloadsButtonType) && downloadsButtonType == "Button" &&
+            Named("DownloadsButton").Parent == Named("LibraryNavigation") &&
+            Named("DownloadsButton").ElementsAfterSelf().FirstOrDefault() == Named("SettingsButton") &&
+            (string?)Named("DownloadsButton").Attribute("IsEnabled") != "False" &&
+            Named("DownloadsPanel").Parent == Named("WorkspaceContent") &&
+            (string?)Named("DownloadsPanel").Attribute("Visibility") == "Collapsed" &&
+            (string?)Named("DownloadsPanel").Attribute("HorizontalScrollMode") == "Disabled" &&
+            code.Contains("WireDownloads();") && code.Contains("RenderDownloadsRoute();") &&
+            Regex.IsMatch(code, @"HistoryPanel""\)\.Visibility = ToVisibility\([^;]*!downloadsVisible"),
+            "Downloads is a local native destination in the responsive rail, separate from the feed and available before sign-in");
         var player = Named("TheaterPlayer");
         var theater = Named("TheaterPanel");
         var stage = Named("PlayerStage");
@@ -51,6 +61,58 @@ internal static class WiringTests
             progress.Descendants().Any(e => e.Name.LocalName == "Flyout" && ((string?)e.Attribute("Placement"))?.StartsWith("Bottom", StringComparison.Ordinal) == true),
             "a native playback progress flyout opens below the hamburger immediately left of the close button");
         var ns = xml.Root!.Name.Namespace;
+        var download = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "PlayerDownloadButton");
+        StateTests.Verify(download?.Name.LocalName == "Button" && download.Ancestors().Contains(transport) &&
+            download.ElementsAfterSelf().FirstOrDefault() == Named("PlayerSettingsGear") &&
+            (string?)download.Attribute("AutomationProperties.Name") == "Download video" &&
+            download.Descendants(ns + "MenuFlyout").Any(e => (string?)e.Attribute("Placement") == "TopEdgeAlignedRight"),
+            "a native Download flyout is anchored immediately left of the player settings gear");
+        var downloadCode = File.ReadAllText(Path.Combine(app, "PlaybackDownload.cs"));
+        StateTests.Verify(code.Contains("WirePlaybackDownload();") && code.Contains("playerMenuOpen || playerProgressOpen || playerDownloadOpen") &&
+            code.Contains("RefreshPlaybackDownloadContext();") &&
+            downloadCode.Contains("playbackResolver.GetExportOptions(catalog)") && !downloadCode.Contains("ResolveAsync("),
+            "the anchored menu keeps transport visible, dismisses before fullscreen Escape, and reads only the current catalog");
+        var saveCode = File.ReadAllText(Path.Combine(app, "DownloadSaveDialog.cs"));
+        StateTests.Verify(downloadCode.Contains("DownloadSaveDialog.Pick(") &&
+            saveCode.Contains("[new FileTypeFilter(formatLabel, \"*\" + extension)]") &&
+            saveCode.Contains("NoTestFileCreate") &&
+            downloadCode.Contains("new FileOpenPicker(AppWindow.Id)") && downloadCode.Contains("IsFfmpegPath(") &&
+            downloadCode.Contains("OwnsDownloadCatalog(catalog)") && downloadCode.Contains("playbackResolver.ExportAsync(catalog, option, destination, ffmpegPath, progress, token, downloadJournal)"),
+            "only an explicitly selected destination and, for converted formats, ffmpeg are passed to the current catalog's export");
+        var downloadsCode = File.ReadAllText(Path.Combine(app, "DownloadsView.cs"));
+        StateTests.Verify(Regex.IsMatch(downloadCode, @"if \(double\.IsFinite\(value\) && value >= 0\.99\) job\.MarkCommitAdmitted\(\);\s+uiProgress\.Report\(value\);") &&
+            downloadCode.Contains("DownloadCommitting ? \"Saving download…\" : \"Finishing download…\"") &&
+            downloadCode.Contains("if (!CanCancelDownload || downloadRequest is not { } request) return;") &&
+            downloadCode.Contains("cancel.IsEnabled = transferring && CanCancelDownload;") &&
+            downloadsCode.Contains("downloadCancelButton.IsEnabled = CanCancelDownload;"),
+            "conversion stays cancelable; publication disables Cancel, including a queued Cancel click");
+        StateTests.Verify(Regex.IsMatch(downloadCode, @"if \(closing \|\| activeDownload is null\) downloadRequest\?\.Cancel\(\);") &&
+            Regex.IsMatch(downloadCode, @"if \(!OwnsDownloadCatalog\(catalog\) \|\| token.IsCancellationRequested\) return;\s*downloadPicking = false;\s*activeDownload =") &&
+            Regex.IsMatch(downloadCode, @"new Progress<double>\(value =>\s*\{\s*if \(!ReferenceEquals\(downloadRequest, request\)[^;]+return;") &&
+            downloadCode.Contains("RefreshDownloadsAsync()"),
+            "player changes retire selection only, admitted exports report by request identity, and completion refreshes durable rows");
+        StateTests.Verify(new[] { "DownloadActiveGroup", "DownloadCleanupGroup", "DownloadCompletedGroup", "DownloadsEmpty" }
+            .All(name => Named(name).Ancestors().Contains(Named("DownloadsPanel"))) &&
+            (string?)Named("DownloadsFeedback").Attribute("AutomationProperties.LiveSetting") == "Polite" &&
+            downloadsCode.Contains("root.Loaded += (_, _) => downloadRecovery ??= InitializeDownloadsAsync()") &&
+            Regex.IsMatch(downloadsCode, @"await RefreshDownloadsAsync\(\);\s*try\s*\{\s*await Task\.Run\(downloadJournal\.RecoverPending\);") &&
+            downloadsCode.Contains("var snapshot = await Task.Run(downloadJournal.ReadLocal);") &&
+            !downloadsCode.Contains("downloadJournal.Read()") &&
+            !downloadsCode.Contains("File.Delete(") && !downloadsCode.Contains("Directory.EnumerateFiles("),
+            "native Downloads groups use the stored journal and recovery is off the UI thread and limited to exact obligations");
+        StateTests.Verify(!downloadCode.Contains("downloadRecovery") && !downloadCode.Contains("Preparing downloads…"),
+            "pending startup recovery does not gate admission after the user picks all export inputs");
+        StateTests.Verify(Regex.IsMatch(downloadCode, @"activeDownload = new\([^;]+;\s*(?://[^\r\n]*\s+)?\+\+downloadSnapshotGeneration;\s*downloadSnapshotLoading = false;") &&
+            Regex.IsMatch(downloadsCode, @"if \(closed \|\| drainingWindowWatch \|\| generation != downloadSnapshotGeneration\) return;\s*hasDownloadSnapshot = true;\s*ApplyDownloadSnapshot\(snapshot\);") &&
+            Regex.IsMatch(downloadsCode, @"finally\s*\{\s*if \(!closed && !drainingWindowWatch && activeDownload is null\) await RefreshDownloadsAsync\(\);"),
+            "admission retires stale snapshots, and startup recovery requests a fresh local read once idle without replacing a live export row");
+        var launchDownload = Regex.Match(downloadsCode, @"private async Task LaunchDownloadAsync\([^\r\n]*\)[\s\S]*?\r?\n    \}").Value;
+        StateTests.Verify(Regex.IsMatch(launchDownload,
+            @"try\s*\{\s*using var lease = await Task\.Run\(\(\) => downloadJournal\.AcquireCompleted\(receipt\.Id\)\);\s*if \(!IsDownloadsVisit\(visit\) \|\| !downloadSnapshot\.Completed.Contains\(receipt\)\) return;") &&
+            Regex.IsMatch(launchDownload, @"StorageFile\.GetFileFromPathAsync\(lease\.Path\);\s*if \(!IsDownloadsVisit\(visit\) \|\| !downloadSnapshot\.Completed\.Contains\(receipt\)\) return;") &&
+            Regex.IsMatch(launchDownload, @"else\s*\{\s*var folder = await StorageFolder\.GetFolderFromPathAsync\(Path\.GetDirectoryName\(lease\.Path\)!\);\s*if \(!IsDownloadsVisit\(visit\) \|\| !downloadSnapshot\.Completed\.Contains\(receipt\)\) return;[^}]*options\.ItemsToSelect\.Add\(file\);\s*launched = await Launcher\.LaunchFolderAsync\(folder, options\);") &&
+            launchDownload.Contains("await Launcher.LaunchFileAsync(file)") && !launchDownload.Contains("ResolveCompletedPath"),
+            "completed row actions hold the verified file lease through both awaited launches and recheck receipt and visit after storage awaits");
         var actionThemes = close!.Parent!.Element(ns + "StackPanel.Resources")?.Element(ns + "ResourceDictionary")?
             .Element(ns + "ResourceDictionary.ThemeDictionaries");
         string? ActionColor(string theme, string key) => (string?)actionThemes?.Elements(ns + "ResourceDictionary")
@@ -256,6 +318,12 @@ internal static class WiringTests
             Regex.IsMatch(closeDrain, @"pending\.WaitAsync\(budget\.Token\)[\s\S]*?SendPendingWatchProgress\(final: true\)[\s\S]*?remaining\.WaitAsync\(budget\.Token\)") &&
             code.Contains("watchProgress.DrainAsync(final,"),
             "close waits for an in-flight checkpoint and a final multi-range drain under the same 1.5 second budget");
+        var closing = Regex.Match(code, @"private void OnWindowClosing\([^\r\n]*\)[\s\S]*?\r?\n    \}").Value;
+        StateTests.Verify(Regex.IsMatch(closing, @"var transfer = downloadTransfer;\s+RetirePlaybackDownload\(closing: true\);[\s\S]*?FinishWindowCloseAsync\(budget, transfer\)") &&
+            Regex.IsMatch(code, @"Closed \+= \(_, _\) =>\s*\{\s*closed = true;[\s\S]*?RetirePlaybackDownload\(closing: true\);[\s\S]*?playbackResolver.Dispose\(\);") &&
+            Regex.IsMatch(closeDrain, @"var exportDrain = DrainClosingExportAsync\(transfer\);[\s\S]*?await exportDrain;[\s\S]*?if \(!closed\) Close\(\);") &&
+            Regex.IsMatch(code, @"private static async Task DrainClosingExportAsync\(Task\? transfer\)[\s\S]*?transfer.WaitAsync\(TimeSpan.FromSeconds\(5\)\)[\s\S]*?catch \(TimeoutException\)"),
+            "close cancels the captured export immediately and gives it an independent, bounded cleanup wait");
         StateTests.Verify(Regex.IsMatch(code, @"if \(compareWatchLookups\)\s*\{[^}]*\.IsOn = false;[^}]*Compare YouTube History lookups \(diagnostic\)"),
             "the diagnostic replacement still starts off");
         StateTests.Verify(code.Contains("root.KeyboardAcceleratorPlacementMode = KeyboardAcceleratorPlacementMode.Hidden;") &&
@@ -266,7 +334,7 @@ internal static class WiringTests
             code.Contains("if (!ReferenceEquals(watchStatusIdentity, watchIdentity))") &&
             code.ReplaceLineEndings("\n").Contains("watchStatusIdentity = watchIdentity;\n            ResetWatchStatus();"),
             "watch status resets on account changes or sign-out, not when the same account opens Settings");
-        foreach (Match lookup in Regex.Matches(code + libraryCode + searchCode + seekCode, "C<(?<type>\\w+)>\\(\"(?<name>[^\"]+)\"\\)"))
+        foreach (Match lookup in Regex.Matches(code + libraryCode + searchCode + seekCode + downloadCode + downloadsCode, "C<(?<type>\\w+)>\\(\"(?<name>[^\"]+)\"\\)"))
             StateTests.Verify(names.TryGetValue(lookup.Groups["name"].Value, out var type) && type == lookup.Groups["type"].Value, "typed native control lookup matches XML: " + lookup.Groups["name"].Value);
         var library = Named("HistoryList");
         StateTests.Verify(Regex.IsMatch(libraryCode, @"var progress = .*BrowseView\.Subscriptions.*video\.PercentWatched") &&

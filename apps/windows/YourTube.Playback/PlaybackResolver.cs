@@ -15,7 +15,7 @@ internal sealed class MediaTrack(Uri uri, ulong size, string codec, uint bitrate
     internal Uri Uri { get; } = uri; internal ulong Size { get; } = size; internal string Codec { get; } = codec; internal uint Bitrate { get; } = bitrate; internal int Width { get; } = width; internal int Height { get; } = height;
     public override string ToString() => "MediaTrack [redacted]";
 }
-public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
+public sealed partial class PlaybackResolver : IPlaybackResolver, IDisposable
 {
     public const int DefaultConcurrentStreamChecks = 1;
     public const int MaximumConcurrentStreamChecks = 16;
@@ -42,16 +42,19 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
     private readonly PublicTransport transport;
     private readonly HttpClient http;
     private readonly YoutubeClient client;
+    private readonly TimeProvider exportClock;
     private readonly ConditionalWeakTable<PlaybackMedia, OwnedSource> ownership = new();
     private sealed record StoryboardLifetime(DateTimeOffset ExpiresAt);
     private readonly ConditionalWeakTable<Storyboard, StoryboardLifetime> storyboards = new();
     private readonly SemaphoreSlim sheetSlots = new(2);
-    private bool disposed;
+    private volatile bool disposed;
     public PlaybackResolver() : this(CreatePublicHandler()) { }
     internal static HttpClientHandler CreatePublicHandler() => new() { AllowAutoRedirect = false, UseCookies = false, UseDefaultCredentials = false, AutomaticDecompression = DecompressionMethods.None };
     // Injected handlers must not auto-redirect or attach credentials. Intended for deterministic tests.
-    public PlaybackResolver(HttpMessageHandler handler)
+    public PlaybackResolver(HttpMessageHandler handler) : this(handler, TimeProvider.System) { }
+    internal PlaybackResolver(HttpMessageHandler handler, TimeProvider exportClock)
     {
+        this.exportClock = exportClock;
         transport = new PublicTransport(handler);
         http = new HttpClient(transport) { Timeout = RequestTimeout };
         client = new YoutubeClient(http);
@@ -246,14 +249,20 @@ public sealed class PlaybackResolver : IPlaybackResolver, IDisposable
         ulong end = start + count - 1;
         var target = new Uri(track.Uri.AbsoluteUri + (track.Uri.Query.Length == 0 ? "?" : "&") + "range=" + start.ToString(CultureInfo.InvariantCulture) + "-" + end.ToString(CultureInfo.InvariantCulture));
         using var request = new HttpRequestMessage(HttpMethod.Get, target);
-        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(RequestTimeout);
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
         if (response.StatusCode is not (HttpStatusCode.OK or HttpStatusCode.PartialContent)) throw new PlaybackException("media_unavailable", "The public media resource is unavailable.");
         var range = response.Content.Headers.ContentRange;
         if (response.StatusCode == HttpStatusCode.OK && range is not null) throw InvalidRange();
         if (response.StatusCode == HttpStatusCode.PartialContent && (range?.Unit != "bytes" || range.From != (long)start || range.To != (long)end || range.Length != (long)track.Size)) throw InvalidRange();
         if (response.Content.Headers.ContentLength is { } declared && (ulong)declared != count) throw InvalidRange();
-        var bytes = await response.Content.ReadAsByteArrayAsync(token);
-        if ((ulong)bytes.Length != count) throw InvalidRange();
+        await using var body = await response.Content.ReadAsStreamAsync(deadline.Token).ConfigureAwait(false);
+        var bytes = new byte[(int)count];
+        try { await body.ReadExactlyAsync(bytes, deadline.Token).ConfigureAwait(false); }
+        catch (EndOfStreamException) { throw InvalidRange(); }
+        // The extra byte checks chunked responses without buffering an unbounded body.
+        if (await body.ReadAsync(new byte[1], deadline.Token).ConfigureAwait(false) != 0) throw InvalidRange();
         return bytes;
     }
     private static string? Query(Uri uri, string key)
