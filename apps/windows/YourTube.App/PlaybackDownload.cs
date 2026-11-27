@@ -168,6 +168,8 @@ internal sealed partial class MainWindow
         }
     }
 
+    private ((string VideoId, MediaExportFormat Format, int? Height, int? AudioBitrateKbps) Choice, string Path)? ffmpegFallback;
+
     private async Task DownloadCurrentVideoAsync(PlaybackMedia catalog, MediaExportOption option, string formatLabel)
     {
         if (downloadRequest is not null || InteractivePlayer is null || !OwnsDownloadCatalog(catalog) ||
@@ -175,11 +177,13 @@ internal sealed partial class MainWindow
         using var request = downloadRequest = new CancellationTokenSource();
         var token = request.Token;
         var step = "Couldn’t open the Save As dialog. Try again.";
+        var exportChoice = (catalog.VideoId, option.Format, option.Height, option.AudioBitrateKbps);
         downloadPreferences[option.Format] = (option.Height, option.AudioBitrateKbps);
         var launchButton = PlayerDownloadButton;
         var originalFocus = root.XamlRoot is { } xamlRoot ? Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(xamlRoot) : null;
         var restoreKeyboardFocus = launchButton.FocusState == FocusState.Keyboard ||
             originalFocus is Control { FocusState: FocusState.Keyboard };
+        PortableFfmpeg.Lease? managedFfmpeg = null;
         try
         {
             downloadPicking = true;
@@ -209,16 +213,28 @@ internal sealed partial class MainWindow
             string? ffmpegPath = null;
             if (option.Format != MediaExportFormat.M4a)
             {
-                step = "Couldn’t open the FFmpeg picker. Try again.";
-                const string chooseFfmpeg = "Select a trusted ffmpeg.exe to create this format.";
-                SetDownloadStatus(chooseFfmpeg);
-                var picker = new FileOpenPicker(AppWindow.Id) { CommitButtonText = "Use FFmpeg" };
-                picker.FileTypeFilter.Add(".exe");
-                var choice = await picker.PickSingleFileAsync().AsTask(token);
+                step = "Couldn’t load FFmpeg. Check Settings → FFmpeg and try again.";
+                managedFfmpeg = await Task.Run(() => portableFfmpeg.OpenAsync(token), token);
                 if (!OwnsDownloadCatalog(catalog) || token.IsCancellationRequested) return;
-                if (choice is null) { SetDownloadStatus(""); return; }
-                if (!IsFfmpegPath(choice.Path)) { SetDownloadStatus(chooseFfmpeg); return; }
-                ffmpegPath = choice.Path;
+                ffmpegPath = managedFfmpeg?.Installation.Path;
+                if (ffmpegPath is null || ffmpegFallback == (exportChoice, ffmpegPath))
+                {
+                    bool usingFallback = managedFfmpeg is not null;
+                    managedFfmpeg?.Dispose();
+                    managedFfmpeg = null;
+                    step = "Couldn’t open the FFmpeg picker. Try again.";
+                    string chooseFfmpeg = usingFallback
+                        ? "Select a different trusted ffmpeg.exe for this export."
+                        : "Configure a portable copy in Settings → FFmpeg, or select a trusted ffmpeg.exe for this export.";
+                    SetDownloadStatus(chooseFfmpeg);
+                    var picker = new FileOpenPicker(AppWindow.Id) { CommitButtonText = "Use FFmpeg" };
+                    picker.FileTypeFilter.Add(".exe");
+                    var choice = await picker.PickSingleFileAsync().AsTask(token);
+                    if (!OwnsDownloadCatalog(catalog) || token.IsCancellationRequested) return;
+                    if (choice is null) { SetDownloadStatus(""); return; }
+                    if (!IsFfmpegPath(choice.Path)) { SetDownloadStatus(chooseFfmpeg); return; }
+                    ffmpegPath = choice.Path;
+                }
             }
 
             if (!OwnsDownloadCatalog(catalog) || token.IsCancellationRequested) return;
@@ -263,10 +279,13 @@ internal sealed partial class MainWindow
         }
         catch (PlaybackException error)
         {
+            if (error.Code == "ffmpeg_failed" && managedFfmpeg is not null)
+                ffmpegFallback = (exportChoice, managedFfmpeg.Installation.Path);
             var message = error.Code switch
             {
                 "destination_exists" => "That name is already in use. Choose a new filename; existing files are not replaced.",
                 "invalid_destination" => "Choose an existing folder and a filename with the selected format’s extension.",
+                "ffmpeg_failed" when managedFfmpeg is not null => "The portable FFmpeg copy couldn’t create this format. Try the export again to pick a different trusted ffmpeg.exe, or choose M4A.",
                 "ffmpeg_required" or "ffmpeg_failed" => "FFmpeg couldn’t create this format. Try another trusted ffmpeg.exe or choose M4A.",
                 "expired" => "This stream has expired. Reopen the video before downloading.",
                 "export_cleanup_failed" => "Couldn’t remove the incomplete download. See Downloads for cleanup options.",
@@ -282,6 +301,7 @@ internal sealed partial class MainWindow
         }
         finally
         {
+            managedFfmpeg?.Dispose();
             downloadPicking = false;
             bool transferred = activeDownload is not null;
             var restoreDownloadFocus = transferred && IsDownloadActionFocused(downloadCancelButton);

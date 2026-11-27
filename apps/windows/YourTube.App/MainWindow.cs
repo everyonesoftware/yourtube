@@ -101,6 +101,7 @@ internal sealed partial class MainWindow : Window
         updatesPanel = new WindowsUpdatesPanel();
         updatesPanel.UpdateAvailabilityChanged += RenderSettingsButton;
         C<ContentControl>("SettingsHost").Content = updatesPanel.View;
+        WireFfmpegSettings();
         InitializeStartupQuality();
         InitializeReachabilityChecks();
         if (compareWatchLookups)
@@ -200,6 +201,7 @@ internal sealed partial class MainWindow : Window
             if (initialized || closed) return;
             initialized = true;
             _ = updatesPanel.CheckOnStartupAsync();
+            _ = CheckFfmpegAsync(startup: true);
             C<Border>("ShellStatus").Visibility = Visibility.Visible;
             await InitializeServicesAsync();
         };
@@ -207,6 +209,9 @@ internal sealed partial class MainWindow : Window
         Closed += (_, _) =>
         {
             closed = true;
+            ffmpegLifetime.Cancel();
+            portableFfmpeg.Dispose();
+            ffmpegLifetime.Dispose();
             titleBar.Dispose();
             search.Dispose();
 

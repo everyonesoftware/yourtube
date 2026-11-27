@@ -15,6 +15,7 @@ internal static class WiringTests
         var libraryCode = File.ReadAllText(Path.Combine(app, "LibraryView.cs"));
         var searchCode = File.ReadAllText(Path.Combine(app, "SearchView.cs"));
         var seekCode = File.ReadAllText(Path.Combine(app, "SeekPreview.cs"));
+        var ffmpegCode = File.ReadAllText(Path.Combine(app, "FfmpegSettings.cs"));
         StateTests.Verify(names.TryGetValue("TheaterPlayer", out var playerType) && playerType == "MediaPlayerElement", "Theater uses a genuine native MediaPlayerElement");
         XElement Named(string name) => xml.Descendants().Single(e => (string?)e.Attribute(x + "Name") == name);
         StateTests.Verify(names.TryGetValue("DownloadsButton", out var downloadsButtonType) && downloadsButtonType == "Button" &&
@@ -86,6 +87,10 @@ internal static class WiringTests
             saveCode.Contains("[new FileTypeFilter(formatLabel, \"*\" + extension)]") &&
             saveCode.Contains("NoTestFileCreate") &&
             downloadCode.Contains("new FileOpenPicker(AppWindow.Id)") && downloadCode.Contains("IsFfmpegPath(") &&
+            downloadCode.Contains("var exportChoice = (catalog.VideoId, option.Format, option.Height, option.AudioBitrateKbps);") &&
+            Regex.IsMatch(downloadCode, @"if \(option\.Format != MediaExportFormat\.M4a\)\s*\{[\s\S]*?portableFfmpeg\.OpenAsync\(token\)[\s\S]*?ffmpegPath = managedFfmpeg\?\.Installation\.Path;\s*if \(ffmpegPath is null \|\| ffmpegFallback == \(exportChoice, ffmpegPath\)\)\s*\{[\s\S]*?new FileOpenPicker") &&
+            Regex.IsMatch(downloadCode, @"if \(error\.Code == ""ffmpeg_failed"" && managedFfmpeg is not null\)\s*ffmpegFallback = \(exportChoice, managedFfmpeg\.Installation\.Path\);") &&
+            Regex.IsMatch(downloadCode, @"await downloadTransfer;[\s\S]*?finally\s*\{\s*managedFfmpeg\?\.Dispose\(\);") &&
             downloadCode.Contains("OwnsDownloadCatalog(catalog)") && downloadCode.Contains("playbackResolver.ExportAsync(catalog, option, destination, ffmpegPath, progress, token, downloadJournal)"),
             "only an explicitly selected destination and, for converted formats, ffmpeg are passed to the current catalog's export");
         var downloadsCode = File.ReadAllText(Path.Combine(app, "DownloadsView.cs"));
@@ -306,6 +311,16 @@ internal static class WiringTests
             settingsHost.ElementsAfterSelf().Any(section => historySwitch.Ancestors().Contains(section)) &&
             code.Contains("C<ContentControl>(\"SettingsHost\").Content = updatesPanel.View;"),
             "the current version and updates panel is the first section under the Settings heading, before Playback");
+        var ffmpeg = Named("FfmpegPanel");
+        StateTests.Verify(ffmpeg.Parent == settingsHost.ElementsAfterSelf().FirstOrDefault() &&
+            ffmpeg.Parent!.ElementsAfterSelf().Any(section => historySwitch.Ancestors().Contains(section)) &&
+            new[] { "FfmpegExecutable", "FfmpegVersion", "FfmpegStatus", "FfmpegCheck", "FfmpegDownload", "FfmpegProgress" }
+                .All(name => Named(name).Ancestors().Contains(ffmpeg)) &&
+            code.Contains("WireFfmpegSettings();") && code.Contains("_ = CheckFfmpegAsync(startup: true);") &&
+            code.Contains("ffmpegLifetime.Cancel();") &&
+            ffmpegCode.Contains(".Click += async (_, _) => await DownloadFfmpegAsync();") &&
+            ffmpegCode.IndexOf("ffmpegBusy = true;", StringComparison.Ordinal) < ffmpegCode.IndexOf("portableFfmpeg.FindAsync", StringComparison.Ordinal),
+            "native FFmpeg lives between app updates and Playback, reserves startup discovery, and downloads only on explicit activation");
         StateTests.Verify(historySwitch.Ancestors().Contains(Named("SettingsPanel")) &&
             (string?)historySwitch.Attribute("Header") == "Update YouTube History" && (string?)historySwitch.Attribute("IsOn") == "True",
             "Update YouTube History starts on in Playback settings");
@@ -343,7 +358,7 @@ internal static class WiringTests
             code.Contains("if (!ReferenceEquals(watchStatusIdentity, watchIdentity))") &&
             code.ReplaceLineEndings("\n").Contains("watchStatusIdentity = watchIdentity;\n            ResetWatchStatus();"),
             "watch status resets on account changes or sign-out, not when the same account opens Settings");
-        foreach (Match lookup in Regex.Matches(code + libraryCode + searchCode + seekCode + downloadCode + downloadsCode, "C<(?<type>\\w+)>\\(\"(?<name>[^\"]+)\"\\)"))
+        foreach (Match lookup in Regex.Matches(code + libraryCode + searchCode + seekCode + downloadCode + downloadsCode + ffmpegCode, "C<(?<type>\\w+)>\\(\"(?<name>[^\"]+)\"\\)"))
             StateTests.Verify(names.TryGetValue(lookup.Groups["name"].Value, out var type) && type == lookup.Groups["type"].Value, "typed native control lookup matches XML: " + lookup.Groups["name"].Value);
         var library = Named("HistoryList");
         StateTests.Verify(Regex.IsMatch(libraryCode, @"var progress = .*BrowseView\.Subscriptions.*video\.PercentWatched") &&
@@ -466,7 +481,7 @@ internal static class WiringTests
             !code.Contains("AppWindow.TitleBar.") && !code.Contains("ExtendsContentIntoTitleBar"),
             "the shared native title bar owns caption styling and insets; fullscreen exit and close keep their lifecycle wiring");
         StateTests.Verify(code.Contains("SettingsHost\").Content = updatesPanel.View") && code.Contains("updatesPanel.Dispose()"), "Settings updater integration and disposal");
-        StateTests.Verify(Regex.IsMatch(code, @"root\.Loaded\s*\+=\s*async[^;]*if \(initialized \|\| closed\) return;\s*initialized\s*=\s*true;\s*_\s*=\s*updatesPanel\.CheckOnStartupAsync\(\);[^;]*;\s*await InitializeServicesAsync\(\);"),
+        StateTests.Verify(Regex.IsMatch(code, @"root\.Loaded\s*\+=\s*async[^;]*if \(initialized \|\| closed\) return;\s*initialized\s*=\s*true;\s*_\s*=\s*updatesPanel\.CheckOnStartupAsync\(\);\s*_\s*=\s*CheckFfmpegAsync\(startup: true\);[^;]*;\s*await InitializeServicesAsync\(\);"),
             "startup discovery is scheduled once without awaiting it or depending on account restoration");
         var dot = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "SettingsUpdateDot");
         StateTests.Verify(dot is not null && dot.Ancestors().Contains(Named("SettingsButton")) &&
