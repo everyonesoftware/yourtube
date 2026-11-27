@@ -65,9 +65,16 @@ internal static class WiringTests
         StateTests.Verify(download?.Name.LocalName == "Button" && download.Ancestors().Contains(transport) &&
             download.ElementsAfterSelf().FirstOrDefault() == Named("PlayerSettingsGear") &&
             (string?)download.Attribute("AutomationProperties.Name") == "Download video" &&
-            download.Descendants(ns + "MenuFlyout").Any(e => (string?)e.Attribute("Placement") == "TopEdgeAlignedRight"),
+            download.Descendants(ns + "Flyout").Any(e => (string?)e.Attribute("Placement") == "TopEdgeAlignedRight" &&
+                (string?)e.Attribute("FlyoutPresenterStyle") == "{StaticResource DownloadFormatsPresenter}"),
             "a native Download flyout is anchored immediately left of the player settings gear");
         var downloadCode = File.ReadAllText(Path.Combine(app, "PlaybackDownload.cs"));
+        StateTests.Verify(downloadCode.Contains("Text = \"Download formats\"") && downloadCode.Contains("new ScrollViewer") &&
+            downloadCode.Contains("Video + audio") && downloadCode.Contains("Audio only") &&
+            downloadCode.Contains("Grid.SetColumn(detail, 1)") && downloadCode.Contains("Grid.SetColumn(button, index % columns)") &&
+            downloadCode.Contains("Height is int height ? $\"{height}p\"") && downloadCode.Contains("Original audio") &&
+            downloadCode.Contains("DownloadCurrentVideoAsync(catalog, option, format)"),
+            "download formats are direct actions in a bounded card with labeled sections and separate format/details");
         StateTests.Verify(code.Contains("WirePlaybackDownload();") && code.Contains("playerMenuOpen || playerProgressOpen || playerDownloadOpen") &&
             code.Contains("RefreshPlaybackDownloadContext();") &&
             downloadCode.Contains("playbackResolver.GetExportOptions(catalog)") && !downloadCode.Contains("ResolveAsync("),
