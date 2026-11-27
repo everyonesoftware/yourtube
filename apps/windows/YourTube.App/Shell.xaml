@@ -174,10 +174,13 @@
       <TextBlock x:Name="ExpiryText" Foreground="{StaticResource Muted}"/>
       <Button x:Name="OpenActivationButton" Content="Open activation page in browser" IsEnabled="False"/>
     </StackPanel>
-    <ScrollViewer x:Name="SettingsPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
+    <ScrollViewer x:Name="SettingsPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
       <StackPanel Spacing="20">
         <TextBlock Text="Settings" FontSize="24" FontWeight="SemiBold"/>
-        <ContentControl x:Name="SettingsHost" HorizontalContentAlignment="Stretch"/>
+        <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*" MaxWidth="760"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <ContentControl x:Name="SettingsHost" HorizontalContentAlignment="Stretch" IsTabStop="False"/>
+        </Grid>
         <Grid>
           <Grid.ColumnDefinitions><ColumnDefinition Width="*" MaxWidth="760"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
         <Border x:Name="FfmpegPanel" Padding="16" CornerRadius="8" BorderThickness="1"

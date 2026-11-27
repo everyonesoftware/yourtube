@@ -305,14 +305,19 @@ internal static class WiringTests
         StateTests.Verify(code.Contains("new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }"), "OAuth transport refuses redirects and does not retain cookies");
         var historySwitch = Named("WatchHistorySync");
         var settingsHost = Named("SettingsHost");
+        var updatesSection = settingsHost.Parent;
         var settingsSections = Named("SettingsPanel").Element(ns + "StackPanel");
         var settingsHeading = settingsSections?.Elements(ns + "TextBlock").Single(e => (string?)e.Attribute("Text") == "Settings");
-        StateTests.Verify(settingsHeading?.ElementsAfterSelf().FirstOrDefault() == settingsHost &&
-            settingsHost.ElementsAfterSelf().Any(section => historySwitch.Ancestors().Contains(section)) &&
+        StateTests.Verify(updatesSection is not null && settingsHeading?.ElementsAfterSelf().FirstOrDefault() == updatesSection &&
+            updatesSection.ElementsAfterSelf().Any(section => historySwitch.Ancestors().Contains(section)) &&
             code.Contains("C<ContentControl>(\"SettingsHost\").Content = updatesPanel.View;"),
             "the current version and updates panel is the first section under the Settings heading, before Playback");
         var ffmpeg = Named("FfmpegPanel");
-        StateTests.Verify(ffmpeg.Parent == settingsHost.ElementsAfterSelf().FirstOrDefault() &&
+        StateTests.Verify(updatesSection?.Name == ns + "Grid" && !settingsHost.HasElements &&
+            !updatesSection.Descendants(ns + "Border").Any() && !updatesSection.Descendants(ns + "Button").Any() &&
+            XNode.DeepEquals(updatesSection.Element(ns + "Grid.ColumnDefinitions"), ffmpeg.Parent?.Element(ns + "Grid.ColumnDefinitions")),
+            "the shared updates card owns its chrome and actions; the shell only aligns it to the FFmpeg width cap");
+        StateTests.Verify(ffmpeg.Parent == updatesSection?.ElementsAfterSelf().FirstOrDefault() &&
             ffmpeg.Parent!.ElementsAfterSelf().Any(section => historySwitch.Ancestors().Contains(section)) &&
             new[] { "FfmpegExecutable", "FfmpegVersion", "FfmpegStatus", "FfmpegCheck", "FfmpegDownload", "FfmpegProgress" }
                 .All(name => Named(name).Ancestors().Contains(ffmpeg)) &&

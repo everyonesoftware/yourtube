@@ -117,7 +117,6 @@ public sealed class WindowsUpdatesPanel : IDisposable
         var assembly = typeof(WindowsUpdatesPanel).Assembly;
         string? version = assembly.GetName().Version?.ToString(3);
         panel = new SharedUpdatesPanel("YourTube", version ?? "unavailable");
-        View.MaxWidth = 760;
         dispatcher = View.DispatcherQueue;
         string? info = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
         string? installedSourceSha = version is not null && info?.StartsWith(version + "+", StringComparison.Ordinal) == true

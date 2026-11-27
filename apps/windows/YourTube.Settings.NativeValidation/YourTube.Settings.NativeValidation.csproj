@@ -18,7 +18,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="1.8.260803003" />
-    <PackageReference Include="EveryoneSoftware.WindowsCommon" Version="[0.1.5]" />
+    <PackageReference Include="EveryoneSoftware.WindowsCommon" Version="[0.1.6]" />
     <ProjectReference Include="../YourTube.Update/YourTube.Update.csproj" />
     <Compile Include="../YourTube.App/WindowsUpdatesPanel.cs" Link="WindowsUpdatesPanel.cs" />
     <Compile Include="../YourTube.App/WindowsUpdateBackend.cs" Link="WindowsUpdateFlow.cs" />

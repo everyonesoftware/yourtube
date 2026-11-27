@@ -66,8 +66,12 @@ internal sealed partial class SettingsSmokeApplication(string evidence, string s
             stage = "initial-state";
             await Until(() => Buttons("Check for updates").Any() && VersionHeadings().Any());
             var check = Buttons("Check for updates").Single();
+            Require(panel.View is Border { CornerRadius.TopLeft: 8, BorderThickness.Left: 1, Padding.Left: 16 } card &&
+                card.Background is not null && card.BorderBrush is not null);
             Require(check.IsEnabled && fixture.Checks == 0 && fixture.NotesLoads == 0 && !Realized<Expander>(panel.View).Any());
             Require(VersionHeadings().Single().Text == "Current Version: 0.1.4");
+            Require(check.Focus(FocusState.Keyboard));
+            await Until(() => Equals(FocusManager.GetFocusedElement(check.XamlRoot), check) && check.FocusState == FocusState.Keyboard);
 
             stage = "check-fixture-offer";
             (Peer(check) as IInvokeProvider
