@@ -1,6 +1,6 @@
 # Native Windows subscriptions (source implementation)
 
-Status: implemented and fixture/state/source/compile validated in WSL on November 20, 2026. Publication and installed-window smoke run through the main CI workflow; consult its exact-source release and the managed README download table for published availability. **Account-owner authenticated subscriptions remain pending.** No credentials, Google consent, account data or browser cookies were obtained for this work.
+Status: implemented and fixture/state/source/compile validated in WSL on November 20, 2026. Publication and installed-window smoke run through the main CI workflow; consult its exact-source release for published availability. **Account-owner authenticated subscriptions remain pending.** No credentials, Google consent, account data or browser cookies were obtained for this work.
 
 ## Pinned upstream trace
 

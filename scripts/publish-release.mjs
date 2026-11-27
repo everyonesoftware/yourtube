@@ -3,7 +3,8 @@ import { copyFileSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from '
 import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { manifestName, maxManifestBytes, validateManifest, sha256 } from './release-tools.mjs';
-import { gh, repository, resolveTagSource, windowsPublications } from './publication.mjs';
+import { discoverAndroidDownload, gh, repository, resolveTagSource, windowsPublications } from './publication.mjs';
+import { renderTable } from './download-table.mjs';
 import { buildChangelog } from './release-changelog.mjs';
 const dir=process.argv[2];
 if(!dir || process.argv.length!==3) throw new Error('Usage: node scripts/publish-release.mjs RELEASE_DIRECTORY');
@@ -31,6 +32,7 @@ try {
  if(existing) throw new Error('Refusing to overwrite an existing release');
  const head={version:manifest.version,sha:manifest.sourceSha};
  const publications=Array.from(windowsPublications(),({manifest:m})=>({version:m.version,sha:m.sourceSha}));
+ const android=discoverAndroidDownload();
  const changelog=buildChangelog({head,publications});
  const enriched=Buffer.from(JSON.stringify({...manifest,changelog})+'\n');
  if(enriched.length>maxManifestBytes) throw new Error('Complete Windows manifest exceeds 1 MiB; history cannot be truncated');
@@ -52,9 +54,10 @@ try {
   return bullets.length ? [`## ${label}\n${bullets.join('\n')}`] : [];
  });
  if(commits.length) sections.push(`## Commits\n${commits.map(commit=>`- ${commit.sha.slice(0,7)} ${escape(commit.subject)}`).join('\n')}`);
- const downloads='<!-- current-downloads:start -->\nPending verified publication.\n<!-- current-downloads:end -->';
+ const downloads=`<!-- current-downloads:start -->\n${renderTable(manifest)}\n<!-- current-downloads:end -->`;
+ const androidDownloads=android ? `## Android download\n\n${android.version}: [APK](${android.apkUrl}) · [SHA-256](${android.checksumUrl})` : '';
  const releaseNotes=sections.join('\n\n');
- const notes=[Buffer.byteLength(releaseNotes)<=32_000 ? releaseNotes : 'See the in-app changelog for the complete history.',downloads].filter(Boolean).join('\n\n');
+ const notes=[Buffer.byteLength(releaseNotes)<=32_000 ? releaseNotes : 'See the in-app changelog for the complete history.',downloads,androidDownloads].filter(Boolean).join('\n\n');
  gh('release','create',manifest.tag,'--repo',repository,'--target',manifest.sourceSha,'--title',`YourTube ${manifest.version}`,'--notes',notes,'--draft',...files);
  // Verify remote bytes before making the draft public.
  const verify=mkdtempSync(join(tmpdir(),'yourtube-publish-'));

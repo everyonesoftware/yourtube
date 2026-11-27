@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YourTube — Playback progress mockups</title>
+<style>
+:root{color-scheme:dark;--sage:#c0d7ae;--muted:#aab6ae;--rule:#39443e;--panel:#212824;--error:#ffc2ae;--text:#edf0e9}*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:#101412;color:var(--text);font:14px 'Segoe UI',system-ui,sans-serif}main{max-width:1136px;margin:auto;padding:27px 24px 34px}button{font:inherit;color:inherit;cursor:pointer}button:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--sage);outline-offset:3px}.eyebrow{color:var(--sage);font-size:10px;letter-spacing:.2em;font-weight:700}h1{font-size:clamp(26px,4vw,37px);letter-spacing:-.045em;margin:6px 0 7px;font-weight:650}p{margin:0;color:var(--muted);line-height:1.55}.review{margin:17px 0 12px;display:flex;gap:12px 20px;align-items:center;flex-wrap:wrap}.group{display:flex;flex-wrap:wrap;gap:3px;background:#1b221e;padding:3px;border-radius:7px;border:1px solid #303a34}.group button,.plain,.action{background:transparent;border:1px solid transparent;border-radius:4px;padding:7px 10px;font-size:12px}.group button[aria-pressed=true]{background:#39473d;border-color:#536451;color:#f5fbf0}.group button:hover,.plain:hover,.action:hover{background:#ffffff10}.plain,.action{border-color:#465249;background:#2d3630}.sim{margin-left:auto;color:var(--muted);font-size:11px}.window{overflow:hidden;border:1px solid #4a574e;border-radius:9px;background:#1c211f;box-shadow:0 20px 50px #0005}.titlebar{height:40px;padding:0 16px;display:flex;align-items:center;gap:9px;background:#242c28;font-size:13px;font-weight:700;border-bottom:1px solid #ffffff08}.logo{width:27px;height:26px;display:grid;place-items:center;border-radius:6px;background:var(--sage);color:#172019}.logo svg{width:14px}.chrome{margin-left:auto;display:flex;gap:30px;font-weight:400;font-size:14px;color:#c4cec6}.player{position:relative;background:#050605;--stage-height:clamp(405px,44vw,483px)}.stage{position:relative;height:var(--stage-height);background:#030403;display:grid;place-items:center;overflow:hidden}.stage img{width:100%;height:100%;position:absolute;inset:0;object-fit:contain}.top{position:absolute;top:12px;right:12px;display:flex;gap:7px;z-index:3}.circle{display:grid;place-items:center;width:36px;height:36px;border-radius:50%;padding:0;border:1px solid transparent;background:#121512c9;color:white}.circle:hover,.circle[aria-expanded=true]{background:#2f3b32;border-color:#697d6d}.circle svg{width:17px;height:17px}.stage-state{text-align:center;padding:18px;color:#f1f5ee}.stage-state strong{display:block;font-size:14px;margin-top:11px;font-weight:550}.stage-state .ring{width:33px;height:33px;display:inline-block;border-width:2px}.stage-state small{color:var(--muted);display:inline-block;margin-top:6px}.stage-error{display:inline-grid;place-items:center;color:var(--error);border:1px solid #926959;border-radius:50%;width:32px;height:32px}.ring{border:1.5px solid #638067;border-right-color:#d2edbf;border-radius:50%;animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.ring{animation:none}}
+.panel{position:absolute;right:54px;top:54px;width:328px;max-width:calc(100% - 66px);max-height:calc(var(--stage-height) - 64px);overflow:auto;z-index:2;border:1px solid #4b5b50;background:var(--panel);box-shadow:0 12px 36px #0009;border-radius:9px;padding:15px 16px 12px;scrollbar-width:thin}.panel h2{margin:0;font-size:16px;font-weight:650;letter-spacing:-.02em}.panel-heading{display:flex;align-items:baseline;justify-content:space-between;gap:8px}.time,.duration{font-variant-numeric:tabular-nums;white-space:nowrap}.time{color:#dae5db;font-size:11px}.summary{margin-top:4px;font-size:12px;color:var(--sage)}.steps{list-style:none;padding:8px 0 0;margin:10px 0 0;border-top:1px solid var(--rule)}.steps li{position:relative;display:grid;grid-template-columns:16px minmax(0,1fr) auto;align-items:center;min-height:37px;gap:9px;padding:6px 5px;border-radius:5px;font-size:12px}.steps li[data-state=active]{background:#344539;color:#e7f6df}.steps li[data-state=failed]{background:#45332e;color:var(--error)}.steps li[data-state=pending]{color:#a1ada4}.duration{color:var(--muted);font-size:10px}.active .duration{color:#e0edda}.failed .duration{color:var(--error)}.dot{width:15px;height:15px;display:grid;place-items:center;color:var(--sage);font-size:12px}.pending .dot:after{content:'';width:6px;height:6px;border:1px solid #a1ada4;border-radius:50%}.failed .dot{color:var(--error)}.panel-footer{border-top:1px solid var(--rule);margin-top:9px;padding-top:9px;font-size:11px;color:var(--muted)}.panel-footer p{font-size:11px}.panel-footer .action{margin-top:8px}.docked .player.open{display:grid;grid-template-columns:minmax(0,1fr) 330px}.docked .open .panel{position:static;width:auto;max-width:none;max-height:var(--stage-height);border:0;border-left:1px solid var(--rule);border-radius:0;box-shadow:none;padding:19px 17px}.transport{position:absolute;bottom:0;left:0;right:0;padding:20px 16px 9px;background:linear-gradient(transparent,#000e);font-size:12px}.seek{height:3px;background:#ffffff65;border-radius:2px;margin-bottom:9px}.seek:before{content:'';display:block;width:8px;height:3px;background:var(--sage)}.controls{display:flex;align-items:center;gap:12px}.controls svg{width:17px;height:17px}.controls .right{margin-left:auto}.details{padding:15px 21px 20px}.details h2{font-size:22px;margin:0 0 4px;letter-spacing:-.03em}.details p{color:var(--sage);font-size:13px}.closed{min-height:var(--stage-height,405px);display:grid;place-content:center;justify-items:center;gap:11px}.caption{padding:12px 2px 0;font-size:12px}.caption strong{color:#e3eadf}.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+@media(max-width:700px){main{padding:18px 11px}.review{gap:8px}.sim{margin-left:0}.docked .player.open{display:block}.docked .open .stage{height:245px}.docked .open .panel{border-left:0;border-top:1px solid var(--rule);max-height:none}.flyout .open .stage-state{opacity:0}.chrome{gap:18px}}
+</style>
+</head>
+<body><main class="flyout" id="study">
+<header><div class="eyebrow">YOURTUBE / WINDOWS DESIGN STUDY</div><h1>Playback progress</h1><p>See what’s finished, what’s taking time, and what hasn’t started yet.</p></header>
+<div class="review">
+  <div class="group" role="group" aria-label="Layout"><button data-layout="flyout" aria-pressed="true">A · Flyout</button><button data-layout="docked" aria-pressed="false">B · Side panel</button></div>
+  <div class="group" role="group" aria-label="Sample playback state"><button data-scene="slow" aria-pressed="true">Slow start</button><button data-scene="playing" aria-pressed="false">Started</button><button data-scene="failed" aria-pressed="false">Failed</button></div>
+  <button class="plain" id="replay">Replay startup</button><span class="sim">Simulated playback</span>
+</div>
+<section class="window" aria-label="YourTube video view">
+  <div class="titlebar"><span class="logo" aria-hidden="true"><svg viewBox="0 0 24 24"><path fill="currentColor" d="m8 4 13 8-13 8z"/></svg></span>YourTube<span class="chrome" aria-hidden="true"><span>−</span><span>□</span><span>×</span></span></div>
+  <div class="player open" id="player">
+    <div class="stage">
+      <img id="still" src="../thumb-0.jpg" hidden alt="Illustrative video still">
+      <div class="stage-state" id="stage-state" aria-hidden="true"><span class="ring"></span><strong>Loading video…</strong></div>
+      <div class="transport" id="transport" aria-hidden="true" hidden><div class="seek"></div><div class="controls"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M8 5v14m8-14v14"/></svg><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 9h4l5-4v14l-5-4H3zm13-1q5 4 0 8"/></svg><span>0:00 / 18:24</span><svg class="right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 4H4v5m11-5h5v5M4 15v5h5m11-5v5h-5"/></svg></div></div>
+      <div class="top">
+        <button id="toggle" class="circle" title="Playback progress" aria-label="Playback progress" aria-expanded="true" aria-controls="progress"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+        <button id="close-video" class="circle" title="Close video" aria-label="Close video"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg></button>
+      </div>
+    </div>
+    <section id="progress" class="panel" aria-labelledby="progress-title" tabindex="-1">
+      <div class="panel-heading"><h2 id="progress-title">Playback progress</h2><span class="time" id="total">12.6 s elapsed</span></div>
+      <div class="summary" id="summary" role="status">3 of 5 steps complete</div>
+      <ol class="steps" id="steps">
+        <li class="done" data-state="done"><span class="dot" aria-hidden="true">✓</span><span>Find video streams <span class="sr">— complete</span></span><span class="duration">0.8 s</span></li>
+        <li class="done" data-state="done"><span class="dot" aria-hidden="true">✓</span><span>Prepare stream data <span class="sr">— complete</span></span><span class="duration">1.4 s</span></li>
+        <li class="done" data-state="done"><span class="dot" aria-hidden="true">✓</span><span>Set up the player <span class="sr">— complete</span></span><span class="duration">0.4 s</span></li>
+        <li class="active" data-state="active" aria-current="step"><span class="dot ring" aria-hidden="true"></span><span>Load initial audio &amp; video</span><span class="duration">10.0 s so far</span></li>
+        <li class="pending" data-state="pending"><span class="dot" aria-hidden="true"></span><span>Start playback</span><span class="duration">Waiting</span></li>
+      </ol>
+      <div class="panel-footer"><p id="note">Waiting for enough audio and video to begin playback.</p><button class="action" id="retry" hidden>Retry playback</button></div>
+    </section>
+  </div>
+  <div class="details" id="details"><h2>The quiet side of Japan</h2><p>Studio Nomad</p></div>
+  <div class="closed" id="closed" hidden><p>Video closed</p><button class="action" id="reopen">Reopen sample video</button></div>
+</section>
+<p class="caption" id="caption"><strong>A · Flyout</strong> — Opens under the hamburger without resizing the video.</p>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const names=['Find video streams','Prepare stream data','Set up the player','Load initial audio & video','Start playback'];
+const durations=[0.8,1.4,0.4,10.6,0.2];
+const elapsed=n=>n.toFixed(1)+' s';
+let layout='flyout', opened=true, video=true, scene='slow', timer;
+function panel(next, focus=false){
+  opened=next; $('progress').hidden=!next; $('player').classList.toggle('open',next); $('toggle').setAttribute('aria-expanded',next);
+  if(focus)(next?$('progress'):$('toggle')).focus({preventScroll:true});
+}
+function render(next){
+  const {index, kind, current, note}=next;
+  if($('retry')===document.activeElement && kind!=='failed')$('progress').focus();
+  const completed=index;
+  const total=durations.slice(0,index).reduce((a,b)=>a+b,0)+(current||0);
+  const heading=kind==='playing'?'Playback started':kind==='failed'?'Couldn’t start playback':`${completed} of 5 steps complete`;
+  if($('summary').textContent!==heading)$('summary').textContent=heading;
+  $('total').textContent=elapsed(total)+(kind==='playing'?' to start':' elapsed');
+  $('steps').replaceChildren(...names.map((label,i)=>{
+    const state=i<index?'done':i===index?(kind==='failed'?'failed':'active'):'pending';
+    const row=document.createElement('li');row.dataset.state=state;row.className=state;
+    if(state==='active')row.setAttribute('aria-current','step');
+    const dot=document.createElement('span');dot.className='dot'+(state==='active'?' ring':'');dot.setAttribute('aria-hidden','true');dot.textContent=state==='done'?'✓':state==='failed'?'!':'';
+    const title=document.createElement('span');title.textContent=label;
+    if(state==='done'){const sr=document.createElement('span');sr.className='sr';sr.textContent=' — complete';title.append(sr);}
+    const value=document.createElement('span');value.className='duration';value.textContent={done:elapsed(durations[i]),active:elapsed(current||0)+' so far',failed:'Failed',pending:'Waiting'}[state];
+    row.append(dot,title,value);return row;
+  }));
+  $('note').textContent=note;$('retry').hidden=kind!=='failed';
+  $('stage-state').hidden=kind==='playing';$('still').hidden=kind!=='playing';$('transport').hidden=kind!=='playing';
+  $('stage-state').innerHTML=kind==='failed'?'<span class="stage-error">!</span><strong>Couldn’t start playback</strong>':'<span class="ring"></span><strong>Loading video…</strong>';
+}
+const samples={
+  slow:{kind:'slow',index:3,current:10,note:'Waiting for enough audio and video to begin playback.'},
+  playing:{kind:'playing',index:5,note:'Playback started. These timings show how long startup took.'},
+  failed:{kind:'failed',index:3,current:10.2,note:'The player couldn’t load enough media to begin. You can retry.'}
+};
+const work=['Looking for available audio and video streams.','Preparing the information the player needs to read the streams.','Opening the playback source in the Windows player.','Waiting for enough audio and video to begin playback.','Waiting for the playback clock to advance.'];
+function highlight(next){scene=next;document.querySelectorAll('[data-scene]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.scene===scene));}
+function showVideo(){video=true;$('player').hidden=false;$('details').hidden=false;$('closed').hidden=true;}
+function snapshot(next){clearInterval(timer);highlight(next);showVideo();render(samples[next]);panel(true);}
+function replay(){
+  clearInterval(timer);highlight('');showVideo();
+  const start=performance.now();
+  const tick=()=>{
+    let t=(performance.now()-start)/1000*2.4, i=0;
+    while(i<durations.length && t>=durations[i])t-=durations[i++];
+    if(i===durations.length){clearInterval(timer);highlight('playing');render(samples.playing);return;}
+    render({kind:'replay',index:i,current:t,note:work[i]});
+  };
+  tick();timer=setInterval(tick,100);
+}
+for(const b of document.querySelectorAll('[data-layout]'))b.onclick=()=>{
+  layout=b.dataset.layout;$('study').className=layout;
+  document.querySelectorAll('[data-layout]').forEach(x=>x.setAttribute('aria-pressed',x===b));
+  $('caption').innerHTML=layout==='flyout'?'<strong>A · Flyout</strong> — Opens under the hamburger without resizing the video.':'<strong>B · Side panel</strong> — Keeps the checklist beside the video, without covering the picture.';
+};
+for(const b of document.querySelectorAll('[data-scene]'))b.onclick=()=>snapshot(b.dataset.scene);
+$('toggle').onclick=()=>panel(!opened,true);
+$('close-video').onclick=()=>{clearInterval(timer);video=false;panel(false);$('player').hidden=true;$('details').hidden=true;$('closed').hidden=false;$('reopen').focus();};
+$('reopen').onclick=()=>{snapshot('slow');panel(false,true);};
+$('replay').onclick=()=>{if(!video)panel(false);replay();};$('retry').onclick=()=>replay();
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&video&&opened&&$('player').contains(document.activeElement)){e.preventDefault();panel(false,true);}});
+const query=new URLSearchParams(location.search);
+if(query.get('layout')==='side')document.querySelector('[data-layout=docked]').click();
+if(Object.hasOwn(samples,query.get('state')))snapshot(query.get('state'));
+if(query.get('panel')==='closed')panel(false);
+</script>
+</body></html>

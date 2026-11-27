@@ -1,0 +1,77 @@
+import {chromium} from 'playwright';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+const html=fs.readFileSync(new URL('./index.html',import.meta.url),'utf8');
+for(const [,script] of html.matchAll(/<script>([\s\S]*?)<\/script>/g))new vm.Script(script);
+const url=process.env.STUDY_URL;
+assert.ok(url,'STUDY_URL is required');
+const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||'/opt/data/.local/bin/chromium',headless:true,args:['--no-sandbox']});
+const page=await browser.newPage({viewport:{width:1440,height:1080}});
+const errors=[];page.on('pageerror',e=>errors.push(e.message));
+await page.goto(url);await page.locator('.still').evaluate(i=>i.decode());
+assert.equal(await page.title(),'YourTube — Player design study');
+await page.screenshot({path:'/opt/data/cache/scratch/yourtube-player-classic.png',fullPage:true});
+for(const mode of ['classic','theater','focus']){
+ await page.locator('.tabs [data-mode='+mode+']').click();
+ assert.equal(await page.locator('.study').getAttribute('data-mode'),mode);
+ assert.equal(await page.locator('.tabs [aria-pressed=true]').count(),1);
+ assert.ok(await page.locator('.player').isVisible());
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+ await page.screenshot({path:'/opt/data/cache/scratch/yourtube-player-'+mode+'.png',fullPage:true});
+}
+await page.getByRole('button',{name:'Pause simulated playback',exact:true}).click();
+assert.equal(await page.locator('#play-state').innerText(),'Paused');
+await page.locator('body').click({position:{x:5,y:5}});await page.keyboard.press('Space');
+assert.equal(await page.locator('#play-state').innerText(),'Playing');
+await page.locator('.scrub').fill('500');assert.equal(await page.locator('#elapsed').innerText(),'8:20');
+await page.getByRole('button',{name:'Player settings',exact:true}).click();assert.ok(await page.locator('.settings-popup').isVisible());
+assert.ok(await page.getByRole('combobox',{name:'Playback speed'}).isVisible());
+await page.getByRole('button',{name:'Player settings',exact:true}).click();
+const quality=page.getByRole('button',{name:/^Video quality:/});
+const menu=page.getByRole('menu',{name:'Video quality'});
+assert.equal(await quality.count(),1,'Quality is directly accessible from the player controls');
+await quality.click();
+assert.equal(await menu.getByRole('menuitemradio',{checked:true}).innerText(),'Auto');
+await menu.getByRole('menuitemradio',{name:/1080p/}).click();
+assert.equal(await quality.getAttribute('aria-label'),'Video quality: 1080p');
+assert.equal(await page.locator('#elapsed').innerText(),'8:20');
+assert.ok(await quality.evaluate(b=>b===document.activeElement));
+await page.keyboard.press('Enter');
+await page.keyboard.press('Escape');
+assert.equal(await menu.count(),0);
+assert.ok(await quality.evaluate(b=>b===document.activeElement));
+await page.getByRole('button',{name:'Toggle captions',exact:true}).click();assert.equal(await page.locator('[data-action=captions]').getAttribute('aria-pressed'),'true');
+await page.getByRole('button',{name:'Mute',exact:true}).click();assert.equal(await page.locator('[data-action=volume]').getAttribute('aria-label'),'Unmute');
+await page.getByRole('button',{name:'Expand player preview',exact:true}).click();assert.ok(await page.locator('.full-preview').isVisible());
+await page.getByRole('button',{name:'Exit expanded preview',exact:true}).click();assert.equal(await page.locator('.full-preview').count(),0);
+await page.getByRole('button',{name:'Toggle mini-player preview',exact:true}).click();assert.equal(await page.locator('.mini-preview').count(),1);
+await page.getByRole('button',{name:'Reset study',exact:true}).click();assert.equal(await page.locator('.mini-preview').count(),0);
+await page.locator('[data-video="1"]').click();assert.equal(await page.locator('.video-title').innerText(),'A desk that makes room for ideas');
+await quality.click();
+assert.equal(await menu.getByRole('menuitemradio',{name:/2160p/}).count(),0);
+await page.keyboard.press('Escape');
+await page.getByRole('combobox',{name:'Appearance',exact:true}).selectOption('sage');assert.equal(await page.locator('.study').getAttribute('data-palette'),'sage');
+await page.getByRole('button',{name:'Reset study',exact:true}).click();assert.equal(await page.locator('.video-title').innerText(),'The quiet side of Japan');
+assert.equal(await page.locator('#elapsed').innerText(),'4:32');
+await page.locator('summary').click();assert.ok(await page.locator('details').getAttribute('open')!==null);
+for(const width of [390,720,1000]){
+ await page.setViewportSize({width,height:1000});
+ for(const mode of ['classic','theater','focus']){
+  await page.locator('.tabs [data-mode='+mode+']').click();
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'Overflow at '+width+' '+mode);
+  await quality.click();
+  const bounds=await page.locator('.player').boundingBox(), popup=await page.locator('#quality-popup').boundingBox();
+  assert.ok(popup.y>=bounds.y && popup.y+popup.height<=bounds.y+bounds.height && popup.x>=bounds.x && popup.x+popup.width<=bounds.x+bounds.width+1);
+  await page.keyboard.press('Escape');
+ }
+}
+assert.deepEqual(errors,[]);
+await page.setViewportSize({width:1440,height:1000});
+await page.goto(new URL('?quality=open',url).href);
+assert.ok(await menu.isVisible());
+await page.screenshot({path:'/opt/data/cache/scratch/yourtube-video-quality.png'});
+const staticPage=await browser.newPage({javaScriptEnabled:false,viewport:{width:1440,height:1000}});
+await staticPage.goto(url);assert.ok(await staticPage.getByText('The quiet side of Japan',{exact:true}).last().isVisible());assert.equal(await staticPage.locator('.queue-item').count(),5);
+await browser.close();
+console.log('PASS: 3 concepts, responsive layouts (390/720/1000/1440), playback controls, seek, settings, captions, mute, expanded/mini modes, queue selection, palette, reset, script-disabled content; no browser errors.');

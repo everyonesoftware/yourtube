@@ -20,6 +20,14 @@ test('one Windows job, main-only publication, docs-only refresh, and executable 
  assert.match(yaml,/node --test apps\/windows\/YourTube.Update.Tests\/panel-contracts.test.mjs/);
 });
 
+test('the README links to Latest and release maintenance never rewrites it',()=>{
+ const readme=readFileSync(new URL('../README.md',import.meta.url),'utf8');
+ const refresh=readFileSync(new URL('../scripts/current-downloads.mjs',import.meta.url),'utf8');
+ const downloads=readme.match(/^## Current downloads\r?\n\r?\n([\s\S]*?)(?=^## )/m)?.[1]?.trim();
+ assert.equal(downloads,'[Latest release](https://github.com/everyonesoftware/yourtube/releases/latest)');
+ assert.doesNotMatch(refresh,/contents\/README\.md/);
+});
+
 test('installer smoke gates release upload independently of live YouTube',()=>{
  const windows=yaml.slice(yaml.indexOf('\n  windows:\n'),yaml.indexOf('\n  release:\n'));
  assert.match(windows,/dotnet test apps\/windows\/YourTube.Playback.Tests\/YourTube.Playback.Tests.csproj/);

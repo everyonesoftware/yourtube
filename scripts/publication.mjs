@@ -67,3 +67,33 @@ export function* windowsPublications() {
 }
 
 export function discoverWindows() { return windowsPublications().next().value ?? null; }
+
+export function discoverAndroidDownload() {
+ const tagPattern=/^v(0\.1\.([1-9]\d{0,4}))-android$/;
+ const candidates=[...pages('releases')].filter(r=>r.draft===false && r.prerelease===false && tagPattern.test(r.tag_name));
+ candidates.sort((a,b)=>Number(tagPattern.exec(b.tag_name)[2])-Number(tagPattern.exec(a.tag_name)[2]));
+ if(!candidates.length) return null;
+ const {id,tag_name:tag}=candidates[0];
+ if(!Number.isSafeInteger(id) || id<1 || candidates[1]?.tag_name===tag) throw new Error('Invalid or duplicate Android publication');
+ const version=tagPattern.exec(tag)[1], name=`YourTube-${version}.apk`;
+ const assets=[...pages(`releases/${id}/assets`)];
+ const base=`https://github.com/${repository}/releases/download/${tag}`;
+ function requireAsset(filename,limit) {
+  const matches=assets.filter(a=>a.name===filename), [asset]=matches;
+  if(matches.length!==1 || asset.browser_download_url!==`${base}/${filename}` || asset.state!=='uploaded' || !Number.isSafeInteger(asset.size) || asset.size<1 || asset.size>limit || !/^sha256:[a-f0-9]{64}$/.test(asset.digest)) throw new Error(`Invalid published Android asset: ${filename}`);
+  return asset;
+ }
+ const apk=requireAsset(name,256*1024*1024), checksum=requireAsset(name+'.sha256',1024);
+ const dir=mkdtempSync(join(tmpdir(),'yourtube-android-release-'));
+ try {
+  function readAsset(asset) {
+   gh('release','download',tag,'--repo',repository,'--pattern',asset.name,'--dir',dir);
+   const bytes=readFileSync(join(dir,asset.name));
+   if(bytes.length!==asset.size || `sha256:${sha256(bytes)}`!==asset.digest) throw new Error(`Android asset readback mismatch: ${asset.name}`);
+   return bytes;
+  }
+  if(readAsset(checksum).toString('utf8').trim()!==`${apk.digest.slice(7)}  ${name}`) throw new Error('Published Android checksum content mismatch');
+  readAsset(apk);
+  return {version,apkUrl:apk.browser_download_url,checksumUrl:checksum.browser_download_url};
+ } finally { rmSync(dir,{recursive:true,force:true}); }
+}

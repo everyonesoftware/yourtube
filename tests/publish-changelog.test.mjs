@@ -20,7 +20,7 @@ const url=a[1]?.replace('repos/${repo}/','');
 if(a[0]==='api') {
  if(url==='releases?per_page=100&page=1') json(f.pageOne);
  else if(url==='releases?per_page=100&page=2') json(f.prior);
- else if(/^releases\\/\\d+\\/assets\\?per_page=100&page=1$/.test(url)) json(f.prior.find(r=>r.id===Number(url.split('/')[1])).assets);
+ else if(/^releases\\/\\d+\\/assets\\?per_page=100&page=1$/.test(url)) json([...f.prior,...f.pageOne].find(r=>r.id===Number(url.split('/')[1])).assets);
  else if(url?.startsWith('git/ref/tags/')) {
   const tag=url.split('/').at(-1);
   if(tag===f.manifest.tag && !fs.existsSync(f.tag)) missing('HTTP 404');
@@ -44,7 +44,7 @@ else if(a[0]==='release' && a[1]==='create') {
 } else if(a[0]!=='release' || a[1]!=='edit') missing('Unexpected gh '+JSON.stringify(a));
 `;
 
-function setup(t,{large=false,tamper=false,invalidOlder=false,first=false,existing=false}={}) {
+function setup(t,{large=false,tamper=false,invalidOlder=false,first=false,existing=false,android=false,badAndroidChecksum=false}={}) {
  const root=mkdtempSync(join(tmpdir(),'yourtube-publish-fixture-'));
  t.after(()=>rmSync(root,{recursive:true,force:true}));
  const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',stdio:['pipe','pipe','pipe']}).trim();
@@ -85,7 +85,17 @@ function setup(t,{large=false,tamper=false,invalidOlder=false,first=false,existi
  mkdirSync(upload);
  writeFileSync(join(root,'gh'),fixtureGh,{mode:0o755});
  const log=join(root,'calls'), fixture=join(root,'fixture.json');
- writeFileSync(fixture,JSON.stringify({manifest,prior:first?[]:prior,sources,history,upload,log,tamper,existing,tag:join(root,'tag'),pageOne:Array.from({length:100},(_,i)=>({tag_name:`ignored-${i}`,draft:true,assets:[]}))}));
+ const pageOne=Array.from({length:100},(_,i)=>({tag_name:`ignored-${i}`,draft:true,assets:[]}));
+ if(android) {
+  const tag='v0.1.19-android', name='YourTube-0.1.19.apk', folder=join(history,tag);
+  mkdirSync(folder,{recursive:true});
+  const apk=Buffer.from('fixture APK');
+  const checksum=Buffer.from(`${badAndroidChecksum?'0'.repeat(64):sha256(apk)}  ${name}\n`);
+  writeFileSync(join(folder,name),apk);
+  writeFileSync(join(folder,name+'.sha256'),checksum);
+  pageOne[0]={id:99,tag_name:tag,draft:false,prerelease:false,assets:[[name,apk],[name+'.sha256',checksum]].map(([name,bytes])=>({name,size:bytes.length,digest:`sha256:${sha256(bytes)}`,state:'uploaded',browser_download_url:`https://github.com/${repo}/releases/download/${tag}/${name}`}))};
+ }
+ writeFileSync(fixture,JSON.stringify({manifest,prior:first?[]:prior,sources,history,upload,log,tamper,existing,tag:join(root,'tag'),pageOne}));
  const run=()=>spawnSync(process.execPath,[publisher,'artifacts/release'],{cwd:root,encoding:'utf8',env:{...process.env,GITHUB_SHA:head,PATH:root+delimiter+process.env.PATH,FIXTURE:fixture}});
  const calls=()=>readFileSync(log,'utf8').trim().split('\n').map(line=>JSON.parse(line));
  return {manifest,dir,upload,run,calls};
@@ -116,6 +126,30 @@ test('publisher uploads cumulative verified history in only the staged manifest'
  assert.ok(older>=0 && older<log.findIndex(a=>a[1]==='create'));
  assert.ok(log.some(a=>a[1].endsWith('/git/tags/'+'f'.repeat(40))));
  assert.ok(log.some(a=>a[1]==='edit'));
+});
+
+test('a Windows release promoted after Android retains verified Android download links',posix,t=>{
+ const {run,calls}=setup(t,{android:true});
+ const result=run();
+ assert.equal(result.status,0,result.stderr);
+ const log=calls(), draft=log.find(a=>a[1]==='create');
+ const notes=draft[draft.indexOf('--notes')+1];
+ const url=`https://github.com/${repo}/releases/download/v0.1.19-android/YourTube-0.1.19.apk`;
+ assert.ok(notes.includes(`[APK](${url})`));
+ assert.ok(notes.includes(`[SHA-256](${url}.sha256)`));
+ for(const name of ['YourTube-0.1.19.apk','YourTube-0.1.19.apk.sha256']) {
+  const verified=log.findIndex(a=>a[1]==='download'&&a[2]==='v0.1.19-android'&&a.includes(name));
+  assert.ok(verified>=0 && verified<log.indexOf(draft));
+ }
+ assert.ok(log.findIndex(a=>a[1]==='edit'&&a.includes('--latest')) > log.indexOf(draft));
+});
+
+test('a mismatched Android checksum prevents Windows promotion before any writes',posix,t=>{
+ const {run,calls}=setup(t,{android:true,badAndroidChecksum:true});
+ const result=run();
+ assert.notEqual(result.status,0);
+ assert.match(result.stderr,/Android checksum/);
+ assert.ok(calls().every(a=>!['POST','create','edit'].some(verb=>a.includes(verb))));
 });
 
 test('history overflow and incomplete older provenance stop before any remote writes',posix,t=>{
