@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YourTube · Android sign-in study</title>
+<style>
+:root{color-scheme:dark;--bg:#101411;--panel:#191f1a;--line:#353f35;--text:#edf3ea;--muted:#b4c1b5;--sage:#c0e3b2;--ink:#20351c;--dim:#243025}*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 35% -20%,#27372a,transparent 56%),var(--bg);color:var(--text);font:15px/1.5 system-ui,sans-serif}main{max-width:1210px;margin:auto;padding:42px 28px 30px}h1,h2,p,figure{margin:0}h1{font-size:clamp(32px,5vw,55px);line-height:1.06;letter-spacing:-.055em;margin:9px 0 12px}h2{font-size:25px;line-height:1.1;letter-spacing:-.035em;margin-bottom:10px}p{color:var(--muted)}.tag,.step{font-size:11px;font-weight:750;letter-spacing:.15em;text-transform:uppercase;color:var(--sage)}.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:24px 0 9px}.bar strong{margin-right:7px}.choices{display:flex;flex-wrap:wrap;gap:8px}.choices button{min-height:44px}.choices [aria-pressed=true]{background:var(--sage);border-color:var(--sage);color:var(--ink)}.hint{font-size:13px;min-height:20px}.board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-top:24px}.step{display:block;margin:0 0 8px 3px}.screen{min-height:490px;border:1px solid #485549;border-radius:26px;background:#151916;box-shadow:0 14px 35px #0004;display:flex;flex-direction:column;padding:12px 16px 18px;min-width:0}.sys{display:flex;justify-content:space-between;font-size:11px;font-weight:700;color:#d1dbd0;padding:1px 5px 12px}.app,.browserbar{display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line);min-height:44px;padding:0 2px 10px;font-weight:700}.brand{background:var(--sage);color:var(--ink);border-radius:7px;width:27px;height:21px;display:grid;place-items:center;font-size:11px}.browserbar{font-size:13px;color:#c8d1d5}.browser{background:#171c20;border-color:#46535a}.browser .sys,.browser p{color:#c4cdd3}.content{padding-top:22px;display:flex;flex-direction:column;flex:1;gap:12px}.content>div>p{font-size:14px}.eyebrow{margin-bottom:7px;font-size:11px!important;font-weight:750;letter-spacing:.09em;text-transform:uppercase;color:var(--sage)}.code{border-radius:14px;background:var(--dim);border:1px solid #425844;padding:12px 10px;text-align:center}.code small{display:block;color:#c1d1c0}.code strong{display:block;font:750 27px/1.4 ui-monospace,monospace;letter-spacing:.12em;color:var(--sage)}button{border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--text);font:inherit;font-size:14px;font-weight:700;padding:8px 13px;min-height:44px;cursor:pointer;text-align:center}button:hover:not(:disabled){filter:brightness(1.17)}button:focus-visible{outline:2px solid #e8ffdb;outline-offset:3px}button:disabled{opacity:.42;cursor:default}.primary{background:var(--sage);border-color:var(--sage);color:var(--ink)}.actions{display:grid;gap:7px;margin-top:auto}.ghost{background:transparent}.browser .primary{background:#c4def6;color:#152b40;border-color:#c4def6}.pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:7px}.identity{display:flex;text-align:left;align-items:center;gap:10px}.avatar{width:29px;height:29px;flex:0 0 29px;border-radius:50%;background:#394e3b;display:grid;place-items:center;font-size:13px}.identity small{display:block;font-weight:400;color:var(--muted)}.notice{border-left:2px solid #a7c6a1;padding-left:10px;font-size:13px}.status{color:#dbeeda!important}.foot{border-top:1px solid var(--line);margin-top:22px;padding-top:14px;display:flex;align-items:center;flex-wrap:wrap;gap:8px}.foot strong{margin-right:5px}.footnote{font-size:12px;margin-top:9px}.homebar{width:78px;height:3px;border-radius:5px;background:#7c8a7e;margin:16px auto 0}.faded{opacity:.7}@media(max-width:760px){main{padding:26px 16px}.board{grid-template-columns:minmax(0,400px);justify-content:center}.screen{min-height:440px}.hint{min-height:0}}
+</style>
+</head>
+<body><main>
+<header><p class="tag">YourTube / Android phone / Design study</p><h1>Sign in on Android</h1><p>Start in YourTube, approve in your browser, then choose which YouTube identity to use.</p></header>
+<div class="bar"><strong>Compare entry points</strong><div class="choices" aria-label="Entry point"><button id="a" aria-pressed="true">A · Welcome</button><button id="b" aria-pressed="false">B · Account menu</button></div></div>
+<p class="hint" id="hint">Recommended for the first build: a visible sign-in action, with local playback still available.</p>
+<div class="board">
+<figure><figcaption class="step">01 / YourTube · Start</figcaption><section class="screen" aria-label="Start in YourTube"><div class="sys" aria-hidden="true"><span>9:41</span><span>▮▮▮ ▰</span></div><div class="app"><span class="brand" aria-hidden="true">▶</span>YourTube</div><div class="content" id="start"></div><div class="homebar" aria-hidden="true"></div></section></figure>
+<figure><figcaption class="step">02 / Browser · Approve</figcaption><section class="screen browser" aria-label="External browser simulation"><div class="sys" aria-hidden="true"><span>9:41</span><span>▮▮▮ ▰</span></div><div class="browserbar">↗ &nbsp; External browser · simulation</div><div class="content" id="browser"></div><div class="homebar" aria-hidden="true"></div></section></figure>
+<figure><figcaption class="step">03 / YourTube · Choose identity</figcaption><section class="screen" aria-label="Return to YourTube"><div class="sys" aria-hidden="true"><span>9:41</span><span>▮▮▮ ▰</span></div><div class="app"><span class="brand" aria-hidden="true">▶</span>YourTube</div><div class="content" id="return"></div><div class="homebar" aria-hidden="true"></div></section></figure>
+</div>
+<div class="foot" aria-label="Prototype controls"><strong>Try a recovery state</strong><button id="expire">Expire code</button><button id="reset">Reset demo</button></div><p class="footnote">Prototype only · No real codes, credentials, Google requests or account data. The browser panel represents the handoff, not Google’s actual screen.</p>
+<div id="announcement" role="status" style="position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)"></div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+let option='a', phase='entry', person='', attempt=0;
+const code=()=>attempt%2?'DEMO‑02':'DEMO‑01';
+const intro=(label,title,body)=>`<div><p class="eyebrow">${label}</p><h2>${title}</h2><p>${body}</p></div>`;
+const button=(key,label,style='')=>`<button type="button" data-do="${key}" class="${style}">${label}</button>`;
+const actions=(...parts)=>`<div class="actions">${parts.join('')}</div>`;
+const badge=()=>`<div class="code"><small>Sample code</small><strong>${code()}</strong></div>`;
+function render(){
+ $('a').setAttribute('aria-pressed',option==='a');$('b').setAttribute('aria-pressed',option==='b');
+ $('hint').textContent=option==='a'?'Recommended for the first build: a visible sign-in action, with local playback still available.':'Keep the local player as the front door and tuck sign-in under Account.';
+ const active=['code','browser','approved'].includes(phase);
+ $('expire').disabled=!['code','browser'].includes(phase);
+ $('start').innerHTML=active?intro('Step 1 of 2','Connect YouTube',phase==='code'?'Open your browser, enter this code there, and review the permissions.':'YourTube is waiting for you to finish in your browser.')+badge()+actions(phase==='code'?button('browser','Open browser','primary'):'<p class="status">Waiting for approval…</p>',button('cancel','Cancel','ghost'))
+ : phase==='expired'?intro('Try again','Code expired','This code can no longer be used. Get a new one to continue.')+actions(button('retry','Get a new code','primary'),button('cancel','Cancel','ghost'))
+ : phase==='denied'?intro('Not connected','Approval declined','No account was connected. You can try again or go back.')+actions(button('retry','Try again','primary'),button('cancel','Back','ghost'))
+ : ['choose','done'].includes(phase)?intro('Step 1 complete','Browser approved','Return to YourTube to finish choosing your identity.')
+ : phase==='menu'?intro('Account','Not signed in','Connect your YouTube account to view your watch history.')+actions(button('signin','Sign in to YouTube','primary'),button('cancel','Back','ghost'))
+ : option==='a'?intro('Welcome','Connect your YouTube account','Sign in to see your YouTube watch history here. You’ll approve access in your browser.')+actions(button('signin','Sign in to YouTube','primary'),button('local','Continue without signing in','ghost'))
+ : intro('On this device','Local playback','Open a video from your device, or use Account to connect to YouTube.')+actions(button('local','Open local video','ghost'),button('menu','Account','primary'));
+ $('browser').innerHTML=phase==='browser'?intro('Simulated approval','Review access','In the real browser, enter the code and decide whether to allow access. YourTube never asks for your Google password.')+badge()+actions(`<div class="pair">${button('deny','Decline')}${button('approve','Approve','primary')}</div>`)
+ : ['approved','choose','done'].includes(phase)?intro('Simulated approval','Access approved','Switch back to YourTube to choose an identity.')+(phase==='approved'?actions(button('return','Return to YourTube','primary')):'')
+ : phase==='expired'?intro('Request expired','Use a new code','Return to YourTube to start again.')
+ : phase==='denied'?intro('Request declined','Access not approved','Return to YourTube to retry or cancel.')
+ : intro('Browser handoff','Approve outside the app','This step opens only when you tap Open browser in YourTube.');
+ $('return').innerHTML=phase==='choose'?intro('Step 2 of 2','Choose an identity','Select the YouTube identity whose History you want to see.')+actions(button('alex','<span class="avatar" aria-hidden="true">A</span><span>Alex Morgan<small>Personal account</small></span>','identity'),button('studio','<span class="avatar" aria-hidden="true">S</span><span>Studio North<small>YouTube channel</small></span>','identity'),button('cancel','Cancel','ghost'))
+ : phase==='done'?intro('Signed in · Demo','History',`Using ${person}. This prototype doesn’t load real watch history.`)+actions(button('signout','Sign out','ghost'))
+ : intro('Back in the app','Choose who’s watching','Your YouTube identities will appear here after browser approval.');
+}
+function move(next,focus,msg){phase=next;render();if(msg)$('announcement').textContent=msg;document.querySelector(`[data-do="${focus}"]`)?.focus();}
+for(const key of ['a','b'])$(key).onclick=()=>{option=key; phase='entry'; render();};
+$('expire').onclick=()=>move('expired','retry','The sample code expired.');
+$('reset').onclick=()=>{attempt=0;person='';move('entry',option==='a'?'signin':'menu','Demo reset.');};
+document.querySelector('.board').addEventListener('click',e=>{
+ const action=e.target.closest('[data-do]')?.dataset.do;
+ switch(action){
+ case 'menu':move('menu','signin');break;
+ case 'signin':case 'retry':attempt++;move('code','browser');break;
+ case 'browser':move('browser','approve');break;
+ case 'deny':move('denied','retry','Approval declined. No account connected.');break;
+ case 'approve':move('approved','return');break;
+ case 'return':move('choose','alex');break;
+ case 'alex':case 'studio':person=action==='alex'?'Alex Morgan':'Studio North';move('done','signout','Signed in as '+person+' in the demo.');break;
+ case 'cancel':case 'signout':person='';move('entry',option==='a'?'signin':'menu',action==='signout'?'Signed out of the demo.':'Sign-in canceled.');break;
+ case 'local':$('announcement').textContent='Local playback is outside this demo.';document.querySelector('#start .content-note')?.remove();document.querySelector('#start .actions').insertAdjacentHTML('beforebegin','<p class="notice content-note">The local player stays available in the app. It isn’t simulated here.</p>');break;
+ }
+});
+render();
+</script></body></html>
