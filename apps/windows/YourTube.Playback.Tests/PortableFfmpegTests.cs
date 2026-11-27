@@ -12,7 +12,9 @@ namespace YourTube.Playback.Tests;
 
 public sealed class PortableFfmpegTests : IDisposable
 {
-    private readonly string folder = Path.Combine(Path.GetTempPath(), "yourtube-ffmpeg-" + Guid.NewGuid().ToString("N"));
+    private readonly string folder = Path.Combine(OperatingSystem.IsWindows()
+        ? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) : Path.GetTempPath(),
+        "yourtube-ffmpeg-" + Guid.NewGuid().ToString("N"));
     private readonly Feed feed = new();
 
     [Fact]
@@ -173,6 +175,7 @@ public sealed class PortableFfmpegTests : IDisposable
         public bool CorruptDownload, Redirect, DuplicateEntry;
         public byte[]? Executable;
         public readonly List<string> Requests = [];
+        private readonly Dictionary<(string Version, bool DuplicateEntry), byte[]> archives = [];
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -188,14 +191,21 @@ public sealed class PortableFfmpegTests : IDisposable
             byte[] bytes = path switch
             {
                 "/ffmpeg/builds/release-version" => Encoding.ASCII.GetBytes(Version + "\r\n"),
-                var p when p == archive + ".sha256" => Encoding.ASCII.GetBytes(Convert.ToHexString(SHA256.HashData(Zip()))),
-                var p when p == archive => CorruptDownload ? [1, 2, 3] : Zip(),
+                var p when p == archive + ".sha256" => Encoding.ASCII.GetBytes(Convert.ToHexString(SHA256.HashData(Archive()))),
+                var p when p == archive => CorruptDownload ? [1, 2, 3] : Archive(),
                 _ => throw new InvalidOperationException("Unexpected request")
             };
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) });
         }
 
-        private byte[] Zip()
+        private byte[] Archive()
+        {
+            var key = (Version, DuplicateEntry);
+            if (!archives.TryGetValue(key, out var archive)) archives.Add(key, archive = BuildZip());
+            return archive;
+        }
+
+        private byte[] BuildZip()
         {
             using var stream = new MemoryStream();
             using (var zip = new ZipArchive(stream, ZipArchiveMode.Create, true))

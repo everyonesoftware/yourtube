@@ -26,19 +26,22 @@ public sealed class DownloadJournalTests : IDisposable
     public async Task JournalReadWaitsForLocalWriterGateInsteadOfOpeningTheRecord()
     {
         Guid id = Begin();
-        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var contention = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
         Task<DownloadSnapshot> read;
         using (new FileStream(Path.Combine(Store, ".lock"), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
         {
-            read = Task.Run(() =>
+            var reader = new DownloadJournal(Store, files, waitForLock: () =>
             {
-                started.SetResult();
-                return Open().Read();
+                contention.TrySetResult();
+                if (!release.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Journal fixture did not release the writer.");
             });
-            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            var deadline = Task.Delay(100);
-            Assert.Same(deadline, await Task.WhenAny(read, deadline));
+            read = Task.Run(reader.Read);
+            var entered = await Task.WhenAny(contention.Task, read).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Same(contention.Task, entered);
+            Assert.False(read.IsCompleted);
         }
+        release.Set();
         Assert.Equal(id, Assert.Single((await read.WaitAsync(TimeSpan.FromSeconds(5))).Cleanup).Id);
     }
 

@@ -63,15 +63,17 @@ public sealed class DownloadJournal
 
     private readonly string directory;
     private readonly IExportJournalFiles files;
+    private readonly Action waitForLock;
     private readonly ConcurrentDictionary<Guid, Entry> acknowledgedPublications = new();
 
     public DownloadJournal(string directory) : this(directory, WindowsExportJournalFiles.Instance) { }
 
-    internal DownloadJournal(string directory, IExportJournalFiles files)
+    internal DownloadJournal(string directory, IExportJournalFiles files, Action? waitForLock = null)
     {
         if (!Path.IsPathFullyQualified(directory)) throw new ArgumentException("Use a full local journal path.", nameof(directory));
         this.directory = Path.GetFullPath(directory);
         this.files = files;
+        this.waitForLock = waitForLock ?? (() => Thread.Sleep(20));
     }
 
     /// <summary>Project the local journal without inspecting any recorded media paths.</summary>
@@ -254,7 +256,7 @@ public sealed class DownloadJournal
         for (int attempt = 0; ; attempt++)
         {
             try { return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
-            catch (IOException) when (attempt < 10) { Thread.Sleep(20); }
+            catch (IOException) when (attempt < 10) { waitForLock(); }
         }
     }
 
