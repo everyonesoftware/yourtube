@@ -2,8 +2,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Input;
-using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.Windows.Storage.Pickers;
 using YourTube.Playback;
 
@@ -11,9 +10,13 @@ namespace YourTube.App;
 
 internal sealed partial class MainWindow
 {
-    private Flyout PlayerDownloadFlyout => (Flyout)C<Button>("PlayerDownloadButton").Flyout;
+    private Button PlayerDownloadButton => C<Button>("PlayerDownloadButton");
+    private Button PlayerDownloadOptionsButton => C<Button>("PlayerDownloadOptionsButton");
+    private Flyout PlayerDownloadFlyout => (Flyout)FlyoutBase.GetAttachedFlyout(PlayerDownloadOptionsButton);
     private PlaybackMedia? downloadCatalog;
     private IReadOnlyList<MediaExportOption> downloadOptions = [];
+    private MediaExportFormat preferredDownloadFormat = MediaExportFormat.Mp4;
+    private int? preferredDownloadHeight;
     private CancellationTokenSource? downloadRequest;
     private Task? downloadTransfer;
     private bool playerDownloadOpen;
@@ -27,6 +30,21 @@ internal sealed partial class MainWindow
 
     private void WirePlaybackDownload()
     {
+        PlayerDownloadButton.Click += async (_, _) =>
+        {
+            if (playerDownloadOpen || downloadCatalog is not { } catalog || !OwnsDownloadCatalog(catalog)) return;
+            var option = PreferredDownloadOption(playbackResolver.GetExportOptions(catalog));
+            if (option is not null) await DownloadCurrentVideoAsync(catalog, option, DownloadFormatLabel(option.Format));
+        };
+        PlayerDownloadOptionsButton.Click += (_, _) =>
+        {
+            if (playerDownloadOpen || downloadRequest is not null || InteractivePlayer is null ||
+                downloadCatalog is not { } catalog || !OwnsDownloadCatalog(catalog)) return;
+            PlayerDownloadFlyout.ShowAt(PlayerDownloadOptionsButton, new FlyoutShowOptions
+            {
+                Placement = FlyoutPlacementMode.TopEdgeAlignedRight
+            });
+        };
         PlayerDownloadFlyout.Opening += (_, _) => PopulateDownloadFormats();
         PlayerDownloadFlyout.Opened += (_, _) => { playerDownloadOpen = true; UpdatePlayerControlsVisibility(); };
         PlayerDownloadFlyout.Closed += (_, _) =>
@@ -73,94 +91,111 @@ internal sealed partial class MainWindow
         if (!closed) SetDownloadStatus("");
     }
 
-    private void UpdateDownloadButton() => C<Button>("PlayerDownloadButton").IsEnabled =
-        downloadOptions.Count > 0 && downloadCatalog?.ExpiresAt > DateTimeOffset.UtcNow &&
-        downloadRequest is null && InteractivePlayer is not null;
-
-    private void PopulateDownloadFormats()
+    private void UpdateDownloadButton()
     {
-        var anchor = C<Button>("PlayerDownloadButton");
-        double width = Math.Clamp((anchor.XamlRoot?.Size.Width ?? 320) - 36, 120, 270);
-        double above = anchor.TransformToVisual(root).TransformPoint(new Windows.Foundation.Point(0, 0)).Y;
-        var muted = (Brush)root.Resources["Muted"];
-        var accent = (Brush)root.Resources["DownloadFormatsAccent"];
-        var sections = new StackPanel { Spacing = 5, Margin = new Thickness(0, 0, 4, 0) };
-        var title = new TextBlock { Text = "Download formats", FontSize = 15,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Margin = new Thickness(8, 2, 8, 6) };
-        AutomationProperties.SetHeadingLevel(title, AutomationHeadingLevel.Level1);
-
-        var card = new StackPanel { Width = width, XYFocusKeyboardNavigation = XYFocusKeyboardNavigationMode.Enabled };
-        card.Children.Add(title);
-        card.Children.Add(new ScrollViewer
+        var option = PreferredDownloadOption(downloadOptions);
+        var button = PlayerDownloadButton;
+        button.IsEnabled = option is not null && downloadCatalog?.ExpiresAt > DateTimeOffset.UtcNow &&
+            downloadRequest is null && InteractivePlayer is not null;
+        PlayerDownloadOptionsButton.IsEnabled = button.IsEnabled;
+        var label = option is null ? "Download video" : $"Download {DownloadOptionLabel(option)}";
+        if (AutomationProperties.GetName(button) != label)
         {
-            MaxHeight = Math.Clamp(above - 58, 84, 326), Content = sections, IsTabStop = false,
-            HorizontalScrollMode = ScrollMode.Disabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            VerticalScrollMode = ScrollMode.Enabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto
-        });
-        PlayerDownloadFlyout.Content = card;
-
-        if (downloadCatalog is { } catalog && OwnsDownloadCatalog(catalog) && InteractivePlayer is not null && downloadRequest is null)
-        {
-            var options = playbackResolver.GetExportOptions(catalog);
-            var video = options.Where(option => option.Height is not null).OrderByDescending(option => option.Height).ThenBy(option => option.Format).ToArray();
-            var audio = options.Where(option => option.Height is null).OrderBy(option => option.Format).ToArray();
-            AddGroup(catalog, "Video + audio", "\uE714", video, width >= 254 && video.Length > 4 ? 2 : 1);
-            AddGroup(catalog, "Audio only", "\uE8D6", audio, 1);
-        }
-        if (sections.Children.Count == 0)
-            sections.Children.Add(new TextBlock { Text = "Download formats are no longer available.", TextWrapping = TextWrapping.Wrap,
-                Foreground = muted, Margin = new Thickness(8, 2, 8, 6), IsTabStop = true });
-
-        void AddGroup(PlaybackMedia catalog, string heading, string glyph, MediaExportOption[] rows, int columns)
-        {
-            if (rows.Length == 0) return;
-            if (sections.Children.Count > 0)
-                sections.Children.Add(new Border { Height = 1, Background = (Brush)root.Resources["DownloadFormatsDivider"], Margin = new Thickness(3, 1, 3, 1) });
-            var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(8, 2, 8, 0) };
-            var icon = new FontIcon { Glyph = glyph, FontSize = 13, Foreground = accent };
-            AutomationProperties.SetAccessibilityView(icon, AccessibilityView.Raw);
-            header.Children.Add(icon);
-            var label = new TextBlock { Text = heading, Foreground = muted, FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
-            AutomationProperties.SetHeadingLevel(label, AutomationHeadingLevel.Level2);
-            header.Children.Add(label);
-            sections.Children.Add(header);
-
-            var choices = new Grid { ColumnSpacing = 4, RowSpacing = 1 };
-            for (int i = 0; i < columns; ++i) choices.ColumnDefinitions.Add(new ColumnDefinition());
-            for (int index = 0; index < rows.Length; ++index)
-            {
-                if (index % columns == 0) choices.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                var option = rows[index];
-                var format = DownloadFormatLabel(option.Format);
-                var caption = option.Height is int height ? $"{height}p" : option.Format == MediaExportFormat.M4a ? "Original audio" : "Audio only";
-                var content = new Grid { ColumnSpacing = 5 };
-                content.ColumnDefinitions.Add(new ColumnDefinition());
-                content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                content.Children.Add(new TextBlock { Text = format, FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                    VerticalAlignment = VerticalAlignment.Center });
-                var detail = new TextBlock { Text = caption, Foreground = muted, FontSize = 11, VerticalAlignment = VerticalAlignment.Center,
-                    TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = Math.Min(150, width / 2) };
-                Grid.SetColumn(detail, 1);
-                content.Children.Add(detail);
-                var button = new Button { Style = (Style)root.Resources["DownloadFormatChoice"], Content = content };
-                AutomationProperties.SetName(button, $"{format}, {caption}");
-                button.Click += async (_, _) => await DownloadCurrentVideoAsync(catalog, option, format);
-                Grid.SetRow(button, index / columns);
-                Grid.SetColumn(button, index % columns);
-                choices.Children.Add(button);
-            }
-            sections.Children.Add(choices);
+            AutomationProperties.SetName(button, label);
+            ToolTipService.SetToolTip(button, $"{label} · Use the arrow for format options");
         }
     }
 
-    private async Task DownloadCurrentVideoAsync(PlaybackMedia catalog, MediaExportOption option, string formatLabel)
+    private MediaExportOption? PreferredDownloadOption(IReadOnlyList<MediaExportOption> options) =>
+        options.FirstOrDefault(option => option.Format == preferredDownloadFormat && option.Height == preferredDownloadHeight) ??
+        options.Where(option => option.Format == preferredDownloadFormat).MaxBy(option => option.Height) ??
+        options.OrderBy(option => option.Format).ThenByDescending(option => option.Height).FirstOrDefault();
+
+    private static string DownloadOptionLabel(MediaExportOption option) => option.Height is int height
+        ? $"{DownloadFormatLabel(option.Format)} · {height}p" : $"{DownloadFormatLabel(option.Format)} audio";
+
+    private void PopulateDownloadFormats()
+    {
+        var anchor = PlayerDownloadButton;
+        double width = Math.Clamp((anchor.XamlRoot?.Size.Width ?? 320) - 36, 120, 244);
+        var card = new StackPanel { Width = width, Spacing = 8, Margin = new Thickness(4) };
+        var title = new TextBlock { Text = "Download options", FontSize = 15, TextWrapping = TextWrapping.Wrap,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+        AutomationProperties.SetHeadingLevel(title, AutomationHeadingLevel.Level1);
+        card.Children.Add(title);
+        var panel = new ScrollViewer
+        {
+            MaxHeight = Math.Clamp((anchor.XamlRoot?.Size.Height ?? 320) - 64, 96, 300), Content = card, IsTabStop = false,
+            HorizontalScrollMode = ScrollMode.Disabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollMode = ScrollMode.Enabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+        };
+        PlayerDownloadFlyout.Content = panel;
+
+        if (downloadCatalog is not { } catalog || !OwnsDownloadCatalog(catalog) || InteractivePlayer is null || downloadRequest is not null)
+        {
+            card.Children.Add(new TextBlock { Text = "Download options are no longer available.", TextWrapping = TextWrapping.Wrap, IsTabStop = true });
+            return;
+        }
+
+        var options = playbackResolver.GetExportOptions(catalog);
+        if (PreferredDownloadOption(options) is not { } initial)
+        {
+            card.Children.Add(new TextBlock { Text = "Download options are no longer available.", TextWrapping = TextWrapping.Wrap, IsTabStop = true });
+            return;
+        }
+        var formats = options.Select(option => option.Format).Distinct().Order().ToArray();
+        var format = new ComboBox { Header = "Format", HorizontalAlignment = HorizontalAlignment.Stretch };
+        var resolution = new ComboBox { Header = "Resolution", HorizontalAlignment = HorizontalAlignment.Stretch };
+        var save = new Button { Content = "Save as…", Style = (Style)root.Resources["DownloadPrimaryAction"], HorizontalAlignment = HorizontalAlignment.Stretch };
+        card.Children.Add(format);
+        card.Children.Add(resolution);
+        card.Children.Add(save);
+
+        foreach (var value in formats)
+            format.Items.Add(new ComboBoxItem { Content = $"{DownloadFormatLabel(value)} · {(value is MediaExportFormat.Mp4 or MediaExportFormat.WebM ? "Video" : "Audio")}", Tag = value });
+        format.SelectionChanged += (_, _) =>
+        {
+            var height = ((resolution.SelectedItem as ComboBoxItem)?.Tag as MediaExportOption)?.Height ?? initial.Height;
+            resolution.Items.Clear();
+            if ((format.SelectedItem as ComboBoxItem)?.Tag is not MediaExportFormat selected)
+            {
+                resolution.Visibility = Visibility.Collapsed;
+                save.IsEnabled = false;
+                return;
+            }
+            foreach (var option in options.Where(option => option.Format == selected && option.Height is not null).OrderByDescending(option => option.Height))
+                resolution.Items.Add(new ComboBoxItem { Content = $"{option.Height}p", Tag = option });
+            resolution.Visibility = ToVisibility(resolution.Items.Count > 0);
+            if (resolution.Items.Count > 0)
+                resolution.SelectedItem = resolution.Items.Cast<ComboBoxItem>()
+                    .FirstOrDefault(item => ((MediaExportOption)item.Tag).Height == height) ?? resolution.Items[0];
+            save.IsEnabled = true;
+        };
+        format.SelectedIndex = Array.IndexOf(formats, initial.Format);
+        save.Click += async (_, _) =>
+        {
+            if (!playerDownloadOpen || !ReferenceEquals(PlayerDownloadFlyout.Content, panel) || !OwnsDownloadCatalog(catalog) ||
+                (format.SelectedItem as ComboBoxItem)?.Tag is not MediaExportFormat selected) return;
+            var option = (resolution.SelectedItem as ComboBoxItem)?.Tag as MediaExportOption ??
+                options.FirstOrDefault(option => option.Format == selected && option.Height is null);
+            if (option is null || option.Format != selected) return;
+            await DownloadCurrentVideoAsync(catalog, option, DownloadFormatLabel(option.Format), rememberChoice: true);
+        };
+    }
+
+    private async Task DownloadCurrentVideoAsync(PlaybackMedia catalog, MediaExportOption option, string formatLabel, bool rememberChoice = false)
     {
         if (downloadRequest is not null || InteractivePlayer is null || !OwnsDownloadCatalog(catalog) ||
             !playbackResolver.GetExportOptions(catalog).Contains(option)) return;
         using var request = downloadRequest = new CancellationTokenSource();
         var token = request.Token;
         var step = "Couldn’t open the Save As dialog. Try again.";
-        var launchButton = C<Button>("PlayerDownloadButton");
+        if (rememberChoice)
+        {
+            preferredDownloadFormat = option.Format;
+            preferredDownloadHeight = option.Height;
+        }
+        var launchButton = PlayerDownloadButton;
         var originalFocus = root.XamlRoot is { } xamlRoot ? Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(xamlRoot) : null;
         var restoreKeyboardFocus = launchButton.FocusState == FocusState.Keyboard ||
             originalFocus is Control { FocusState: FocusState.Keyboard };

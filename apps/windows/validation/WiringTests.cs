@@ -62,19 +62,23 @@ internal static class WiringTests
             "a native playback progress flyout opens below the hamburger immediately left of the close button");
         var ns = xml.Root!.Name.Namespace;
         var download = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "PlayerDownloadButton");
+        var chevron = xml.Descendants().SingleOrDefault(e => (string?)e.Attribute(x + "Name") == "PlayerDownloadOptionsButton");
         StateTests.Verify(download?.Name.LocalName == "Button" && download.Ancestors().Contains(transport) &&
-            download.ElementsAfterSelf().FirstOrDefault() == Named("PlayerSettingsGear") &&
+            download.ElementsAfterSelf().FirstOrDefault() == chevron && chevron?.Name.LocalName == "Button" &&
+            download.Parent?.ElementsAfterSelf().FirstOrDefault() == Named("PlayerSettingsGear") &&
             (string?)download.Attribute("AutomationProperties.Name") == "Download video" &&
-            download.Descendants(ns + "Flyout").Any(e => (string?)e.Attribute("Placement") == "TopEdgeAlignedRight" &&
+            !download.Descendants(ns + "Flyout").Any() &&
+            chevron.Descendants(ns + "Flyout").Any(e => (string?)e.Attribute("Placement") == "TopEdgeAlignedRight" &&
                 (string?)e.Attribute("FlyoutPresenterStyle") == "{StaticResource DownloadFormatsPresenter}"),
             "a native Download flyout is anchored immediately left of the player settings gear");
         var downloadCode = File.ReadAllText(Path.Combine(app, "PlaybackDownload.cs"));
-        StateTests.Verify(downloadCode.Contains("Text = \"Download formats\"") && downloadCode.Contains("new ScrollViewer") &&
-            downloadCode.Contains("Video + audio") && downloadCode.Contains("Audio only") &&
-            downloadCode.Contains("Grid.SetColumn(detail, 1)") && downloadCode.Contains("Grid.SetColumn(button, index % columns)") &&
-            downloadCode.Contains("Height is int height ? $\"{height}p\"") && downloadCode.Contains("Original audio") &&
-            downloadCode.Contains("DownloadCurrentVideoAsync(catalog, option, format)"),
-            "download formats are direct actions in a bounded card with labeled sections and separate format/details");
+        StateTests.Verify(downloadCode.Contains("PlayerDownloadButton.Click +=") &&
+            downloadCode.Contains("PlayerDownloadOptionsButton.Click +=") &&
+            downloadCode.Contains("PlayerDownloadFlyout.ShowAt(PlayerDownloadOptionsButton, new FlyoutShowOptions") &&
+            downloadCode.Contains("Placement = FlyoutPlacementMode.TopEdgeAlignedRight") && downloadCode.Contains("new ComboBox") &&
+            downloadCode.Contains("format.SelectionChanged +=") && downloadCode.Contains("resolution.Visibility = ToVisibility(") &&
+            downloadCode.Contains("save.Click +=") && downloadCode.Contains("DownloadCurrentVideoAsync(catalog, option, DownloadFormatLabel(option.Format))"),
+            "the split button opens Save As for its current choice; the flyout selects format and optional resolution independently");
         StateTests.Verify(code.Contains("WirePlaybackDownload();") && code.Contains("playerMenuOpen || playerProgressOpen || playerDownloadOpen") &&
             code.Contains("RefreshPlaybackDownloadContext();") &&
             downloadCode.Contains("playbackResolver.GetExportOptions(catalog)") && !downloadCode.Contains("ResolveAsync("),
