@@ -1,11 +1,37 @@
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using YourTube.App;
+using YourTube.Playback;
 
 internal static class WiringTests
 {
+    private static void DownloadQualityRoundTrip()
+    {
+        MediaExportOption[] mp4 = [new(MediaExportFormat.Mp4, 1080, 100), new(MediaExportFormat.Mp4, 720, 80), new(MediaExportFormat.Mp4, 480, 50)];
+        MediaExportOption[] webm = [new(MediaExportFormat.WebM, 1080, 100), new(MediaExportFormat.WebM, 720, 80)];
+        MediaExportOption[] mp3 = [new(MediaExportFormat.Mp3, null, 100), new(MediaExportFormat.Mp3, null, 80) { AudioBitrateKbps = 192 }];
+        var saved = new Dictionary<MediaExportFormat, (int? Height, int? Bitrate)> { [MediaExportFormat.Mp4] = (480, null) };
+        var video = new DownloadQualitySelection(saved);
+        var audio = new DownloadQualitySelection(saved);
+        StateTests.Verify(video.InitialIndex(MediaExportFormat.Mp4, mp4) == 2, "MP4 initially uses the saved export preference");
+        video.Remember(mp4[1]);
+        StateTests.Verify(video.InitialIndex(MediaExportFormat.WebM, webm) == 0, "a pending MP4 choice does not change the WebM default");
+        video.Remember(webm[1]);
+        StateTests.Verify(video.InitialIndex(MediaExportFormat.Mp4, mp4) == 1, "MP4 → WebM → MP4 restores the unsaved MP4 quality");
+        StateTests.Verify(video.InitialIndex(MediaExportFormat.WebM, webm) == 1, "returning to WebM restores its own pending quality");
+        StateTests.Verify(audio.InitialIndex(MediaExportFormat.Mp3, mp3) == 0, "video choices do not affect the audio row");
+        audio.Remember(mp3[1]);
+        StateTests.Verify(audio.InitialIndex(MediaExportFormat.Mp3, mp3) == 1, "the audio row remembers its pending bitrate");
+        StateTests.Verify(video.InitialIndex(MediaExportFormat.Mp4, [mp4[0], mp4[2]]) == 1, "an unavailable pending quality falls back to the saved preference");
+        StateTests.Verify(new DownloadQualitySelection(saved).InitialIndex(MediaExportFormat.Mp4, mp4) == 2 && saved.Count == 1,
+            "dismissed choices do not overwrite the saved export preferences for a new flyout");
+        Console.WriteLine("PASS: Download quality round trips are format-scoped and last only for the open flyout.");
+    }
+
     public static void Run(string root)
     {
         PlaybackProgressSummaryTests.Run();
+        DownloadQualityRoundTrip();
         var app = Path.Combine(root, "apps/windows/YourTube.App");
         StateTests.Verify(File.Exists(Path.Combine(app, "Shell.xaml")), "native shell resource exists");
         var xml = XDocument.Load(Path.Combine(app, "Shell.xaml"));
@@ -71,13 +97,27 @@ internal static class WiringTests
                 (string?)e.Attribute("FlyoutPresenterStyle") == "{StaticResource DownloadFormatsPresenter}"),
             "a native Download flyout is anchored immediately left of the player settings gear");
         var downloadCode = File.ReadAllText(Path.Combine(app, "PlaybackDownload.cs"));
+        var downloadFlyout = Regex.Match(downloadCode, @"private void PopulateDownloadFormats\(\)[\s\S]*?\r?\n    \}").Value;
+        StateTests.Verify(Regex.IsMatch(downloadFlyout,
+            @"if \(width < 250\)[\s\S]*?Grid\.SetRow\(quality, 1\);\s*Grid\.SetRow\(save, 2\);[\s\S]*?else\s*\{[\s\S]*?Grid\.SetColumn\(quality, 1\);\s*Grid\.SetColumn\(save, 2\);") &&
+            downloadFlyout.Contains("new Grid { ColumnSpacing = 6, RowSpacing = 6 }") &&
+            downloadFlyout.Contains("VerticalScrollMode = ScrollMode.Enabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto"),
+            "at a 240-DIP window, each Download group stacks its full-width dropdowns above the icon in the vertical scroller; wide cards keep the three columns");
         StateTests.Verify(!downloadCode.Contains("PlayerDownloadButton.Click +=") &&
-            downloadCode.Contains("AddSection(\"Video + audio\", \"\\uE714\", MediaExportFormat.Mp4, MediaExportFormat.WebM)") &&
-            downloadCode.Contains("AddSection(\"Audio only\", \"\\uE8D6\", MediaExportFormat.M4a, MediaExportFormat.Mp3)") &&
-            downloadCode.Contains("new ComboBox") && downloadCode.Contains("choice.Format == fileFormat") &&
-            downloadCode.Contains("quality.SelectedItem is not ComboBoxItem { Tag: MediaExportOption option }") &&
-            downloadCode.Contains("DownloadCurrentVideoAsync(catalog, option, formatLabel)"),
-            "the icon only opens the flyout; each format owns its quality chooser and Save As action");
+            Regex.Matches(downloadFlyout, @"\bAddRow\(").Count == 3 &&
+            Regex.IsMatch(downloadFlyout, @"AddRow\(""Video \+ audio"", ""\\uE714"", MediaExportFormat\.Mp4, MediaExportFormat\.WebM\);\s*AddRow\(""Audio only"", ""\\uE8D6"", MediaExportFormat\.M4a, MediaExportFormat\.Mp3\);") &&
+            Regex.IsMatch(downloadFlyout, @"row\.Children\.Add\(format\);\s*row\.Children\.Add\(quality\);\s*row\.Children\.Add\(save\);"),
+            "the transport icon opens two action groups, each retaining format, quality and download control order");
+        StateTests.Verify(Regex.IsMatch(downloadFlyout, @"void AddRow\([\s\S]*?var selection = new DownloadQualitySelection\(downloadPreferences\);\s*bool restoringQuality = false;\s*quality\.SelectionChanged \+= [\s\S]*?if \(!restoringQuality && choice is not null\) selection\.Remember\(choice\);") &&
+            Regex.IsMatch(downloadFlyout, @"format\.SelectionChanged \+= [\s\S]*?restoringQuality = true;\s*quality\.SelectedIndex = selection\.InitialIndex\(fileFormat, choices\);\s*restoringQuality = false;"),
+            "each newly built row remembers explicit selections separately from programmatic restores and saved export preferences");
+        StateTests.Verify(Regex.IsMatch(downloadFlyout, @"format\.SelectionChanged \+= [\s\S]*?quality\.Items\.Clear\(\);[\s\S]*?choice\.Format == fileFormat") &&
+            Regex.Matches(downloadFlyout, @"DownloadCurrentVideoAsync\(").Count == 1 &&
+            Regex.IsMatch(downloadFlyout, @"var save = new Button \{ Content = new FontIcon \{ Glyph = ""\\uE896""") &&
+            downloadFlyout.Contains("AutomationProperties.SetName(save, action)") &&
+            Regex.IsMatch(downloadFlyout, @"save\.Click \+= [\s\S]*?!playerDownloadOpen \|\| !ReferenceEquals\(PlayerDownloadFlyout\.Content, panel\)[\s\S]*?option\.Format != fileFormat\) return;\s*await DownloadCurrentVideoAsync\(catalog, option, DownloadFormatLabel\(fileFormat\)\);") &&
+            Regex.IsMatch(downloadCode, @"downloadPicking = true;\s*PlayerDownloadFlyout\.Hide\(\);[\s\S]*?DownloadSaveDialog\.Pick\("),
+            "format changes refresh only that row's qualities; only its named download icon dismisses the flyout and starts Save As for the matching selection");
         StateTests.Verify(code.Contains("WirePlaybackDownload();") && code.Contains("playerMenuOpen || playerProgressOpen || playerDownloadOpen") &&
             code.Contains("RefreshPlaybackDownloadContext();") &&
             downloadCode.Contains("playbackResolver.GetExportOptions(catalog)") && !downloadCode.Contains("ResolveAsync("),

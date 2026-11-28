@@ -85,7 +85,7 @@ internal sealed partial class MainWindow
     private void PopulateDownloadFormats()
     {
         var anchor = PlayerDownloadButton;
-        double width = Math.Clamp((anchor.XamlRoot?.Size.Width ?? 320) - 46, 120, 254);
+        double width = Math.Clamp((anchor.XamlRoot?.Size.Width ?? 320) - 46, 120, 274);
         var card = new StackPanel { Width = width, Spacing = 8, Margin = new Thickness(4) };
         var title = new TextBlock { Text = "Download formats", FontSize = 15, TextWrapping = TextWrapping.Wrap,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
@@ -111,12 +111,13 @@ internal sealed partial class MainWindow
             card.Children.Add(new TextBlock { Text = "Download options are no longer available.", TextWrapping = TextWrapping.Wrap, IsTabStop = true });
             return;
         }
-        AddSection("Video + audio", "\uE714", MediaExportFormat.Mp4, MediaExportFormat.WebM);
-        AddSection("Audio only", "\uE8D6", MediaExportFormat.M4a, MediaExportFormat.Mp3);
+        AddRow("Video + audio", "\uE714", MediaExportFormat.Mp4, MediaExportFormat.WebM);
+        AddRow("Audio only", "\uE8D6", MediaExportFormat.M4a, MediaExportFormat.Mp3);
 
-        void AddSection(string label, string glyph, params MediaExportFormat[] formats)
+        void AddRow(string label, string glyph, params MediaExportFormat[] formats)
         {
-            if (!options.Any(option => formats.Contains(option.Format))) return;
+            var availableFormats = formats.Where(fileFormat => options.Any(option => option.Format == fileFormat)).ToArray();
+            if (availableFormats.Length == 0) return;
             if (card.Children.Count > 1)
                 card.Children.Add(new Border { Height = 1, Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 59, 69, 61)) });
             var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
@@ -129,42 +130,73 @@ internal sealed partial class MainWindow
             header.Children.Add(heading);
             card.Children.Add(header);
 
-            foreach (var fileFormat in formats)
+            var row = new Grid { ColumnSpacing = 6, RowSpacing = 6 };
+            var format = CreateDropdown($"{label} format");
+            var quality = CreateDropdown($"{label} quality");
+            var save = new Button { Content = new FontIcon { Glyph = "\uE896", FontSize = 16 }, MinWidth = 36,
+                VerticalAlignment = VerticalAlignment.Stretch, Padding = new Thickness(8, 0, 8, 0) };
+            foreach (var fileFormat in availableFormats)
+                format.Items.Add(new ComboBoxItem { Content = DownloadFormatLabel(fileFormat), Tag = fileFormat });
+
+            var selection = new DownloadQualitySelection(downloadPreferences);
+            bool restoringQuality = false;
+            quality.SelectionChanged += (_, _) =>
             {
+                var choice = (quality.SelectedItem as ComboBoxItem)?.Tag as MediaExportOption;
+                if (!restoringQuality && choice is not null) selection.Remember(choice);
+                save.IsEnabled = choice is not null;
+                var action = choice is not null
+                    ? $"Download {label.ToLowerInvariant()} · {DownloadFormatLabel(choice.Format)} · {DownloadQualityLabel(choice)}"
+                    : $"Download {label.ToLowerInvariant()}";
+                AutomationProperties.SetName(save, action);
+                ToolTipService.SetToolTip(save, action);
+            };
+            format.SelectionChanged += (_, _) =>
+            {
+                quality.Items.Clear();
+                if (format.SelectedItem is not ComboBoxItem { Tag: MediaExportFormat fileFormat }) return;
                 var choices = options.Where(choice => choice.Format == fileFormat).OrderByDescending(choice => choice.Height).ToArray();
-                if (choices.Length == 0) continue;
-                var formatLabel = DownloadFormatLabel(fileFormat);
-                var row = new Grid();
-                row.ColumnDefinitions.Add(new ColumnDefinition());
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.5, GridUnitType.Star) });
-                var save = new Button { Content = formatLabel, HorizontalAlignment = HorizontalAlignment.Stretch,
-                    VerticalAlignment = VerticalAlignment.Stretch, Padding = new Thickness(6, 0, 6, 0), CornerRadius = new CornerRadius(5, 0, 0, 5) };
-                var quality = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, MinWidth = 0,
-                    CornerRadius = new CornerRadius(0, 5, 5, 0), MaxDropDownHeight = 220 };
-                AutomationProperties.SetName(quality, $"{formatLabel} {(choices[0].Height is not null ? "resolution" : "audio quality")}");
                 foreach (var choice in choices)
                     quality.Items.Add(new ComboBoxItem { Content = DownloadQualityLabel(choice), Tag = choice });
-                quality.SelectionChanged += (_, _) =>
-                {
-                    if (quality.SelectedItem is not ComboBoxItem { Tag: MediaExportOption choice }) return;
-                    var action = $"Save {formatLabel} · {DownloadQualityLabel(choice)} as…";
-                    AutomationProperties.SetName(save, action);
-                    ToolTipService.SetToolTip(save, action);
-                };
-                int remembered = downloadPreferences.TryGetValue(fileFormat, out var preference)
-                    ? Array.FindIndex(choices, choice => (choice.Height, choice.AudioBitrateKbps) == preference) : -1;
-                quality.SelectedIndex = Math.Max(0, remembered);
-                save.Click += async (_, _) =>
-                {
-                    if (!playerDownloadOpen || !ReferenceEquals(PlayerDownloadFlyout.Content, panel) ||
-                        quality.SelectedItem is not ComboBoxItem { Tag: MediaExportOption option } || option.Format != fileFormat) return;
-                    await DownloadCurrentVideoAsync(catalog, option, formatLabel);
-                };
-                row.Children.Add(save);
-                Grid.SetColumn(quality, 1);
-                row.Children.Add(quality);
-                card.Children.Add(row);
+                restoringQuality = true;
+                quality.SelectedIndex = selection.InitialIndex(fileFormat, choices);
+                restoringQuality = false;
+            };
+            format.SelectedIndex = 0;
+            save.Click += async (_, _) =>
+            {
+                if (!playerDownloadOpen || !ReferenceEquals(PlayerDownloadFlyout.Content, panel) ||
+                    format.SelectedItem is not ComboBoxItem { Tag: MediaExportFormat fileFormat } ||
+                    quality.SelectedItem is not ComboBoxItem { Tag: MediaExportOption option } || option.Format != fileFormat) return;
+                await DownloadCurrentVideoAsync(catalog, option, DownloadFormatLabel(fileFormat));
+            };
+            // At compact widths, don't split the available space between two ComboBox templates.
+            if (width < 250)
+            {
+                for (int i = 0; i < 3; i++) row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                Grid.SetRow(quality, 1);
+                Grid.SetRow(save, 2);
+                save.HorizontalAlignment = HorizontalAlignment.Right;
             }
+            else
+            {
+                row.ColumnDefinitions.Add(new ColumnDefinition());
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.5, GridUnitType.Star) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                Grid.SetColumn(quality, 1);
+                Grid.SetColumn(save, 2);
+            }
+            row.Children.Add(format);
+            row.Children.Add(quality);
+            row.Children.Add(save);
+            card.Children.Add(row);
+        }
+
+        static ComboBox CreateDropdown(string name)
+        {
+            var dropdown = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, MinWidth = 0, MaxDropDownHeight = 220 };
+            AutomationProperties.SetName(dropdown, name);
+            return dropdown;
         }
     }
 
